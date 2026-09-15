@@ -1,9 +1,9 @@
-CineCalendar 2.4.7 face secțiunea „Cinema românesc” strict language-first.
+CineCalendar 2.4.8 este un hotfix de performanță pentru prima recomandare.
 
-Criteriul principal și obligatoriu este acum limba originală română. Pentru ca un titlu să intre în secțiunea românească, Wikidata trebuie să confirme simultan P364 = limba română și P495 = România. Asta păstrează coproducțiile românești în limba română, dar elimină filmele care apar ca producții din România fără să fie în limba română.
+În 2.4.6/2.4.7, două operații grele puteau bloca ecranul „Ce văd acum?”: motorul putea aștepta până la 25 de secunde ca ALS MovieLens să termine încărcarea, iar modelul adaptiv local era antrenat și validat sincron la prima recomandare. Cu mii de ratinguri și aplicația rulată de pe HDD, asta putea ține cardul „Îți aleg filmul...” foarte mult timp.
 
-Vechea bază de eligibilitate a fost invalidată printr-un cache nou v3. Datele locale despre țară nu mai sunt suficiente pentru a declara un film „românesc”, deoarece catalogul local nu are un câmp de limbă suficient de sigur. Dacă verificarea online nu este disponibilă, aplicația reutilizează numai ultimul cache deja verificat după limbă; dacă nu există un asemenea cache, lista rămâne goală în loc să inventeze potriviri.
+În 2.4.8 nici ALS, nici modelul adaptiv nu mai blochează fluxul de recomandare. Ambele pornesc imediat în fundal la inițializarea serviciului. Dacă unul dintre ele nu este încă pregătit, recomandarea folosește temporar motorul personal de conținut deja existent, în loc să aștepte. La următoarea recalculare, după ce modelele sunt gata, ALS și rerankingul adaptiv intră automat în calcul.
 
-După filtrarea strictă după limbă și țară, ordinea recomandărilor continuă să fie decisă de ALS MovieLens calibrat global + profilul personal + modelul adaptiv local din 2.4.6. Astfel, „românesc” stabilește eligibilitatea, iar gustul utilizatorului stabilește ordinea.
+Hook-ul moștenit care aștepta până la 25 de secunde pentru primul model ALS este suprascris în V13 cu o pornire strict non-blocking. Rerankerul adaptiv verifică starea modelului înainte de a apela scorarea; dacă antrenarea este încă în curs, returnează rezultatul V12 deja ordonat și continuă antrenarea pe thread separat.
 
-2.4.7 păstrează toate îmbunătățirile 2.4.6: model adaptiv local din ratingurile 1–10 și feedback, validare temporală automată a modelului personal, reranking pe pool extins, calibrare ALS globală, praguri de încredere și protecție Bayesiană pentru titluri cu puține voturi.
+2.4.8 păstrează toate corecțiile de calitate din 2.4.7, inclusiv Cinema românesc language-first și modelul personal adaptiv. Hotfixul schimbă doar momentul în care modelele grele sunt pregătite, nu logica lor de învățare.
