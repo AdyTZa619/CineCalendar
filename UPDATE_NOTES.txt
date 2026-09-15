@@ -1,7 +1,9 @@
-CineCalendar 2.4.3 mută aplicația într-un repository GitHub dedicat: AdyTZa619/CineCalendar. Proiectul, buildurile Windows, release-urile, manifestul de update și modelul colaborativ nu mai sunt întreținute în repository-ul DuplicateDownloadGuard-Releases.
+CineCalendar 2.4.4 adaugă o secțiune dedicată „Cinema românesc”, separată de recomandările generale. Nu trebuie activat niciun filtru și nu trebuie schimbată nicio setare: pagina se deschide doar atunci când utilizatorul vrea explicit filme românești.
 
-Motorul de recomandare rămâne ALS MovieLens + profilul personal local, iar pagina «Ce văd acum?» recomandă automat fără să ceară alegerea unui gen. Selectorul de gen rămâne opțional pentru momentele în care utilizatorul vrea explicit ceva anume.
+Eligibilitatea este strictă: un titlu intră în această secțiune numai dacă România apare ca țară de origine a producției, pe baza Wikidata (P495 = România) și a metadatelor locale deja cunoscute. Un film care este doar despre România nu este etichetat automat drept film românesc. Coproducțiile care includ România sunt eligibile.
 
-Updaterul 2.4.3 și versiunile următoare citesc direct manifestul Stable din noul repository CineCalendar. Datele personale din CineCalendarData nu sunt mutate, șterse sau publicate.
+După construirea pool-ului românesc, ordinea nu este un top generic și nu primește un bonus artificial doar pentru faptul că filmul este românesc. Același motor principal ALS MovieLens + profilul personal din ratingurile IMDb ordonează producțiile după probabilitatea de a plăcea utilizatorului. Filmele văzute/evaluate/respinse rămân blocate, iar diversitatea evită o listă de titluri aproape identice.
 
-Rămân active protecția anti-văzut/rated, Program calendar precision-first, optimizările HDD, biblioteca completă de ratinguri, Taste Hub și updaterul cu staging, SHA-256, health-check și rollback.
+Lista de identificatori românești este memorată local și actualizată rar, astfel încât deschiderea ulterioară a paginii să nu depindă de o interogare online de fiecare dată. Dacă serviciul public nu este disponibil temporar, CineCalendar folosește cache-ul existent și metadatele locale fără să inventeze potriviri.
+
+Rămân neschimbate recomandarea automată din „Ce văd acum?”, selectorul de gen doar opțional, Program calendar precision-first, ALS MovieLens, Taste Hub, biblioteca completă de ratinguri, optimizările HDD și updaterul standalone din repository-ul AdyTZa619/CineCalendar.
