@@ -6,6 +6,7 @@ import inspect
 from cinecalendar.adaptive_preferences import AdaptivePreferenceLearner
 from cinecalendar.db import Database
 from cinecalendar.models import Movie
+from cinecalendar.recommender_v13 import FastRecommendationEngineV13
 from cinecalendar.service import CineCalendarService
 from cinecalendar.util import identity_key, json_dumps, utcnow_iso
 
@@ -110,6 +111,23 @@ def test_new_explicit_feedback_invalidates_and_retrains_model(tmp_path):
     assert status["training_feedback"] == 1
 
 
-def test_service_uses_adaptive_v13_engine():
+def test_service_uses_adaptive_v13_engine_and_warms_in_background():
     source = inspect.getsource(CineCalendarService.__init__)
     assert "FastRecommendationEngineV13" in source
+    assert "collaborative.start_background()" in source
+    assert "start_adaptive_background()" in source
+
+
+def test_v13_never_waits_25_seconds_for_als():
+    source = inspect.getsource(FastRecommendationEngineV13._wait_briefly_for_first_model)
+    assert "start_background()" in source
+    assert "sleep" not in source
+    assert "monotonic" not in source
+
+
+def test_v13_skips_synchronous_adaptive_training_until_background_ready():
+    source = inspect.getsource(FastRecommendationEngineV13._adaptive_rerank)
+    assert "if not self._adaptive_is_ready()" in source
+    assert "self.start_adaptive_background()" in source
+    # adaptive.score(), which can synchronously train the learner, is only reached after readiness.
+    assert source.index("if not self._adaptive_is_ready()") < source.index("self.adaptive.score(rec.movie)")
