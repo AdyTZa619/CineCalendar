@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import inspect
 
+import requests
+
 from cinecalendar import app as app_module
 from cinecalendar.db import Database
 from cinecalendar.recommender_v12 import FastRecommendationEngineV12
-from cinecalendar.romanian_cinema import RomanianCinemaProvider
+from cinecalendar.romanian_cinema import CACHE_KEY, RomanianCinemaProvider
 from cinecalendar.romanian_cinema_ui_patch import install_romanian_cinema_ui_patch
 from cinecalendar.util import json_dumps, utcnow_iso
 
@@ -44,25 +46,56 @@ def test_wikidata_parser_accepts_only_title_imdb_ids():
     assert RomanianCinemaProvider._extract_wikidata_ids(payload) == {"tt1234567", "tt7654321"}
 
 
-def test_wikidata_query_is_precision_first_for_romanian_identity():
+def test_wikidata_query_requires_romanian_original_language_and_romania_origin():
     query = RomanianCinemaProvider.wikidata_query()
-    assert "wdt:P495 wd:Q218" in query
     assert "wdt:P364 wd:Q7913" in query
-    assert "FILTER NOT EXISTS" in query
-    assert "?otherCountry != wd:Q218" in query
+    assert "wdt:P495 wd:Q218" in query
     assert "wdt:P31/wdt:P279* wd:Q11424" in query
+    assert "UNION" not in query
+    assert "FILTER NOT EXISTS" not in query
 
 
-def test_local_romania_country_is_strict_offline_fallback(tmp_path):
+def test_new_cache_key_invalidates_country_first_results():
+    assert CACHE_KEY.endswith("v3")
+    assert "language-first" in CACHE_KEY
+
+
+def test_country_only_local_metadata_never_qualifies_without_language_verification(tmp_path):
     db = Database(tmp_path / "cinecalendar.db")
     _insert_movie(db, "tt0000001", "Film RO", ["România"])
     _insert_movie(db, "tt0000002", "Film US", ["United States"])
     _insert_movie(db, "tt0000003", "Coproducție", ["Romania", "France"])
     provider = RomanianCinemaProvider(db)
-    assert provider.local_imdb_ids() == {"tt0000001"}
+    assert provider.local_imdb_ids() == set()
 
 
-def test_romanian_rows_use_explicit_country_pool_and_keep_rated_blocked(tmp_path, monkeypatch):
+def test_language_verified_cache_is_reused_when_wikidata_is_down(tmp_path, monkeypatch):
+    db = Database(tmp_path / "cinecalendar.db")
+    provider = RomanianCinemaProvider(db)
+    provider._store({"tt0000101", "tt0000102"}, days=-1)
+
+    def fail():
+        raise requests.RequestException("offline")
+
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", fail)
+    assert provider.imdb_ids(refresh=True) == {"tt0000101", "tt0000102"}
+    assert provider.status()["source"] == "romanian-language-stale-cache"
+
+
+def test_without_verified_language_data_provider_fails_closed(tmp_path, monkeypatch):
+    db = Database(tmp_path / "cinecalendar.db")
+    _insert_movie(db, "tt0000201", "Țară RO dar limbă necunoscută", ["Romania"])
+    provider = RomanianCinemaProvider(db)
+
+    def fail():
+        raise requests.RequestException("offline")
+
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", fail)
+    assert provider.imdb_ids(refresh=True) == set()
+    assert provider.status()["source"] == "language-unverified-empty"
+
+
+def test_romanian_rows_use_verified_language_pool_and_keep_rated_blocked(tmp_path, monkeypatch):
     db = Database(tmp_path / "cinecalendar.db")
     keep_id = _insert_movie(db, "tt0000011", "Nevăzut românesc")
     rated_id = _insert_movie(db, "tt0000012", "Văzut românesc")
