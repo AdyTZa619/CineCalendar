@@ -44,10 +44,20 @@ def test_wikidata_parser_accepts_only_title_imdb_ids():
     assert RomanianCinemaProvider._extract_wikidata_ids(payload) == {"tt1234567", "tt7654321"}
 
 
-def test_local_romania_country_is_an_offline_fallback(tmp_path):
+def test_wikidata_query_is_precision_first_for_romanian_identity():
+    query = RomanianCinemaProvider.wikidata_query()
+    assert "wdt:P495 wd:Q218" in query
+    assert "wdt:P364 wd:Q7913" in query
+    assert "FILTER NOT EXISTS" in query
+    assert "?otherCountry != wd:Q218" in query
+    assert "wdt:P31/wdt:P279* wd:Q11424" in query
+
+
+def test_local_romania_country_is_strict_offline_fallback(tmp_path):
     db = Database(tmp_path / "cinecalendar.db")
     _insert_movie(db, "tt0000001", "Film RO", ["România"])
     _insert_movie(db, "tt0000002", "Film US", ["United States"])
+    _insert_movie(db, "tt0000003", "Coproducție", ["Romania", "France"])
     provider = RomanianCinemaProvider(db)
     assert provider.local_imdb_ids() == {"tt0000001"}
 

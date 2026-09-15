@@ -11,11 +11,11 @@ from .semantic import feature_vector
 from .util import clamp, cosine_sparse, json_loads, normalize_text
 
 
-ENGINE_VERSION = "12.1.0-als-daily-genre-romanian-cinema"
+ENGINE_VERSION = "12.2.0-als-global-calibrated-strong-romanian"
 
 
 class FastRecommendationEngineV12(FastRecommendationEngineV11):
-    """ALS recommender with optional one-day genre intent and Romanian cinema lane."""
+    """Calibrated ALS recommender with optional daily genre and a precision-first Romanian lane."""
 
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
@@ -46,15 +46,13 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
     def _state_token(self) -> tuple:
         base = super()._state_token()
         payload = self._daily_genre_payload()
-        return base + ((str(payload.get("date") or ""), str(payload.get("genre") or "")),)
+        return base + ((str(payload.get("date") or ""), str(payload.get("genre") or "")), ENGINE_VERSION)
 
     def _candidate_rows(self, when: date, limit: int = 100000):
         genre = self._active_daily_genre(when)
         if not genre:
             return super()._candidate_rows(when, limit)
 
-        # Pull the wider established pool first, then apply explicit one-day intent. This keeps
-        # the query HDD-friendly and avoids a full-table JSON scan of the ~260k-title catalog.
         requested = max(int(limit or self.EXPLORE_POOL), self.EXPLORE_POOL)
         rows = list(super()._candidate_rows(when, requested))
         filtered = [row for row in rows if self._row_matches_genre(row, genre)]
@@ -90,11 +88,11 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
         return status
 
     def recommend_romanian(self, when: date | None = None, count: int = 9):
-        """Rank only genuine Romanian productions using the same personal ALS engine.
+        """Rank only titles with a strong Romanian production identity.
 
-        Country-of-origin is an eligibility gate, not a score boost. This means a mediocre fit
-        does not become a recommendation merely because it is Romanian; once the Romanian-only
-        pool is built, the same personal taste signals decide the order.
+        Eligibility is precision-first and separate from ranking. Once a film qualifies, the
+        same globally calibrated ALS + personal content signals used by the main recommender
+        decide whether it deserves to be shown.
         """
         when = when or date.today()
         profile = get_profile(self.db)
@@ -121,8 +119,14 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
 
         for row in rows:
             movie = row_to_movie(row)
-            # Wikidata already established Romania as a country of origin. Add it in-memory if
-            # the local title has not yet been metadata-enriched so country taste can participate.
+            if not self._catalog_quality_is_trustworthy(movie):
+                continue
+
+            # In the dedicated Romanian lane prefer the original-language title when IMDb's
+            # primary/display title is an English international title.
+            if movie.original_title and normalize_text(movie.original_title) != normalize_text(movie.title):
+                movie.title = movie.original_title
+
             if not any(normalize_text(str(c)) == "romania" for c in (movie.countries or [])):
                 movie.countries = list(movie.countries or []) + ["România"]
 
@@ -135,15 +139,19 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
             score.contributions.insert(
                 0,
                 (
-                    "Cinema românesc",
+                    "Identitate românească verificată",
                     0.0,
-                    "Eligibilitate verificată prin țara de origine România; nu este un bonus artificial de scor.",
+                    "România este țara unică de origine sau coproducția are limba originală română; criteriul nu adaugă puncte la scor.",
                 ),
             )
 
             iid = str(movie.imdb_id or "")
             if collaborative_active and iid in collaborative:
                 als_score = float(collaborative[iid])
+                if not self._mapped_candidate_is_trustworthy(
+                    als_score, float(score.predicted_rating), float(score.confidence)
+                ):
+                    continue
                 old_final = float(score.final)
                 score.final = clamp(ALS_WEIGHT * als_score + CONTENT_WEIGHT * old_final)
                 score.contributions.insert(
@@ -156,9 +164,9 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
                 )
                 score.contributions.append(
                     (
-                        "Motor personal de conținut (secundar)",
+                        "Motor personal de conținut",
                         CONTENT_WEIGHT * old_final * 100.0,
-                        "Genuri, teme, regizori, calitate, noutate și context; semnal secundar/fallback.",
+                        "Genuri, teme, regizori, calitate, noutate și context; verificare independentă a potrivirii.",
                     )
                 )
             candidates.append(Recommendation(movie, score))
@@ -185,6 +193,8 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
                 if adjusted > best_value:
                     best_value = adjusted
                     best = (rec, diversity)
+            if best is None:
+                break
             rec, diversity = best
             rec.score.diversity = clamp(diversity)
             rec.score.final = clamp(best_value)

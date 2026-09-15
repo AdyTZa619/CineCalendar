@@ -12,19 +12,15 @@ from .semantic import feature_vector
 from .util import clamp, cosine_sparse, utcnow_iso
 
 
-ENGINE_VERSION = "11.0.0-als"
-ALS_WEIGHT = 0.80
+ENGINE_VERSION = "11.1.0-als-global-calibrated"
+# ALS remains the primary ranker, but content/profile evidence now has enough weight to rescue
+# strong personal matches and to stop a mediocre collaborative score from dominating the list.
+ALS_WEIGHT = 0.70
 CONTENT_WEIGHT = 1.0 - ALS_WEIGHT
 
 
 class FastRecommendationEngineV11(FastRecommendationEngineV10):
-    """Hybrid recommender with established collaborative filtering as the primary ranker.
-
-    MovieLens 32M + implicit Alternating Least Squares supplies the dominant ranking signal
-    whenever a title exists in MovieLens. The old hand-built engine is retained as a secondary
-    signal and as a fallback for new/unmapped movies. Hard seen/rejected/Romance guards and the
-    precision-first calendar gates remain outside ALS and therefore cannot be bypassed by it.
-    """
+    """Hybrid recommender with globally calibrated collaborative filtering as primary ranker."""
 
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
@@ -41,19 +37,16 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
         else:
             state, version = provider.state_token()
             collaborative_token = f"als:{state}:{version}"
-        # A flat string survives JSON persistence unchanged; when the model moves from loading
-        # to ready, the token changes and invalidates any temporary fallback decision pool.
-        return base + (collaborative_token,)
+        return base + (collaborative_token, ENGINE_VERSION)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        # Never reuse a v9/v10 persisted decision pool after switching to ALS ranking.
-        return f"decision_pool_v11:{when.isoformat()}:{mode}"
+        return f"decision_pool_v11_1:{when.isoformat()}:{mode}"
 
     @staticmethod
     def _collaborative_reason(mapped_ratings: int, percentile: float) -> str:
         strength = "foarte puternic" if percentile >= .85 else "puternic" if percentile >= .68 else "moderat"
         return (
-            f"ALS colaborativ MovieLens 32M: semnal {strength} (percentila {round(percentile * 100)}), "
+            f"ALS colaborativ MovieLens 32M: semnal {strength} (percentila globală {round(percentile * 100)}), "
             f"profil recalculat local din {mapped_ratings:,} ratinguri personale mapate."
         )
 
@@ -77,11 +70,6 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
                 )
 
     def _wait_briefly_for_first_model(self, timeout: float = 25.0) -> None:
-        """First-run model download is ~20 MB and happens off the UI thread.
-
-        Recommendation workers wait briefly so the first visible answer normally already comes
-        from ALS instead of silently showing a v10 fallback while the model is finishing.
-        """
         self.collaborative.start_background()
         deadline = time.monotonic() + max(0.0, float(timeout))
         while time.monotonic() < deadline:
@@ -89,6 +77,30 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
             if state in {"ready", "error"}:
                 return
             time.sleep(0.10)
+
+    @staticmethod
+    def _mapped_candidate_is_trustworthy(als_score: float, predicted_rating: float, confidence: float) -> bool:
+        if als_score >= .35:
+            return True
+        return predicted_rating >= 7.0 and confidence >= .65
+
+    @staticmethod
+    def _catalog_quality_is_trustworthy(movie) -> bool:
+        """Reject very thin IMDb evidence unless its Bayesian quality remains convincing.
+
+        A raw 9-10/10 from a few dozen votes is not treated like a mature 8/10 title.  The
+        prior is intentionally conservative and is only relevant below 250 votes.
+        """
+        votes = max(0, int(movie.num_votes or 0))
+        if votes >= 250:
+            return True
+        rating = float(movie.imdb_rating or 0.0)
+        if rating <= 0.0:
+            return False
+        prior_mean = 6.5
+        prior_votes = 1000.0
+        bayes = (rating * votes + prior_mean * prior_votes) / (votes + prior_votes)
+        return bayes >= 6.75
 
     def recommend(self, when: date | None = None, count: int = 3, exclude_ids: set[int] | None = None,
                   record: bool = False, slot: str = "today", candidate_limit: int = 100000,
@@ -110,7 +122,7 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
                 (when.isoformat(),),
             )
 
-        exclude_romance = bool(self.db.get_setting("exclude_romance", True))
+        exclude_romance = bool(self.db.get_setting("exclude_romance", False))
         context = self._run_context()
         effective = self._effective_limit(candidate_limit, mode)
         rows = list(self._candidate_rows(when, effective))
@@ -127,6 +139,8 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
             if mid in exclude_ids:
                 continue
             movie = row_to_movie(row)
+            if not self._catalog_quality_is_trustworthy(movie):
+                continue
             if runtime_max is not None and movie.runtime_min is not None and movie.runtime_min > runtime_max:
                 continue
             if runtime_min is not None and movie.runtime_min is not None and movie.runtime_min < runtime_min:
@@ -143,6 +157,10 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
             iid = str(movie.imdb_id or "")
             if collaborative_active and iid in collaborative:
                 als_score = float(collaborative[iid])
+                if not self._mapped_candidate_is_trustworthy(
+                    als_score, float(score.predicted_rating), float(score.confidence)
+                ):
+                    continue
                 old_final = float(score.final)
                 score.final = clamp(ALS_WEIGHT * als_score + CONTENT_WEIGHT * old_final)
                 score.contributions.insert(
@@ -155,9 +173,9 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
                 )
                 score.contributions.append(
                     (
-                        "Motor personal de conținut (secundar)",
+                        "Motor personal de conținut",
                         CONTENT_WEIGHT * old_final * 100.0,
-                        "Genuri, teme, regizori, calitate, noutate și context; folosit ca semnal secundar/fallback.",
+                        "Genuri, teme, regizori, calitate, noutate și context; semnal independent de verificare.",
                     )
                 )
             candidates.append(Recommendation(movie, score))
@@ -185,6 +203,8 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
                 if adjusted > best_value:
                     best_value = adjusted
                     best = (rec, diversity)
+            if best is None:
+                break
             rec, diversity = best
             rec.score.diversity = clamp(diversity)
             rec.score.final = clamp(best_value)

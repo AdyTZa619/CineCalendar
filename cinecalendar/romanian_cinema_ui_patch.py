@@ -2,19 +2,14 @@ from __future__ import annotations
 
 from datetime import date
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout
 
 from .qt_ui import WorkerThread
 
 
 def install_romanian_cinema_ui_patch(window_cls) -> None:
-    """Add a dedicated, zero-hassle Romanian cinema page.
-
-    The page is separate from the normal recommendation flow: the user opens it only when they
-    specifically want Romanian cinema. It never changes the permanent taste profile and it does
-    not classify a film as Romanian merely because its subject is Romania.
-    """
+    """Add a dedicated, precision-first Romanian cinema page."""
     if getattr(window_cls, "_romanian_cinema_patch_installed", False):
         return
 
@@ -27,7 +22,7 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
     def page_romanian(self):
         page, content = self.page_shell(
             "Cinema românesc",
-            "Recomandări personalizate exclusiv din producții românești sau coproducții cu România. Nu trebuie să setezi nimic.",
+            "Selecție personalizată din filme cu identitate românească puternică. Nu trebuie să setezi nimic.",
             [("Recalculează", lambda: self.show_page("romanian"), True)],
         )
         self.romanian_content = content
@@ -41,8 +36,8 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             return page
 
         content.addWidget(self.loading_panel(
-            "Caut cele mai bune filme românești pentru tine…",
-            "Identific producțiile după țara de origine România, apoi ALS MovieLens + ratingurile tale le ordonează după gustul tău. Filmele doar despre România nu sunt confundate cu producțiile românești.",
+            "Caut filme românești care chiar merită recomandate…",
+            "Mai întâi verific identitatea românească a producției, apoi ALS MovieLens + ratingurile tale decid dacă filmul merită să apară. Nu umplu lista cu coproducții străine doar fiindcă România apare undeva în metadate.",
         ))
         content.addStretch(1)
         QTimer.singleShot(0, self._load_romanian_async)
@@ -65,8 +60,6 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             self.set_status("Selecția de cinema românesc este gata.", False)
             if self.current_page == "romanian":
                 self._render_romanian(self.romanian_result)
-                # Enrichment stays background-only; eligibility itself is already established
-                # independently from posters/descriptions.
                 self._ensure_metadata(self.romanian_result[:6], "romanian")
 
         def failure(message):
@@ -93,13 +86,13 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         info = QFrame(); info.setObjectName("PremiumCard")
         il = QHBoxLayout(info); il.setContentsMargins(18, 14, 18, 14); il.setSpacing(12)
         text = QLabel(
-            "Filtrul este de eligibilitate, nu un bonus de scor: intră numai producții a căror țară de origine include România; în interiorul listei, gustul tău decide ordinea."
+            "Criteriu strict: România este țara unică de origine sau, pentru o coproducție, limba originală este româna. După această verificare, gustul tău decide ordinea."
         )
         text.setObjectName("Muted"); text.setWordWrap(True); il.addWidget(text, 1)
         content.addWidget(info)
 
         if not recs:
-            empty = QLabel("Nu am găsit momentan suficiente producții românești nevăzute în catalogul local.")
+            empty = QLabel("Nu am găsit momentan suficiente filme românești nevăzute care să treacă și pragul de încredere al recomandării.")
             empty.setObjectName("Muted"); empty.setWordWrap(True); content.addWidget(empty); content.addStretch(1)
             return
 
@@ -111,7 +104,7 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         content.addWidget(self.compact_recommendation_card(recs[0], 1))
 
         if len(recs) > 1:
-            h2 = QLabel("Alte producții românești care se potrivesc profilului tău")
+            h2 = QLabel("Alte filme românești cu potrivire bună")
             h2.setObjectName("SectionTitle")
             content.addWidget(h2)
             grid = QGridLayout(); grid.setHorizontalSpacing(14); grid.setVerticalSpacing(14)
@@ -125,9 +118,9 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         fl = QVBoxLayout(footer); fl.setContentsMargins(18, 14, 18, 14)
         src = status.get("source", "")
         count = int(status.get("external_count", 0) or 0)
-        label = "Lista de producții este memorată local și se actualizează rar."
+        label = "Lista de eligibilitate este memorată local și se actualizează rar."
         if count:
-            label = f"Bază de eligibilitate: {count:,} identificatori IMDb de producții cu România ca țară de origine, plus metadatele locale deja cunoscute."
+            label = f"Bază strictă de eligibilitate: {count:,} identificatori IMDb verificați pentru identitate românească puternică."
         note = QLabel(label + (f" Sursă curentă: {src}." if src else ""))
         note.setObjectName("Muted"); note.setWordWrap(True); fl.addWidget(note)
         content.addWidget(footer)

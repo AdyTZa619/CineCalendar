@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 import threading
 from typing import Iterable
@@ -13,8 +12,7 @@ from implicit.cpu.als import AlternatingLeastSquares
 
 
 MODEL_MANIFEST_URL = (
-    "https://raw.githubusercontent.com/AdyTZa619/DuplicateDownloadGuard-Releases/"
-    "cinecalendar-direct-exe/CineCalendar/collaborative-model.json"
+    "https://raw.githubusercontent.com/AdyTZa619/CineCalendar/main/collaborative-model.json"
 )
 MIN_MAPPED_RATINGS = 20
 
@@ -28,13 +26,25 @@ def _sha256(path: Path) -> str:
 
 
 def _rating_confidence(rating: int) -> float:
-    """Signed confidence around this user's meaningful like/dislike boundary."""
+    """Signed preference strength matching the user's 1-10 semantics.
+
+    10 is an extreme positive signal, 9 very strong, 8 positive, 7 moderate,
+    6 slightly positive/near-neutral, 5 slightly negative/near-neutral and <=4 negative.
+    """
     rating = int(rating)
-    if rating >= 7:
-        return 0.75 + (rating - 7) * 1.0  # 7=.75 .. 10=3.75
-    if rating <= 5:
-        return -(0.75 + (5 - rating) * 0.65)  # 5=-.75 .. 1=-3.35
-    return 0.0  # 6/10 is intentionally neutral
+    table = {
+        10: 4.00,
+        9: 3.00,
+        8: 2.00,
+        7: 1.00,
+        6: 0.25,
+        5: -0.25,
+        4: -1.00,
+        3: -1.75,
+        2: -2.50,
+        1: -3.25,
+    }
+    return float(table.get(max(1, min(10, rating)), 0.0))
 
 
 _FEEDBACK_CONFIDENCE = {
@@ -52,6 +62,10 @@ class CollaborativeALSProvider:
     The shared model contains only MovieLens item factors and public IMDb mappings. CineCalendar
     never uploads personal ratings: the user's factor is recalculated locally from the SQLite
     ratings on every relevant state change.
+
+    Candidate scores are calibrated against the whole ~87k MovieLens/IMDb item-factor catalog,
+    not merely against the current shortlist. This prevents a weak shortlist from manufacturing
+    a fake 99th-percentile recommendation just because one item happens to be the least bad.
     """
 
     def __init__(self, db):
@@ -70,6 +84,7 @@ class CollaborativeALSProvider:
         self._history_token = None
         self._user_items: csr_matrix | None = None
         self._user_factor: np.ndarray | None = None
+        self._global_score_reference: np.ndarray | None = None
         self._mapped_ratings = 0
 
     def start_background(self) -> None:
@@ -98,6 +113,7 @@ class CollaborativeALSProvider:
                 "training_items": int(self._manifest.get("training_items", 0) or 0),
                 "algorithm": self._manifest.get("algorithm", "implicit ALS"),
                 "dataset": self._manifest.get("dataset", "MovieLens 32M"),
+                "calibration": "global-item-percentile",
             }
 
     def is_ready(self) -> bool:
@@ -173,8 +189,6 @@ class CollaborativeALSProvider:
                 random_state=42,
             )
             model.item_factors = item_factors
-            # recommend(..., recalculate_user=True) and explain() need only item factors/YtY,
-            # but a tiny placeholder keeps the model object complete for library internals.
             model.user_factors = np.zeros((1, factors), dtype=np.float32)
 
             mapping = {
@@ -191,6 +205,7 @@ class CollaborativeALSProvider:
                 self._history_token = None
                 self._user_items = None
                 self._user_factor = None
+                self._global_score_reference = None
                 self._state = "ready"
                 self._error = ""
         except Exception as exc:
@@ -204,6 +219,17 @@ class CollaborativeALSProvider:
             feedback = con.execute("SELECT COUNT(*),COALESCE(MAX(created_at),'') FROM feedback").fetchone()
         return int(rating[0]), str(rating[1]), int(feedback[0]), str(feedback[1])
 
+    @staticmethod
+    def _global_percentiles(values: np.ndarray, reference: np.ndarray) -> np.ndarray:
+        values = np.asarray(values, dtype=np.float64)
+        reference = np.asarray(reference, dtype=np.float64)
+        reference = np.sort(reference[np.isfinite(reference)])
+        if reference.size == 0:
+            return np.zeros(values.shape, dtype=np.float64)
+        ranks = np.searchsorted(reference, values, side="right").astype(np.float64)
+        out = ranks / float(reference.size + 1)
+        return np.clip(out, 0.0, 1.0)
+
     def _build_user_representation(self) -> tuple[csr_matrix | None, np.ndarray | None, int]:
         with self._lock:
             model = self._model
@@ -213,7 +239,12 @@ class CollaborativeALSProvider:
 
         token = self._db_history_token()
         with self._lock:
-            if token == self._history_token and self._user_items is not None and self._user_factor is not None:
+            if (
+                token == self._history_token
+                and self._user_items is not None
+                and self._user_factor is not None
+                and self._global_score_reference is not None
+            ):
                 return self._user_items, self._user_factor, self._mapped_ratings
 
         with self.db.connect() as con:
@@ -252,6 +283,7 @@ class CollaborativeALSProvider:
                 self._history_token = token
                 self._user_items = None
                 self._user_factor = None
+                self._global_score_reference = None
                 self._mapped_ratings = mapped_ratings
             return None, None, mapped_ratings
 
@@ -266,15 +298,23 @@ class CollaborativeALSProvider:
         if not np.isfinite(user_factor).all():
             return None, None, mapped_ratings
 
+        # Calibrate against all mapped MovieLens items.  This is cheap (~87k x 64 floats) and
+        # only recalculated when ratings/feedback change.
+        global_raw = np.asarray(model.item_factors.dot(user_factor), dtype=np.float64)
+        global_reference = np.sort(global_raw[np.isfinite(global_raw)])
+        if global_reference.size < 1000:
+            return None, None, mapped_ratings
+
         with self._lock:
             self._history_token = token
             self._user_items = user_items
             self._user_factor = user_factor
+            self._global_score_reference = global_reference
             self._mapped_ratings = mapped_ratings
         return user_items, user_factor, mapped_ratings
 
     def score_candidates(self, imdb_ids: Iterable[str]) -> tuple[dict[str, float], dict[str, float], int]:
-        """Return percentile-normalized ALS scores, raw scores and mapped personal-rating count."""
+        """Return globally calibrated ALS percentiles, raw scores and mapped rating count."""
         if not self.is_ready():
             return {}, {}, 0
         user_items, user_factor, mapped_ratings = self._build_user_representation()
@@ -284,7 +324,8 @@ class CollaborativeALSProvider:
         with self._lock:
             model = self._model
             mapping = self._imdb_to_item
-        if model is None:
+            reference = self._global_score_reference
+        if model is None or reference is None or reference.size == 0:
             return {}, {}, mapped_ratings
 
         pairs: list[tuple[str, int]] = []
@@ -307,10 +348,7 @@ class CollaborativeALSProvider:
 
         valid_positions = np.flatnonzero(finite)
         valid_raw = raw_values[valid_positions]
-        order = np.argsort(valid_raw, kind="mergesort")
-        ranks = np.empty(order.size, dtype=np.float64)
-        ranks[order] = np.arange(order.size, dtype=np.float64)
-        percentiles = (ranks + 1.0) / (order.size + 1.0)
+        percentiles = self._global_percentiles(valid_raw, reference)
 
         normalized: dict[str, float] = {}
         raw: dict[str, float] = {}
