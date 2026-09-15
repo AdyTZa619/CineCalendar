@@ -8,6 +8,8 @@ Monitorizarea automată a exporturilor IMDb a fost întărită. Fișierele CSV f
 
 SQLite configurează acum WAL o singură dată la pornirea bazei, nu la fiecare conexiune. Asta elimină lock-uri inutile când watcherul IMDb, motorul de recomandare și worker-ele de metadate lucrează simultan, păstrând busy timeout, cache-ul RAM și mmap pentru catalogul mare.
 
+Am limitat și thread-urile BLAS/OpenBLAS la 1 pentru workload-ul local ALS. Biblioteca implicit avertizează explicit că un BLAS cu mai multe thread-uri sub propriul motor poate produce oversubscription și probleme serioase de performanță; CineCalendar setează acum limitele înainte de importul NumPy/implicit.
+
 Au fost adăugate teste de regresie pentru watcherul IMDb, importul unui export valid o singură dată, comportamentul cu folder lipsă/CSV străin, configurarea WAL, amânarea watcherului în timpul operațiilor grele, eliminarea diversității quadratice din shortlisturile interne, warmup-ul adaptiv întârziat și restaurarea explicațiilor ALS numai pe rezultatele finale.
 
 2.4.9 păstrează toate corecțiile de calitate din 2.4.7/2.4.8, inclusiv Cinema românesc language-first, ALS global calibrat și modelul personal adaptiv local.
