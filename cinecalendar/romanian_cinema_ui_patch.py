@@ -22,7 +22,7 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
     def page_romanian(self):
         page, content = self.page_shell(
             "Cinema românesc",
-            "Selecție personalizată din filme cu identitate românească puternică. Nu trebuie să setezi nimic.",
+            "Selecție personalizată din filme cu limba originală română. Nu trebuie să setezi nimic.",
             [("Recalculează", lambda: self.show_page("romanian"), True)],
         )
         self.romanian_content = content
@@ -30,14 +30,14 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             box = QFrame(); box.setObjectName("PremiumCard")
             lay = QVBoxLayout(box); lay.setContentsMargins(20, 18, 20, 18)
             title = QLabel("Catalogul nu este încă pregătit"); title.setObjectName("SectionTitle"); lay.addWidget(title)
-            text = QLabel("CineCalendar are nevoie de catalogul IMDb local înainte să poată intersecta producțiile românești cu filmele nevăzute.")
+            text = QLabel("CineCalendar are nevoie de catalogul IMDb local înainte să poată intersecta filmele românești verificate cu titlurile nevăzute.")
             text.setObjectName("Muted"); text.setWordWrap(True); lay.addWidget(text)
             content.addWidget(box); content.addStretch(1)
             return page
 
         content.addWidget(self.loading_panel(
-            "Caut filme românești care chiar merită recomandate…",
-            "Mai întâi verific identitatea românească a producției, apoi ALS MovieLens + ratingurile tale decid dacă filmul merită să apară. Nu umplu lista cu coproducții străine doar fiindcă România apare undeva în metadate.",
+            "Caut filme românești care chiar sunt românești…",
+            "Criteriul principal și obligatoriu este limba originală română. România trebuie să apară și ca țară de origine, inclusiv la coproducții. Abia după această verificare ALS + profilul tău decid ordinea.",
         ))
         content.addStretch(1)
         QTimer.singleShot(0, self._load_romanian_async)
@@ -86,13 +86,13 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         info = QFrame(); info.setObjectName("PremiumCard")
         il = QHBoxLayout(info); il.setContentsMargins(18, 14, 18, 14); il.setSpacing(12)
         text = QLabel(
-            "Criteriu strict: România este țara unică de origine sau, pentru o coproducție, limba originală este româna. După această verificare, gustul tău decide ordinea."
+            "Criteriu obligatoriu: limba originală este româna. România trebuie să fie și țară de origine/coproducție. Un titlu nu intră doar fiindcă apare România în metadate."
         )
         text.setObjectName("Muted"); text.setWordWrap(True); il.addWidget(text, 1)
         content.addWidget(info)
 
         if not recs:
-            empty = QLabel("Nu am găsit momentan suficiente filme românești nevăzute care să treacă și pragul de încredere al recomandării.")
+            empty = QLabel("Nu am găsit momentan suficiente filme nevăzute cu limba originală română care să treacă și pragul de încredere al recomandării.")
             empty.setObjectName("Muted"); empty.setWordWrap(True); content.addWidget(empty); content.addStretch(1)
             return
 
@@ -104,7 +104,7 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         content.addWidget(self.compact_recommendation_card(recs[0], 1))
 
         if len(recs) > 1:
-            h2 = QLabel("Alte filme românești cu potrivire bună")
+            h2 = QLabel("Alte filme în limba română cu potrivire bună")
             h2.setObjectName("SectionTitle")
             content.addWidget(h2)
             grid = QGridLayout(); grid.setHorizontalSpacing(14); grid.setVerticalSpacing(14)
@@ -118,9 +118,9 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         fl = QVBoxLayout(footer); fl.setContentsMargins(18, 14, 18, 14)
         src = status.get("source", "")
         count = int(status.get("external_count", 0) or 0)
-        label = "Lista de eligibilitate este memorată local și se actualizează rar."
+        label = "Lista de eligibilitate verificată după limba originală este memorată local și se actualizează rar."
         if count:
-            label = f"Bază strictă de eligibilitate: {count:,} identificatori IMDb verificați pentru identitate românească puternică."
+            label = f"Bază strictă de eligibilitate: {count:,} identificatori IMDb verificați cu limba originală română și România ca țară de origine."
         note = QLabel(label + (f" Sursă curentă: {src}." if src else ""))
         note.setObjectName("Muted"); note.setWordWrap(True); fl.addWidget(note)
         content.addWidget(footer)
