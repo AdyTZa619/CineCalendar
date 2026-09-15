@@ -5,41 +5,173 @@ import threading
 
 from .adaptive_preferences import AdaptivePreferenceLearner
 from .models import Recommendation
+from .personal_candidates import PersonalCandidateGenerator
 from .recommender_v12 import FastRecommendationEngineV12
 from .semantic import feature_vector
 from .util import clamp, cosine_sparse, utcnow_iso
 
 
-ENGINE_VERSION = "13.2.0-adaptive-fast-shortlist"
+ENGINE_VERSION = "13.3.0-personal-candidate-generation"
 
 
 class FastRecommendationEngineV13(FastRecommendationEngineV12):
-    """V12 + a local model that continuously learns this user's real preference drift.
+    """Hybrid recommender with personal retrieval *before* the final ranking stage.
 
-    V12 supplies robust candidates using globally calibrated MovieLens ALS and the established
-    content/profile engine. V13 reranks a wider internal pool using the user's own 1-10 ratings
-    and explicit feedback. Expensive model warmup, diversity and ALS explanations are kept off
-    the large internal shortlist and applied only where they improve the final visible results.
+    V12 supplies globally calibrated MovieLens ALS and the established content/profile engine.
+    Earlier V13 versions still started from a mostly generic IMDb candidate pool, so an excellent
+    personal match could never win if it was absent from that pool. V13.3 adds global personal
+    candidate generation: roughly half of the normal shortlist comes directly from the user's ALS
+    profile across the full mapped MovieLens catalog, another lane comes from explicit 9/10-10/10
+    favourites, and the remaining generic/content pools preserve new-film and exploration coverage.
+
+    The local adaptive model then reranks the wider finalist pool using the user's own 1-10 ratings
+    and explicit feedback. Heavy model warmup, diversity and ALS explanations stay off the large
+    internal shortlist and are applied only where they improve the final visible results.
     """
 
     ADAPTIVE_POOL_MIN = 60
     ADAPTIVE_POOL_MAX = 120
+    PERSONAL_ALS_SHARE = 0.50
+    FAVORITE_NEIGHBOR_SHARE = 0.20
 
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
         self.adaptive = AdaptivePreferenceLearner(db)
+        self.personal_candidates = PersonalCandidateGenerator(db, self.collaborative)
         self._adaptive_thread: threading.Thread | None = None
         self._adaptive_thread_lock = threading.Lock()
+        self._candidate_mix_stats = {"als": 0, "favorites": 0, "generic": 0, "total": 0}
 
     def _state_token(self) -> tuple:
         return super()._state_token() + (ENGINE_VERSION,)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        return f"decision_pool_v13_2:{when.isoformat()}:{mode}"
+        return f"decision_pool_v13_3:{when.isoformat()}:{mode}"
 
     def _wait_briefly_for_first_model(self, timeout: float = 25.0) -> None:
         """Never block the recommendation worker waiting for ALS."""
         self.collaborative.start_background()
+
+    @staticmethod
+    def _merge_candidate_groups(
+        als_ids: list[int], favorite_ids: list[int], generic_ids: list[int], limit: int
+    ) -> tuple[list[int], dict[str, int]]:
+        """Build the retrieval pool with explicit personal quotas and graceful fallback.
+
+        Target mix is 50% direct ALS, 20% neighbours of 9/10-10/10 favourites and 30% established
+        generic/content discovery. Missing candidates in one lane are backfilled from the others,
+        so a partial MovieLens mapping can never shrink the recommendation pool.
+        """
+        limit = max(1, int(limit))
+        als_target = int(round(limit * FastRecommendationEngineV13.PERSONAL_ALS_SHARE))
+        favorite_target = int(round(limit * FastRecommendationEngineV13.FAVORITE_NEIGHBOR_SHARE))
+        generic_target = max(0, limit - als_target - favorite_target)
+        groups = {
+            "als": list(als_ids),
+            "favorites": list(favorite_ids),
+            "generic": list(generic_ids),
+        }
+        targets = {"als": als_target, "favorites": favorite_target, "generic": generic_target}
+        positions = {key: 0 for key in groups}
+        out: list[int] = []
+        seen: set[int] = set()
+        counts = {"als": 0, "favorites": 0, "generic": 0, "total": 0}
+
+        def take(source: str, amount: int) -> None:
+            group = groups[source]
+            while positions[source] < len(group) and amount > 0 and len(out) < limit:
+                mid = int(group[positions[source]])
+                positions[source] += 1
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                out.append(mid)
+                counts[source] += 1
+                amount -= 1
+
+        for source in ("als", "favorites", "generic"):
+            take(source, targets[source])
+
+        # Backfill any quota misses, still preferring personalized retrieval over generic filler.
+        while len(out) < limit:
+            before = len(out)
+            for source in ("als", "favorites", "generic"):
+                take(source, limit - len(out))
+                if len(out) >= limit:
+                    break
+            if len(out) == before:
+                break
+
+        counts["total"] = len(out)
+        return out, counts
+
+    def _map_personal_imdb_ids(self, imdb_ids: list[str]) -> list[int]:
+        """Map personal MovieLens candidates to local catalog rowids without random wide-row I/O."""
+        ordered = [str(x) for x in imdb_ids if str(x)]
+        if not ordered:
+            return []
+        found: dict[str, int] = {}
+        with self.db.connect() as con:
+            for start in range(0, len(ordered), 700):
+                chunk = ordered[start:start + 700]
+                marks = ",".join("?" for _ in chunk)
+                rows = con.execute(
+                    f"""SELECT id,imdb_id FROM movies
+                        WHERE imdb_id IN ({marks})
+                          AND title_type IN ('movie','short','tvMovie','video','Movie','TV Movie','tv movie')""",
+                    tuple(chunk),
+                ).fetchall()
+                for row in rows:
+                    iid = str(row["imdb_id"] or "")
+                    if iid and iid not in found:
+                        found[iid] = int(row["id"])
+        blocked_ids = self._blocked_identities()[0]
+        out: list[int] = []
+        seen: set[int] = set()
+        for iid in ordered:
+            mid = found.get(iid)
+            if mid is None or mid in blocked_ids or mid in seen:
+                continue
+            seen.add(mid)
+            out.append(mid)
+        return out
+
+    def _balanced_candidate_ids(self, when: date, limit: int) -> list[int]:
+        """Inject full-catalog personal retrieval before the established scoring pipeline."""
+        generic = list(super()._balanced_candidate_ids(when, limit))
+        if not self.collaborative.is_ready():
+            self.collaborative.start_background()
+            self._candidate_mix_stats = {
+                "als": 0,
+                "favorites": 0,
+                "generic": len(generic),
+                "total": len(generic),
+            }
+            return generic
+
+        # Oversample MovieLens IDs because not every public mapping is guaranteed to exist in the
+        # local IMDb catalog, and rated/rejected titles are removed during rowid mapping.
+        groups = self.personal_candidates.groups(
+            als_limit=max(400, int(limit * 0.80)),
+            favorite_limit=max(180, int(limit * 0.40)),
+        )
+        als_local = self._map_personal_imdb_ids(list(groups.get("als") or []))
+        favorite_local = self._map_personal_imdb_ids(list(groups.get("favorites") or []))
+        if not als_local and not favorite_local:
+            self._candidate_mix_stats = {
+                "als": 0,
+                "favorites": 0,
+                "generic": len(generic),
+                "total": len(generic),
+            }
+            return generic
+
+        merged, stats = self._merge_candidate_groups(als_local, favorite_local, generic, limit)
+        self._candidate_mix_stats = stats
+        return merged
+
+    def candidate_generation_status(self) -> dict:
+        return dict(self._candidate_mix_stats)
 
     def _adaptive_ready_for_token(self, token) -> bool:
         with self.adaptive._lock:
