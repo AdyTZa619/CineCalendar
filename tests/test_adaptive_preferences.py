@@ -111,10 +111,10 @@ def test_new_explicit_feedback_invalidates_and_retrains_model(tmp_path):
     assert status["training_feedback"] == 1
 
 
-def test_service_uses_adaptive_v13_and_does_not_compete_with_first_recommendation():
+def test_service_uses_v14_without_competing_with_first_recommendation():
     service_source = inspect.getsource(CineCalendarService.__init__)
     rerank_source = inspect.getsource(FastRecommendationEngineV13._adaptive_rerank)
-    assert "FastRecommendationEngineV13" in service_source
+    assert "FastRecommendationEngineV14" in service_source
     assert "collaborative.start_background()" in service_source
     assert "start_adaptive_background()" not in service_source
     assert "start_adaptive_background()" in rerank_source
