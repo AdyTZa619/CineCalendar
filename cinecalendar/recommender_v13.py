@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import threading
 
 from .adaptive_preferences import AdaptivePreferenceLearner
 from .models import Recommendation
@@ -9,7 +10,7 @@ from .semantic import feature_vector
 from .util import clamp, cosine_sparse, utcnow_iso
 
 
-ENGINE_VERSION = "13.0.0-adaptive-personal"
+ENGINE_VERSION = "13.1.0-adaptive-nonblocking"
 
 
 class FastRecommendationEngineV13(FastRecommendationEngineV12):
@@ -17,8 +18,9 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
 
     V12 supplies robust candidates using globally calibrated MovieLens ALS and the established
     content/profile engine. V13 then reranks a wider finalist pool using a model trained only on
-    the user's own 1-10 ratings and explicit feedback. This keeps collaborative discovery while
-    allowing thousands of personal ratings to have substantially more influence on the final 3.
+    the user's own 1-10 ratings and explicit feedback. Expensive model warmup is never allowed to
+    block the recommendation worker: until ALS/adaptive warmup finishes, the established content
+    engine returns a valid fallback and the stronger models become active on the next refresh.
     """
 
     ADAPTIVE_POOL_MIN = 60
@@ -27,6 +29,8 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
         self.adaptive = AdaptivePreferenceLearner(db)
+        self._adaptive_thread: threading.Thread | None = None
+        self._adaptive_thread_lock = threading.Lock()
 
     def _state_token(self) -> tuple:
         # Base token already changes when ratings/feedback change. ENGINE_VERSION guarantees old
@@ -34,10 +38,60 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
         return super()._state_token() + (ENGINE_VERSION,)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        return f"decision_pool_v13:{when.isoformat()}:{mode}"
+        return f"decision_pool_v13_1:{when.isoformat()}:{mode}"
+
+    def _wait_briefly_for_first_model(self, timeout: float = 25.0) -> None:
+        """V13 never blocks the UI/recommendation worker waiting for ALS.
+
+        V11/V12 call this hook before collaborative scoring.  The old implementation could wait
+        up to 25 seconds on first use.  Starting the loader is enough because score_candidates()
+        already fails closed to the content engine while ALS is not ready.
+        """
+        self.collaborative.start_background()
+
+    def _adaptive_ready_for_token(self, token) -> bool:
+        with self.adaptive._lock:
+            return token == self.adaptive._token and self.adaptive._status.get("state") == "ready"
+
+    def _adaptive_is_ready(self) -> bool:
+        return self._adaptive_ready_for_token(self.adaptive.state_token())
+
+    def start_adaptive_background(self) -> None:
+        """Warm/retrain the personal model off the recommendation path.
+
+        AdaptivePreferenceLearner.status() performs validation + training synchronously by design.
+        Running it here in a daemon thread preserves exactly the same model while avoiding a long
+        first recommendation on HDDs and after rating/feedback changes.
+        """
+        token = self.adaptive.state_token()
+        if self._adaptive_ready_for_token(token):
+            return
+        with self._adaptive_thread_lock:
+            if self._adaptive_thread is not None and self._adaptive_thread.is_alive():
+                return
+
+            def train() -> None:
+                try:
+                    self.adaptive.status()
+                except Exception:
+                    # Recommendation quality safely falls back to V12. A later request can retry.
+                    return
+
+            self._adaptive_thread = threading.Thread(
+                target=train,
+                name="CineCalendar-Adaptive",
+                daemon=True,
+            )
+            self._adaptive_thread.start()
 
     def adaptive_status(self) -> dict:
-        return self.adaptive.status()
+        # Status screens must not accidentally trigger synchronous training either.
+        self.start_adaptive_background()
+        with self.adaptive._lock:
+            status = dict(self.adaptive._status)
+        if not self._adaptive_is_ready() and status.get("state") == "not_trained":
+            status["state"] = "warming"
+        return status
 
     @staticmethod
     def _human_adaptive_feature(token: str) -> str:
@@ -61,6 +115,16 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
     def _adaptive_rerank(self, recs: list[Recommendation], count: int) -> list[Recommendation]:
         if not recs:
             return []
+
+        # The old 2.4.6/2.4.7 path called adaptive.score() here. score() synchronously trains the
+        # model the first time it is touched, which meant the Home loading card could sit for a
+        # long time with ~2.4k ratings. Never do that on the recommendation worker. Warm it in the
+        # background and return V12's already-ranked result until the personal model is ready.
+        if not self._adaptive_is_ready():
+            self.start_adaptive_background()
+            selected = list(recs[:max(1, int(count))])
+            self._assert_no_blocked_leak(selected)
+            return selected
 
         candidates: list[Recommendation] = []
         for rec in recs:
