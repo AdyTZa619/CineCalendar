@@ -1,0 +1,175 @@
+name: CineCalendar Windows Premium
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "update-v2.json"
+      - "collaborative-model.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate Premium source tree
+        shell: pwsh
+        run: |
+          $required = @(
+            'launcher.py',
+            'cinecalendar\recommendation.py',
+            'cinecalendar\recommender_v3.py',
+            'cinecalendar\recommender_v10.py',
+            'cinecalendar\recommender_v11.py',
+            'cinecalendar\recommender_v12.py',
+            'cinecalendar\collaborative_als.py',
+            'cinecalendar\daily_genre_ui_patch.py',
+            'collaborative-model.json',
+            'MOVIELENS_MODEL_NOTICE.txt',
+            'cinecalendar\autoseed.py',
+            'cinecalendar\qt_ui_v2.py',
+            'cinecalendar\premium_ui.py',
+            'cinecalendar\open_metadata.py',
+            'cinecalendar\updater.py',
+            'scripts\benchmark_engine_v3.py',
+            'UPDATE_NOTES.txt'
+          )
+          foreach ($p in $required) { if (!(Test-Path $p)) { throw "Missing Premium source: $p" } }
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q
+
+      - name: Benchmark 260k catalog engine
+        env:
+          PYTHONPATH: .
+        run: python scripts/benchmark_engine_v3.py
+
+      - name: Build fast portable folder
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit launcher.py
+          $exe = 'dist\CineCalendar\CineCalendar.exe'
+          if (!(Test-Path $exe)) { throw 'Premium EXE was not created' }
+          $b = [IO.File]::ReadAllBytes($exe)
+          if ($b.Length -lt 2 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw 'Not a Windows PE executable' }
+          if (!(Test-Path 'dist\CineCalendar\_internal')) { throw 'PyInstaller _internal folder missing' }
+          Copy-Item 'MOVIELENS_MODEL_NOTICE.txt' 'dist\CineCalendar\MOVIELENS_MODEL_NOTICE.txt' -Force
+          Write-Host "Launcher EXE bytes: $($b.Length)"
+          Write-Host "Portable folder bytes: $((Get-ChildItem 'dist\CineCalendar' -Recurse -File | Measure-Object Length -Sum).Sum)"
+          Get-FileHash $exe -Algorithm SHA256
+
+      - name: Smoke launch Premium
+        shell: pwsh
+        run: |
+          $env:CINECALENDAR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'cinecalendar-smoke-data'
+          $p = Start-Process -FilePath '.\dist\CineCalendar\CineCalendar.exe' -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) {
+            if ($p.ExitCode -ne 0) { throw "Premium app exited with $($p.ExitCode)" }
+          } else {
+            Stop-Process -Id $p.Id -Force
+          }
+
+      - name: Package Premium portable build
+        id: package
+        shell: pwsh
+        run: |
+          $version = (python -c "from cinecalendar import __version__; print(__version__)").Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'Version missing' }
+          $readme = @"
+          CineCalendar $version Premium
+
+          PORNIRE: dublu-click CineCalendar.exe.
+          Nu este necesar Python și nu se instalează nimic.
+          IMPORTANT: păstrează CineCalendar.exe împreună cu folderul _internal și restul fișierelor din acest director.
+          Datele personale sunt păstrate separat în CineCalendarData și NU sunt șterse la update.
+          Motorul principal de recomandare este implicit ALS, antrenat pe MovieLens 32M. Modelul public (~20 MB) este descărcat o singură dată și verificat SHA-256; ratingurile IMDb rămân exclusiv local și sunt folosite pentru recalcularea profilului ALS.
+          Filmele noi care nu există în MovieLens folosesc motorul personal de conținut ca fallback.
+          Vezi MOVIELENS_MODEL_NOTICE.txt pentru sursă și condițiile de utilizare ale modelului derivat.
+          Actualizările ulterioare se fac direct din aplicație: ZIP verificat SHA-256, staging, backup, health-check și rollback automat.
+          "@
+          $readme | Set-Content -Encoding utf8NoBOM 'dist\CineCalendar\README.txt'
+          $zipName = "CineCalendar-$version-Premium-Windows-x64.zip"
+          Compress-Archive -Path 'dist\CineCalendar\*' -DestinationPath $zipName -Force
+          $sha = (Get-FileHash $zipName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "ZIP: $zipName"
+          Write-Host "ZIP bytes: $((Get-Item $zipName).Length)"
+          Write-Host "ZIP SHA-256: $sha"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          "zip_sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CineCalendar-${{ steps.package.outputs.version }}-Premium-Windows-x64
+          path: |
+            dist/CineCalendar/**
+            ${{ steps.package.outputs.zip_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Stable bundle and updater manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin main --tags
+          $current = (git rev-parse HEAD).Trim()
+          $remote = (git rev-parse origin/main).Trim()
+          if ($current -ne $remote) {
+            Write-Host "A newer main commit exists ($remote); skip Stable publication from $current."
+            exit 0
+          }
+
+          $version = '${{ steps.package.outputs.version }}'
+          $zipName = '${{ steps.package.outputs.zip_name }}'
+          $sha = '${{ steps.package.outputs.zip_sha }}'
+          $tag = "cinecalendar-v$version"
+          $notes = (Get-Content 'UPDATE_NOTES.txt' -Raw).Trim()
+
+          if (gh release view $tag --repo '${{ github.repository }}' 2>$null) {
+            throw "Stable release $tag already exists. Bump CineCalendar __version__; same-version replacement is forbidden."
+          }
+
+          gh release create $tag $zipName --target $current --title "CineCalendar $version Premium" --notes $notes --repo '${{ github.repository }}'
+
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/$zipName"
+          $manifest = [ordered]@{
+            version = $version
+            url = $url
+            sha256 = $sha
+            notes = $notes
+            publishedAt = (Get-Date).ToUniversalTime().ToString('o')
+            channel = 'stable'
+            package = 'onedir-zip'
+          }
+          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8NoBOM 'update-v2.json'
+
+          $verify = Get-Content 'update-v2.json' -Raw | ConvertFrom-Json
+          if ($verify.version -ne $version) { throw 'Manifest version mismatch' }
+          if ($verify.sha256 -ne $sha) { throw 'Manifest SHA mismatch' }
+          if ($verify.url -ne $url) { throw 'Manifest URL mismatch' }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add update-v2.json
+          git commit -m "Publish CineCalendar $version bundle updater manifest [skip ci]"
+          git push origin HEAD:main
+          Write-Host "Published CineCalendar $version standalone bundle, SHA-256 $sha"
