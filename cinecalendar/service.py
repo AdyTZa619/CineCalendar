@@ -18,9 +18,10 @@ class CineCalendarService:
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = RichCalendarEngine()
         self.recommender = FastRecommendationEngineV13(self.db, self.calendar)
-        # ALS se pregătește în fundal. Modelul adaptiv personal este local și lazy: se antrenează
-        # la prima recomandare și se reconstruiește automat când se schimbă ratingurile/feedbackul.
+        # Nici ALS, nici modelul adaptiv nu au voie să blocheze prima recomandare. Ambele pornesc
+        # imediat în fundal; până sunt gata, motorul de conținut existent oferă fallback valid.
         self.recommender.collaborative.start_background()
+        self.recommender.start_adaptive_background()
 
     def _defaults(self):
         # Filtrul global Romance este retras. Preferințele reale vin din ratinguri/ALS și din
