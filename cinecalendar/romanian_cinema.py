@@ -5,37 +5,36 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from .db import Database
-from .util import json_dumps, json_loads, normalize_text, utcnow_iso
+from .util import json_dumps, json_loads, utcnow_iso
 
 
 WDQS = "https://query.wikidata.org/sparql"
-USER_AGENT = "CineCalendar/2.4 Romanian cinema discovery (Wikidata country-of-origin lookup)"
+USER_AGENT = "CineCalendar/2.4 Romanian cinema discovery (Romanian-original-language verification)"
 CACHE_PROVIDER = "romanian-cinema"
-# v2 deliberately drops the broad "Romania appears anywhere in P495" cache.  The main
-# Romanian lane is now precision-first: Romania-only productions, plus co-productions whose
-# original language is Romanian.  Broad co-productions no longer leak into the main list.
-CACHE_KEY = "wikidata-strong-romanian-film-imdb-v2"
+# v3 intentionally invalidates every earlier country-first cache. A title is eligible for the
+# dedicated Romanian cinema lane only after the original language is verified as Romanian and
+# Romania appears among the countries of origin. Country metadata alone is never enough.
+CACHE_KEY = "wikidata-romanian-language-first-film-imdb-v3"
 
 
 class RomanianCinemaProvider:
-    """Discover films with a strong Romanian production identity.
+    """Discover Romanian cinema using language as the primary mandatory identity signal.
 
-    The old rule accepted every item for which Romania appeared anywhere in Wikidata P495.
-    That is technically a Romanian co-production but, in practice, it allowed many films that
-    do not read as Romanian cinema to dominate the page.  The primary lane is now intentionally
-    stricter:
-      * Romania is the only declared country of origin; OR
-      * Romania is one of the countries of origin and Romanian is an original language.
+    Eligibility is deliberately fail-closed:
+      * original language MUST include Romanian (Wikidata P364 = Q7913); and
+      * Romania MUST be a country of origin (Wikidata P495 = Q218).
 
-    Local/offline fallback is stricter still because the local catalog does not reliably carry
-    original-language metadata: only titles whose local country list is Romania-only are used.
+    This keeps genuine Romanian co-productions while rejecting Romania-only metadata entries
+    whose original language is not Romanian. The local IMDb catalog currently has no trustworthy
+    language field, so country-only local metadata is never promoted into this lane. If Wikidata
+    is temporarily unavailable, only the last already-verified language-first cache is reused.
     """
 
     def __init__(self, db: Database):
         self.db = db
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "application/sparql-results+json"})
-        self.last_source = "local"
+        self.last_source = "not-verified"
         self.last_external_count = 0
         self.last_local_count = 0
         self.last_error = ""
@@ -53,19 +52,6 @@ class RomanianCinemaProvider:
             if RomanianCinemaProvider._valid_imdb_id(value):
                 out.add(value)
         return out
-
-    @staticmethod
-    def _normalized_countries(countries) -> set[str]:
-        return {
-            normalize_text(str(value))
-            for value in (countries or [])
-            if normalize_text(str(value))
-        }
-
-    @classmethod
-    def _romania_only(cls, countries) -> bool:
-        values = cls._normalized_countries(countries)
-        return values == {"romania"}
 
     def _cached(self, allow_expired: bool = False) -> set[str] | None:
         with self.db.connect() as con:
@@ -92,8 +78,10 @@ class RomanianCinemaProvider:
         payload = {
             "imdb_ids": sorted(ids),
             "country": "Romania",
-            "wikidata_qid": "Q218",
-            "policy": "romania-only-or-romanian-original-language",
+            "country_qid": "Q218",
+            "original_language": "Romanian",
+            "language_qid": "Q7913",
+            "policy": "romanian-original-language-and-romania-origin",
         }
         with self.db.tx() as con:
             con.execute(
@@ -108,23 +96,14 @@ class RomanianCinemaProvider:
     @staticmethod
     def wikidata_query() -> str:
         # Q11424 = film, Q218 = Romania, Q7913 = Romanian language.
-        # P31/P279 keeps non-film IMDb title entities out.  For co-productions we require
-        # Romanian as an original language; otherwise Romania must be the only P495 country.
+        # Both P364 and P495 are mandatory. Language is the primary identity gate; country is
+        # the national-production confirmation. No OR/UNION country-only escape hatch exists.
         return """SELECT DISTINCT ?imdb WHERE {
           ?item wdt:P345 ?imdb ;
+                wdt:P364 wd:Q7913 ;
                 wdt:P495 wd:Q218 ;
                 wdt:P31/wdt:P279* wd:Q11424 .
           FILTER(STRSTARTS(STR(?imdb), "tt"))
-          {
-            FILTER NOT EXISTS {
-              ?item wdt:P495 ?otherCountry .
-              FILTER(?otherCountry != wd:Q218)
-            }
-          }
-          UNION
-          {
-            ?item wdt:P364 wd:Q7913 .
-          }
         }
         LIMIT 10000"""
 
@@ -138,52 +117,41 @@ class RomanianCinemaProvider:
         return self._extract_wikidata_ids(response.json())
 
     def local_imdb_ids(self) -> set[str]:
-        out: set[str] = set()
-        with self.db.connect() as con:
-            rows = con.execute(
-                """SELECT imdb_id,countries_json FROM movies
-                   WHERE imdb_id IS NOT NULL
-                     AND countries_json IS NOT NULL
-                     AND countries_json <> '[]'
-                     AND (countries_json LIKE '%Romania%' OR countries_json LIKE '%România%')"""
-            ).fetchall()
-        for row in rows:
-            countries = json_loads(row["countries_json"], []) or []
-            iid = str(row["imdb_id"] or "")
-            # Offline local data has no trustworthy original-language field, so fail closed:
-            # a mixed country list is a co-production and does not enter the main Romanian lane.
-            if self._valid_imdb_id(iid) and self._romania_only(countries):
-                out.add(iid)
-        self.last_local_count = len(out)
-        return out
+        """Never infer Romanian-language identity from country-only local metadata."""
+        self.last_local_count = 0
+        return set()
 
     def imdb_ids(self, refresh: bool = False) -> set[str]:
-        local = self.local_imdb_ids()
         cached = None if refresh else self._cached()
         if cached is not None:
-            self.last_source = "strict-cache+local"
+            self.last_source = "romanian-language-verified-cache"
             self.last_external_count = len(cached)
+            self.last_local_count = 0
             self.last_error = ""
-            return set(cached) | local
+            return set(cached)
 
         stale = self._cached(allow_expired=True)
         try:
             external = self._fetch_wikidata_ids()
             if external:
                 self._store(external)
-            self.last_source = "strict-wikidata+local"
+            self.last_source = "romanian-language-wikidata"
             self.last_external_count = len(external)
+            self.last_local_count = 0
             self.last_error = ""
-            return external | local
+            return external
         except requests.RequestException as exc:
             self.last_error = str(exc)
+            self.last_local_count = 0
             if stale:
-                self.last_source = "strict-stale-cache+local"
+                self.last_source = "romanian-language-stale-cache"
                 self.last_external_count = len(stale)
-                return set(stale) | local
-            self.last_source = "romania-only-local"
+                return set(stale)
+            # Fail closed. Showing no Romanian recommendation is better than labelling a film
+            # Romanian only because a country field happens to contain Romania.
+            self.last_source = "language-unverified-empty"
             self.last_external_count = 0
-            return local
+            return set()
 
     def status(self) -> dict:
         return {
@@ -191,5 +159,6 @@ class RomanianCinemaProvider:
             "external_count": int(self.last_external_count),
             "local_count": int(self.last_local_count),
             "error": self.last_error,
-            "policy": "romania-only-or-romanian-original-language",
+            "policy": "romanian-original-language-and-romania-origin",
+            "language_primary": True,
         }
