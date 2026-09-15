@@ -18,10 +18,11 @@ class CineCalendarService:
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = RichCalendarEngine()
         self.recommender = FastRecommendationEngineV13(self.db, self.calendar)
-        # Nici ALS, nici modelul adaptiv nu au voie să blocheze prima recomandare. Ambele pornesc
-        # imediat în fundal; până sunt gata, motorul de conținut existent oferă fallback valid.
+        # ALS may warm in the background immediately because it is a read-mostly model load.
+        # Do NOT start the adaptive trainer here: with thousands of ratings it walks the local DB
+        # and uses CPU at exactly the moment Home is computing its first pool. V13 starts it only
+        # after the base recommendation has already been ranked, so first paint gets disk priority.
         self.recommender.collaborative.start_background()
-        self.recommender.start_adaptive_background()
 
     def _defaults(self):
         # Filtrul global Romance este retras. Preferințele reale vin din ratinguri/ALS și din
