@@ -40,7 +40,6 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
         return base + (collaborative_token, ENGINE_VERSION)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        # Never reuse a decision pool produced by an older ALS calibration/blend.
         return f"decision_pool_v11_1:{when.isoformat()}:{mode}"
 
     @staticmethod
@@ -81,15 +80,27 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
 
     @staticmethod
     def _mapped_candidate_is_trustworthy(als_score: float, predicted_rating: float, confidence: float) -> bool:
-        """Fail closed when both collaborative and content evidence are weak.
-
-        A candidate below the 35th global ALS percentile must have unusually strong independent
-        content evidence to survive. This avoids returning a film merely because every option in
-        a small shortlist was bad.
-        """
         if als_score >= .35:
             return True
         return predicted_rating >= 7.0 and confidence >= .65
+
+    @staticmethod
+    def _catalog_quality_is_trustworthy(movie) -> bool:
+        """Reject very thin IMDb evidence unless its Bayesian quality remains convincing.
+
+        A raw 9-10/10 from a few dozen votes is not treated like a mature 8/10 title.  The
+        prior is intentionally conservative and is only relevant below 250 votes.
+        """
+        votes = max(0, int(movie.num_votes or 0))
+        if votes >= 250:
+            return True
+        rating = float(movie.imdb_rating or 0.0)
+        if rating <= 0.0:
+            return False
+        prior_mean = 6.5
+        prior_votes = 1000.0
+        bayes = (rating * votes + prior_mean * prior_votes) / (votes + prior_votes)
+        return bayes >= 6.75
 
     def recommend(self, when: date | None = None, count: int = 3, exclude_ids: set[int] | None = None,
                   record: bool = False, slot: str = "today", candidate_limit: int = 100000,
@@ -128,6 +139,8 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
             if mid in exclude_ids:
                 continue
             movie = row_to_movie(row)
+            if not self._catalog_quality_is_trustworthy(movie):
+                continue
             if runtime_max is not None and movie.runtime_min is not None and movie.runtime_min > runtime_max:
                 continue
             if runtime_min is not None and movie.runtime_min is not None and movie.runtime_min < runtime_min:
