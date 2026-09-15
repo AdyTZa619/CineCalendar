@@ -36,8 +36,8 @@ def test_premium_startup_installs_daily_genre_ui_patch():
     source = inspect.getsource(app_module.main)
     assert "install_daily_genre_ui_patch(CalendarPremiumWindow)" in source
     service_source = inspect.getsource(service_module.CineCalendarService.__init__)
-    # V13 inherits the V12 daily-genre behavior and adds adaptive personal reranking.
-    assert "FastRecommendationEngineV13" in service_source
+    # V14 inherits V12/V13 daily-genre and adaptive behavior, then adds bounded watch intent.
+    assert "FastRecommendationEngineV14" in service_source
 
 
 def test_genre_ui_is_secondary_not_required_for_default_recommendation():
