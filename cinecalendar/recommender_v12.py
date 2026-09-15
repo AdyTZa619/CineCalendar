@@ -11,11 +11,11 @@ from .semantic import feature_vector
 from .util import clamp, cosine_sparse, json_loads, normalize_text
 
 
-ENGINE_VERSION = "12.2.0-als-global-calibrated-strong-romanian"
+ENGINE_VERSION = "12.3.0-als-global-calibrated-romanian-language-first"
 
 
 class FastRecommendationEngineV12(FastRecommendationEngineV11):
-    """Calibrated ALS recommender with optional daily genre and a precision-first Romanian lane."""
+    """Calibrated ALS recommender with optional daily genre and a language-first Romanian lane."""
 
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
@@ -88,11 +88,12 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
         return status
 
     def recommend_romanian(self, when: date | None = None, count: int = 9):
-        """Rank only titles with a strong Romanian production identity.
+        """Rank only titles verified as Romanian-language Romanian productions.
 
-        Eligibility is precision-first and separate from ranking. Once a film qualifies, the
-        same globally calibrated ALS + personal content signals used by the main recommender
-        decide whether it deserves to be shown.
+        Eligibility is separate from ranking. The original language must be Romanian and
+        Romania must appear as a country of origin. Once a title qualifies, the same globally
+        calibrated ALS + personal content signals used by the main recommender decide whether
+        it deserves to be shown.
         """
         when = when or date.today()
         profile = get_profile(self.db)
@@ -139,9 +140,9 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
             score.contributions.insert(
                 0,
                 (
-                    "Identitate românească verificată",
+                    "Film românesc verificat prin limbă",
                     0.0,
-                    "România este țara unică de origine sau coproducția are limba originală română; criteriul nu adaugă puncte la scor.",
+                    "Limba originală este româna și România figurează ca țară de origine/coproducție; eligibilitatea nu adaugă puncte la scor.",
                 ),
             )
 
