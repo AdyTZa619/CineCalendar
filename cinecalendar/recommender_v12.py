@@ -119,6 +119,9 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
 
         for row in rows:
             movie = row_to_movie(row)
+            if not self._catalog_quality_is_trustworthy(movie):
+                continue
+
             # In the dedicated Romanian lane prefer the original-language title when IMDb's
             # primary/display title is an English international title.
             if movie.original_title and normalize_text(movie.original_title) != normalize_text(movie.title):
