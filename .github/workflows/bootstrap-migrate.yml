@@ -1,0 +1,116 @@
+name: Bootstrap standalone CineCalendar
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/bootstrap-migrate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import CineCalendar source from legacy branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          legacy="$RUNNER_TEMP/legacy-ddg"
+          git clone --depth 1 --branch cinecalendar-direct-exe https://github.com/AdyTZa619/DuplicateDownloadGuard-Releases.git "$legacy"
+
+          # Replace this bootstrap repository with the standalone CineCalendar source tree.
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a "$legacy/CineCalendar/." .
+
+          mkdir -p .github/workflows
+          cp "$legacy/.github/workflows/cinecalendar-direct-exe.yml" .github/workflows/windows-release.yml
+          cp "$legacy/.github/workflows/cinecalendar-als-model.yml" .github/workflows/als-model.yml
+
+          python - <<'PY'
+          from pathlib import Path
+
+          # Standalone app version: repository migration is a real update so old 2.4.2 clients
+          # can cross the one-time bridge from the legacy updater manifest.
+          Path('cinecalendar/__init__.py').write_text('__version__ = "2.4.3"\n', encoding='utf-8')
+
+          updater = Path('cinecalendar/updater.py')
+          text = updater.read_text(encoding='utf-8')
+          old = '''MANIFEST_URL = (\n    "https://raw.githubusercontent.com/AdyTZa619/"\n    "DuplicateDownloadGuard-Releases/cinecalendar-direct-exe/CineCalendar/update-v2.json"\n)'''
+          new = '''MANIFEST_URL = (\n    "https://raw.githubusercontent.com/AdyTZa619/"\n    "CineCalendar/main/update-v2.json"\n)'''
+          if old not in text:
+              raise SystemExit('Legacy updater manifest URL not found')
+          updater.write_text(text.replace(old, new), encoding='utf-8')
+
+          model = Path('collaborative-model.json')
+          text = model.read_text(encoding='utf-8').replace(
+              'https://github.com/AdyTZa619/DuplicateDownloadGuard-Releases/releases/download/cinecalendar-als-ml32m-v1/cinecalendar-als-ml32m-v1.npz',
+              'https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-als-ml32m-v1/cinecalendar-als-ml32m-v1.npz',
+          )
+          model.write_text(text, encoding='utf-8')
+
+          notes = '''CineCalendar 2.4.3 mută aplicația într-un repository GitHub dedicat: AdyTZa619/CineCalendar. Proiectul, buildurile Windows, release-urile, manifestul de update și modelul colaborativ nu mai sunt întreținute în repository-ul DuplicateDownloadGuard-Releases.\n\nMotorul de recomandare rămâne ALS MovieLens + profilul personal local, iar pagina «Ce văd acum?» recomandă automat fără să ceară alegerea unui gen. Selectorul de gen rămâne opțional pentru momentele în care utilizatorul vrea explicit ceva anume.\n\nUpdaterul 2.4.3 și versiunile următoare citesc direct manifestul Stable din noul repository CineCalendar. Datele personale din CineCalendarData nu sunt mutate, șterse sau publicate.\n\nRămân active protecția anti-văzut/rated, Program calendar precision-first, optimizările HDD, biblioteca completă de ratinguri, Taste Hub și updaterul cu staging, SHA-256, health-check și rollback.'''
+          Path('UPDATE_NOTES.txt').write_text(notes, encoding='utf-8')
+
+          wf = Path('.github/workflows/windows-release.yml')
+          t = wf.read_text(encoding='utf-8')
+          t = t.replace('branches: ["cinecalendar-direct-exe"]', 'branches: ["main"]')
+          t = t.replace('"CineCalendar/update-v2.json"', '"update-v2.json"')
+          t = t.replace('"CineCalendar/collaborative-model.json"', '"collaborative-model.json"')
+          t = t.replace('working-directory: CineCalendar', 'working-directory: .')
+          t = t.replace("'CineCalendar\\\\", "'")
+          t = t.replace('CineCalendar/dist/CineCalendar/**', 'dist/CineCalendar/**')
+          t = t.replace('CineCalendar/${{ steps.package.outputs.zip_name }}', '${{ steps.package.outputs.zip_name }}')
+          t = t.replace('git fetch origin cinecalendar-direct-exe --tags', 'git fetch origin main --tags')
+          t = t.replace('origin/cinecalendar-direct-exe', 'origin/main')
+          t = t.replace('HEAD:cinecalendar-direct-exe', 'HEAD:main')
+          wf.write_text(t, encoding='utf-8')
+
+          # Adapt the model workflow to repository-root layout and main branch.
+          awf = Path('.github/workflows/als-model.yml')
+          a = awf.read_text(encoding='utf-8')
+          a = a.replace('cinecalendar-direct-exe', 'main')
+          a = a.replace('working-directory: CineCalendar', 'working-directory: .')
+          a = a.replace('CineCalendar/', '')
+          a = a.replace('DuplicateDownloadGuard-Releases', 'CineCalendar')
+          awf.write_text(a, encoding='utf-8')
+
+          # README should describe this as a standalone project, not a DDG branch.
+          readme = Path('README.md')
+          if readme.exists():
+              r = readme.read_text(encoding='utf-8')
+              r = r.replace('DuplicateDownloadGuard-Releases', 'CineCalendar')
+              r = r.replace('cinecalendar-direct-exe', 'main')
+              readme.write_text(r, encoding='utf-8')
+          PY
+
+          # Copy the already-trained public ALS artifact into the new repository's own release.
+          if ! gh release view cinecalendar-als-ml32m-v1 --repo AdyTZa619/CineCalendar >/dev/null 2>&1; then
+            curl -fL --retry 3 \
+              -o "$RUNNER_TEMP/cinecalendar-als-ml32m-v1.npz" \
+              https://github.com/AdyTZa619/DuplicateDownloadGuard-Releases/releases/download/cinecalendar-als-ml32m-v1/cinecalendar-als-ml32m-v1.npz
+            echo '39afb93e3d154a3ad4ef665f6cafaeb9ad0868818c8dd4eb660eba13a157a1c6  '"$RUNNER_TEMP/cinecalendar-als-ml32m-v1.npz" | sha256sum -c -
+            gh release create cinecalendar-als-ml32m-v1 \
+              "$RUNNER_TEMP/cinecalendar-als-ml32m-v1.npz" \
+              --repo AdyTZa619/CineCalendar \
+              --title 'CineCalendar ALS MovieLens 32M v1' \
+              --notes 'Model colaborativ public derivat din MovieLens 32M; vezi MOVIELENS_MODEL_NOTICE.txt pentru condițiile de utilizare.'
+          fi
+
+          # Do not carry the old Stable manifest: 2.4.3 will publish its own only after tests,
+          # benchmark, Windows build and smoke launch succeed in this repository.
+          rm -f update-v2.json update.json
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Migrate CineCalendar to standalone repository as 2.4.3'
+          git push origin HEAD:main
