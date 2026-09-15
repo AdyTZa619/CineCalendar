@@ -1,0 +1,128 @@
+name: CineCalendar MovieLens ALS Model
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "scripts/train_movielens_als.py"
+      - "MOVIELENS_MODEL_NOTICE.txt"
+      - ".github/workflows/als-model.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install recommender training dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "implicit==0.7.3" "numpy>=2,<3" "scipy>=1.13,<2" "pandas>=2.2,<3" "requests>=2.32,<3"
+
+      - name: Train MovieLens 32M implicit ALS model
+        run: |
+          python scripts/train_movielens_als.py \
+            --output cinecalendar-als-ml32m-v1.npz \
+            --metadata cinecalendar-als-ml32m-v1.json \
+            --factors 64 \
+            --regularization 0.08 \
+            --iterations 15
+
+      - name: Validate published-factor artifact
+        run: |
+          python - <<'PY'
+          import json
+          import numpy as np
+          from pathlib import Path
+          p = Path('cinecalendar-als-ml32m-v1.npz')
+          meta = json.loads(Path('cinecalendar-als-ml32m-v1.json').read_text(encoding='utf-8'))
+          with np.load(p, allow_pickle=False) as z:
+              factors = z['item_factors']
+              imdb_ids = z['imdb_ids']
+              assert factors.shape[0] == imdb_ids.shape[0]
+              assert factors.shape[1] == 64
+              assert factors.shape[0] >= 80000
+              assert np.isfinite(factors).all()
+          assert meta['artifact_bytes'] == p.stat().st_size
+          assert meta['training_users'] >= 190000
+          print(meta)
+          PY
+
+      - name: Fetch official MovieLens usage terms
+        run: |
+          curl -fL --retry 4 --retry-delay 3 \
+            https://files.grouplens.org/datasets/movielens/ml-32m-README.html \
+            -o ml-32m-README.html
+
+      - name: Publish model asset and manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="cinecalendar-als-ml32m-v1"
+          MODEL="cinecalendar-als-ml32m-v1.npz"
+          META="cinecalendar-als-ml32m-v1.json"
+          NOTICE="MOVIELENS_MODEL_NOTICE.txt"
+          README="ml-32m-README.html"
+          SHA="$(sha256sum "$MODEL" | awk '{print $1}')"
+          SIZE="$(stat -c%s "$MODEL")"
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$MODEL" "$META" "$NOTICE" "$README" --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "$TAG" "$MODEL" "$META" "$NOTICE" "$README" \
+              --target "${{ github.sha }}" \
+              --title "CineCalendar MovieLens 32M ALS model v1" \
+              --notes "Derived non-commercial recommendation model trained with implicit ALS on MovieLens 32M. See MOVIELENS_MODEL_NOTICE.txt and the official GroupLens README included with the release." \
+              --repo "${{ github.repository }}"
+          fi
+
+          URL="https://github.com/${{ github.repository }}/releases/download/$TAG/cinecalendar-als-ml32m-v1.npz"
+
+          git fetch origin main
+          git rebase origin/main
+
+          python - "$URL" "$SHA" "$SIZE" <<'PY'
+          import json, sys
+          from pathlib import Path
+          meta = json.loads(Path('cinecalendar-als-ml32m-v1.json').read_text(encoding='utf-8'))
+          payload = {
+              'version': meta['model_version'],
+              'algorithm': meta['algorithm'],
+              'implementation': meta['implementation'],
+              'dataset': meta['dataset'],
+              'dataset_url': meta['dataset_url'],
+              'url': sys.argv[1],
+              'sha256': sys.argv[2],
+              'size_bytes': int(sys.argv[3]),
+              'factors': meta['factors'],
+              'regularization': meta['regularization'],
+              'iterations': meta['iterations'],
+              'training_users': meta['training_users'],
+              'training_items': meta['training_items'],
+              'training_interactions': meta['training_interactions'],
+              'notice': 'MovieLens 32M / GroupLens usage terms apply; non-commercial unless permission is obtained.',
+              'source_readme': 'https://files.grouplens.org/datasets/movielens/ml-32m-README.html',
+          }
+          Path('collaborative-model.json').write_text(json.dumps(payload, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add collaborative-model.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish CineCalendar MovieLens ALS model manifest [skip ci]"
+            git push origin HEAD:main
+          fi
