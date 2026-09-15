@@ -60,7 +60,13 @@ def install_performance_ui_patch(window_cls) -> None:
             return False
 
     def scan_ratings_folder(self, manual: bool = False):
+        # QPushButton.clicked(bool) supplies False for a normal button, so detect an explicit
+        # user click by sender as well. QTimer.timeout has the watch timer as sender.
+        sender = self.sender()
+        if sender is not None and sender is not getattr(self, "watch_timer", None):
+            manual = True
         manual = bool(manual)
+
         if not manual and not self.db.get_setting("auto_watch_enabled", False):
             return
         if not manual and _foreground_busy(self):
