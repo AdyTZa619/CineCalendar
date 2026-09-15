@@ -6,6 +6,8 @@ on:
     paths-ignore:
       - "update-v2.json"
       - "collaborative-model.json"
+      - ".github/workflows/bootstrap-migrate.yml"
+      - ".github/workflows/als-model.yml"
   workflow_dispatch:
 
 permissions:
@@ -134,8 +136,16 @@ jobs:
           $current = (git rev-parse HEAD).Trim()
           $remote = (git rev-parse origin/main).Trim()
           if ($current -ne $remote) {
-            Write-Host "A newer main commit exists ($remote); skip Stable publication from $current."
-            exit 0
+            $changed = @(git diff --name-only "$current..$remote")
+            $blocking = @($changed | Where-Object { $_ -notin @('update-v2.json', 'collaborative-model.json') })
+            if ($blocking.Count -gt 0) {
+              Write-Host "A newer source commit exists ($remote); skip Stable publication from $current."
+              Write-Host "Changed source paths: $($blocking -join ', ')"
+              exit 0
+            }
+            Write-Host 'Only ignored manifest/model metadata changed while building; rebasing before publication.'
+            git rebase origin/main
+            $current = (git rev-parse HEAD).Trim()
           }
 
           $version = '${{ steps.package.outputs.version }}'
