@@ -1,0 +1,18 @@
+{
+  "version": "ml32m-als-v1",
+  "algorithm": "implicit Alternating Least Squares (Hu-Koren-Volinsky family)",
+  "implementation": "implicit 0.7.3",
+  "dataset": "MovieLens 32M",
+  "dataset_url": "https://files.grouplens.org/datasets/movielens/ml-32m.zip",
+  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-als-ml32m-v1/cinecalendar-als-ml32m-v1.npz",
+  "sha256": "39afb93e3d154a3ad4ef665f6cafaeb9ad0868818c8dd4eb660eba13a157a1c6",
+  "size_bytes": 19800365,
+  "factors": 64,
+  "regularization": 0.08,
+  "iterations": 15,
+  "training_users": 200948,
+  "training_items": 87585,
+  "training_interactions": 25945214,
+  "notice": "MovieLens 32M / GroupLens usage terms apply; non-commercial unless permission is obtained.",
+  "source_readme": "https://files.grouplens.org/datasets/movielens/ml-32m-README.html"
+}

@@ -1,0 +1,175 @@
+{
+  "run_date": "2026-09-13",
+  "input": {
+    "name": "ratinguri_imdb_05.09.2026.csv",
+    "sha256": "f51555360b70216b916452e02d264504d170277d3a7b6eb87f4b46e6d3e9b198",
+    "rows": 2434
+  },
+  "database": {
+    "ratings": 2434,
+    "movies": 2434,
+    "unseen_candidates": 0,
+    "duplicate_imdb_ids": 0,
+    "duplicate_rating_movie_ids": 0,
+    "schema_version": 4
+  },
+  "calendar": {
+    "orthodox_easter_2026": "2026-04-12",
+    "ascension_2026": "2026-05-21",
+    "pentecost_2026": "2026-05-31",
+    "autumn_equinox_2026": "2026-09-23",
+    "month_groups": [
+      {
+        "start": "2026-09-13",
+        "end": "2026-09-15",
+        "label": "Înălțarea Sfintei Cruci"
+      },
+      {
+        "start": "2026-09-16",
+        "end": "2026-09-22",
+        "label": "Ziua Internațională a Păcii"
+      },
+      {
+        "start": "2026-09-23",
+        "end": "2026-09-26",
+        "label": "Echinocțiul de toamnă"
+      },
+      {
+        "start": "2026-09-27",
+        "end": "2026-09-30",
+        "label": "Ziua Mondială a Turismului"
+      }
+    ]
+  },
+  "profile": {
+    "rated_count": 2434,
+    "mean_user_minus_imdb": -0.337,
+    "top_genres": [
+      [
+        "genre:western",
+        7.991,
+        16,
+        0.4809
+      ],
+      [
+        "genre:biography",
+        7.606,
+        81,
+        0.477
+      ],
+      [
+        "genre:war",
+        7.248,
+        77,
+        0.3909
+      ],
+      [
+        "genre:history",
+        7.19,
+        97,
+        0.3812
+      ],
+      [
+        "genre:sci fi",
+        7.109,
+        152,
+        0.3743
+      ],
+      [
+        "genre:action",
+        7.103,
+        246,
+        0.3704
+      ],
+      [
+        "genre:adventure",
+        7.074,
+        175,
+        0.3599
+      ],
+      [
+        "genre:crime",
+        7.051,
+        249,
+        0.3589
+      ],
+      [
+        "genre:family",
+        7.032,
+        104,
+        0.3422
+      ],
+      [
+        "genre:thriller",
+        6.966,
+        423,
+        0.3404
+      ]
+    ],
+    "top_directors": [
+      [
+        "director:steven spielberg",
+        8.474,
+        10,
+        0.4671
+      ],
+      [
+        "director:quentin tarantino",
+        8.272,
+        11,
+        0.4477
+      ],
+      [
+        "director:martin scorsese",
+        8.43,
+        7,
+        0.4066
+      ],
+      [
+        "director:david fincher",
+        8.147,
+        6,
+        0.338
+      ],
+      [
+        "director:anthony russo",
+        8.75,
+        4,
+        0.338
+      ],
+      [
+        "director:joe russo",
+        8.75,
+        4,
+        0.338
+      ],
+      [
+        "director:christopher nolan",
+        8.401,
+        5,
+        0.3376
+      ],
+      [
+        "director:nicolae margineanu",
+        7.269,
+        18,
+        0.3291
+      ],
+      [
+        "director:james wan",
+        7.996,
+        7,
+        0.3277
+      ],
+      [
+        "director:sam raimi",
+        7.858,
+        7,
+        0.3251
+      ]
+    ]
+  },
+  "recommendations_today": [],
+  "recommendation_acceptance_status": "blocked_no_unseen_catalog",
+  "note": "ratings.csv contains evaluated titles, not an unseen candidate catalog. The application deliberately does not fabricate candidates."
+}

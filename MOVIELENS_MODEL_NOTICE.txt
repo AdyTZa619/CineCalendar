@@ -1,0 +1,12 @@
+CineCalendar collaborative model notice
+
+The optional CineCalendar collaborative recommendation model is trained from the MovieLens 32M dataset published by GroupLens Research, University of Minnesota.
+
+Source dataset:
+https://grouplens.org/datasets/movielens/32m/
+Official dataset README / usage terms:
+https://files.grouplens.org/datasets/movielens/ml-32m-README.html
+
+The derived model is distributed under the same usage conditions that apply to the MovieLens 32M dataset. In particular, MovieLens 32M is provided for research use and may not be used for commercial or revenue-bearing purposes without permission from GroupLens. CineCalendar does not state or imply endorsement by GroupLens or the University of Minnesota.
+
+The CineCalendar application downloads only the derived latent-factor model needed for recommendations. It does not bundle or publish the user's private IMDb ratings. Personal ratings stay in the local CineCalendarData folder and are used locally to calculate the user's factor vector.

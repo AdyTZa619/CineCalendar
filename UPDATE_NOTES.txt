@@ -1,0 +1,7 @@
+CineCalendar 2.4.3 mută aplicația într-un repository GitHub dedicat: AdyTZa619/CineCalendar. Proiectul, buildurile Windows, release-urile, manifestul de update și modelul colaborativ nu mai sunt întreținute în repository-ul DuplicateDownloadGuard-Releases.
+
+Motorul de recomandare rămâne ALS MovieLens + profilul personal local, iar pagina «Ce văd acum?» recomandă automat fără să ceară alegerea unui gen. Selectorul de gen rămâne opțional pentru momentele în care utilizatorul vrea explicit ceva anume.
+
+Updaterul 2.4.3 și versiunile următoare citesc direct manifestul Stable din noul repository CineCalendar. Datele personale din CineCalendarData nu sunt mutate, șterse sau publicate.
+
+Rămân active protecția anti-văzut/rated, Program calendar precision-first, optimizările HDD, biblioteca completă de ratinguri, Taste Hub și updaterul cu staging, SHA-256, health-check și rollback.
