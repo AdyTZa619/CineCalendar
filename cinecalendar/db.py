@@ -128,6 +128,7 @@ CREATE INDEX IF NOT EXISTS ix_movies_original_norm_year_type ON movies(original_
 '''
 }
 
+
 class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -138,12 +139,11 @@ class Database:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys=ON")
-        con.execute("PRAGMA journal_mode=WAL")
         con.execute("PRAGMA synchronous=NORMAL")
         con.execute("PRAGMA busy_timeout=5000")
-        # Keep hot B-tree/table pages in RAM and memory-map the read-mostly catalog. This is
-        # especially important when CineCalendarData lives on a mechanical HDD: repeated
-        # recommendation queries should not turn thousands of small reads into 100% active time.
+        # journal_mode is configured once during migrate(). Re-requesting WAL on every worker
+        # connection can itself need a lock and caused avoidable 'database is locked' failures
+        # when the ratings watcher, recommendation engine and metadata workers overlap.
         con.execute("PRAGMA temp_store=MEMORY")
         con.execute("PRAGMA cache_size=-32768")  # ~32 MiB per active connection, upper bound.
         try:
@@ -166,8 +166,13 @@ class Database:
             con.close()
 
     def migrate(self) -> None:
-        con = sqlite3.connect(self.path)
+        # This is the only single-threaded startup point that changes journal mode. Once WAL is
+        # persistent in the database header, normal connections only need per-connection pragmas.
+        con = sqlite3.connect(self.path, timeout=30)
         try:
+            con.execute("PRAGMA busy_timeout=5000")
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute("PRAGMA synchronous=NORMAL")
             con.execute("PRAGMA foreign_keys=ON")
             con.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
             current = con.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0]
@@ -176,7 +181,7 @@ class Database:
                 con.executescript(MIGRATIONS[version])
                 if version == 4:
                     from .util import normalize_text
-                    rows=con.execute("SELECT id,title,original_title FROM movies").fetchall()
+                    rows = con.execute("SELECT id,title,original_title FROM movies").fetchall()
                     con.executemany("UPDATE movies SET title_norm=?,original_title_norm=? WHERE id=?", [
                         (normalize_text(r[1] or ""), normalize_text(r[2] or r[1] or ""), r[0]) for r in rows
                     ])
