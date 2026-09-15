@@ -12,11 +12,12 @@ from .semantic import feature_vector
 from .util import clamp, cosine_sparse, utcnow_iso
 
 
-ENGINE_VERSION = "11.1.0-als-global-calibrated"
-# ALS remains the primary ranker, but content/profile evidence now has enough weight to rescue
+ENGINE_VERSION = "11.2.0-als-fast-shortlist"
+# ALS remains the primary ranker, but content/profile evidence has enough weight to rescue
 # strong personal matches and to stop a mediocre collaborative score from dominating the list.
 ALS_WEIGHT = 0.70
 CONTENT_WEIGHT = 1.0 - ALS_WEIGHT
+DIVERSITY_SHORTLIST_THRESHOLD = 20
 
 
 class FastRecommendationEngineV11(FastRecommendationEngineV10):
@@ -40,7 +41,7 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
         return base + (collaborative_token, ENGINE_VERSION)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        return f"decision_pool_v11_1:{when.isoformat()}:{mode}"
+        return f"decision_pool_v11_2:{when.isoformat()}:{mode}"
 
     @staticmethod
     def _collaborative_reason(mapped_ratings: int, percentile: float) -> str:
@@ -86,11 +87,7 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
 
     @staticmethod
     def _catalog_quality_is_trustworthy(movie) -> bool:
-        """Reject very thin IMDb evidence unless its Bayesian quality remains convincing.
-
-        A raw 9-10/10 from a few dozen votes is not treated like a mature 8/10 title.  The
-        prior is intentionally conservative and is only relevant below 250 votes.
-        """
+        """Reject very thin IMDb evidence unless its Bayesian quality remains convincing."""
         votes = max(0, int(movie.num_votes or 0))
         if votes >= 250:
             return True
@@ -101,6 +98,50 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
         prior_votes = 1000.0
         bayes = (rating * votes + prior_mean * prior_votes) / (votes + prior_votes)
         return bayes >= 6.75
+
+    def _select_candidates(self, candidates: list[Recommendation], count: int, mode: str) -> list[Recommendation]:
+        """Apply MMR diversity only to user-visible result sets.
+
+        V13 asks V11/V12 for 60+ candidates as an *internal* pool. Running the old diversity
+        loop for that pool was effectively quadratic and repeatedly rebuilt feature vectors for
+        thousands of pairs. The final V13 output applies diversity again to only 3-12 items, so
+        a large internal request should simply return the already sorted top-N candidates.
+        """
+        count = max(1, int(count))
+        if count > DIVERSITY_SHORTLIST_THRESHOLD:
+            return list(candidates[:count])
+
+        selected: list[Recommendation] = []
+        pool = list(candidates[:max(250, count * 35)])
+        vectors = {rec.movie.id: feature_vector(rec.movie) for rec in pool}
+        while pool and len(selected) < count:
+            best = None
+            best_value = -1.0
+            for rec in pool:
+                if not selected:
+                    diversity = 1.0
+                else:
+                    current = vectors.get(rec.movie.id) or feature_vector(rec.movie)
+                    diversity = 1.0 - max(
+                        cosine_sparse(current, vectors.get(chosen.movie.id) or feature_vector(chosen.movie))
+                        for chosen in selected
+                    )
+                diversity_weight = .055 if mode == "surprise" else .03
+                adjusted = rec.score.final + diversity_weight * (diversity - .5)
+                if adjusted > best_value:
+                    best_value = adjusted
+                    best = (rec, diversity)
+            if best is None:
+                break
+            rec, diversity = best
+            rec.score.diversity = clamp(diversity)
+            rec.score.final = clamp(best_value)
+            rec.score.contributions.append(
+                ("Diversitate", rec.score.diversity * .03 * 100.0, "Evită o listă de recomandări aproape identice.")
+            )
+            selected.append(rec)
+            pool.remove(rec)
+        return selected
 
     def recommend(self, when: date | None = None, count: int = 3, exclude_ids: set[int] | None = None,
                   record: bool = False, slot: str = "today", candidate_limit: int = 100000,
@@ -185,37 +226,11 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
             reverse=True,
         )
 
-        selected: list[Recommendation] = []
-        pool = candidates[:max(250, count * 35)]
-        while pool and len(selected) < count:
-            best = None
-            best_value = -1.0
-            for rec in pool:
-                if not selected:
-                    diversity = 1.0
-                else:
-                    diversity = 1.0 - max(
-                        cosine_sparse(feature_vector(rec.movie), feature_vector(chosen.movie))
-                        for chosen in selected
-                    )
-                diversity_weight = .055 if mode == "surprise" else .03
-                adjusted = rec.score.final + diversity_weight * (diversity - .5)
-                if adjusted > best_value:
-                    best_value = adjusted
-                    best = (rec, diversity)
-            if best is None:
-                break
-            rec, diversity = best
-            rec.score.diversity = clamp(diversity)
-            rec.score.final = clamp(best_value)
-            rec.score.contributions.append(
-                ("Diversitate", rec.score.diversity * .03 * 100.0, "Evită o listă de recomandări aproape identice.")
-            )
-            selected.append(rec)
-            pool.remove(rec)
-
+        selected = self._select_candidates(candidates, count, mode)
         self._assert_no_blocked_leak(selected)
-        if collaborative_active:
+        # ALS explain() is relatively expensive. Large requests are internal V13 pools and will
+        # be explained only after V13 has reduced them to the final visible recommendations.
+        if collaborative_active and int(count) <= DIVERSITY_SHORTLIST_THRESHOLD:
             self._annotate_als_explanations(selected, collaborative, mapped_ratings)
 
         if record and selected:
