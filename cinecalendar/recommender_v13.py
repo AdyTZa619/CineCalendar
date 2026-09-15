@@ -10,17 +10,16 @@ from .semantic import feature_vector
 from .util import clamp, cosine_sparse, utcnow_iso
 
 
-ENGINE_VERSION = "13.1.0-adaptive-nonblocking"
+ENGINE_VERSION = "13.2.0-adaptive-fast-shortlist"
 
 
 class FastRecommendationEngineV13(FastRecommendationEngineV12):
     """V12 + a local model that continuously learns this user's real preference drift.
 
     V12 supplies robust candidates using globally calibrated MovieLens ALS and the established
-    content/profile engine. V13 then reranks a wider finalist pool using a model trained only on
-    the user's own 1-10 ratings and explicit feedback. Expensive model warmup is never allowed to
-    block the recommendation worker: until ALS/adaptive warmup finishes, the established content
-    engine returns a valid fallback and the stronger models become active on the next refresh.
+    content/profile engine. V13 reranks a wider internal pool using the user's own 1-10 ratings
+    and explicit feedback. Expensive model warmup, diversity and ALS explanations are kept off
+    the large internal shortlist and applied only where they improve the final visible results.
     """
 
     ADAPTIVE_POOL_MIN = 60
@@ -33,20 +32,13 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
         self._adaptive_thread_lock = threading.Lock()
 
     def _state_token(self) -> tuple:
-        # Base token already changes when ratings/feedback change. ENGINE_VERSION guarantees old
-        # persisted pools cannot survive the introduction of the adaptive reranker.
         return super()._state_token() + (ENGINE_VERSION,)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        return f"decision_pool_v13_1:{when.isoformat()}:{mode}"
+        return f"decision_pool_v13_2:{when.isoformat()}:{mode}"
 
     def _wait_briefly_for_first_model(self, timeout: float = 25.0) -> None:
-        """V13 never blocks the UI/recommendation worker waiting for ALS.
-
-        V11/V12 call this hook before collaborative scoring.  The old implementation could wait
-        up to 25 seconds on first use.  Starting the loader is enough because score_candidates()
-        already fails closed to the content engine while ALS is not ready.
-        """
+        """Never block the recommendation worker waiting for ALS."""
         self.collaborative.start_background()
 
     def _adaptive_ready_for_token(self, token) -> bool:
@@ -57,12 +49,7 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
         return self._adaptive_ready_for_token(self.adaptive.state_token())
 
     def start_adaptive_background(self) -> None:
-        """Warm/retrain the personal model off the recommendation path.
-
-        AdaptivePreferenceLearner.status() performs validation + training synchronously by design.
-        Running it here in a daemon thread preserves exactly the same model while avoiding a long
-        first recommendation on HDDs and after rating/feedback changes.
-        """
+        """Warm/retrain the personal model off the recommendation path."""
         token = self.adaptive.state_token()
         if self._adaptive_ready_for_token(token):
             return
@@ -116,10 +103,8 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
         if not recs:
             return []
 
-        # The old 2.4.6/2.4.7 path called adaptive.score() here. score() synchronously trains the
-        # model the first time it is touched, which meant the Home loading card could sit for a
-        # long time with ~2.4k ratings. Never do that on the recommendation worker. Warm it in the
-        # background and return V12's already-ranked result until the personal model is ready.
+        # First request: return the already-ranked V12 fallback immediately and start training
+        # only after that expensive base ranking is done. This avoids HDD/CPU contention at Home.
         if not self._adaptive_is_ready():
             self.start_adaptive_background()
             selected = list(recs[:max(1, int(count))])
@@ -137,8 +122,6 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
             confidence = float(adaptive["confidence"])
             blend = float(adaptive["blend_weight"])
 
-            # A high-confidence prediction that this user would rate poorly is a stronger reason
-            # to suppress the title than generic popularity is a reason to keep it.
             if confidence >= .72 and predicted < 5.15:
                 continue
 
@@ -146,8 +129,6 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
             adaptive_score = float(adaptive["score"])
             rec.score.final = clamp((1.0 - blend) * old_final + blend * adaptive_score)
 
-            # The displayed predicted rating should also move toward the personal learner, but
-            # never pretend it is certain. Low-confidence local estimates barely move the badge.
             rating_mix = min(.72, blend + .20 * confidence)
             rec.score.predicted_rating = max(
                 1.0,
@@ -183,10 +164,11 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
             reverse=True,
         )
 
-        # Re-apply a light diversity pass after adaptive reranking. The personal learner may
-        # correctly discover a strong niche, but the final row should not become three clones.
+        # Diversity is useful only for the final visible handful. Cache vectors once instead of
+        # rebuilding them repeatedly inside the MMR loop.
         selected: list[Recommendation] = []
         pool = list(candidates)
+        vectors = {rec.movie.id: feature_vector(rec.movie) for rec in pool}
         while pool and len(selected) < max(1, int(count)):
             best_rec = None
             best_value = -1.0
@@ -194,8 +176,9 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
                 if not selected:
                     diversity = 1.0
                 else:
+                    current = vectors.get(rec.movie.id) or feature_vector(rec.movie)
                     diversity = 1.0 - max(
-                        cosine_sparse(feature_vector(rec.movie), feature_vector(chosen.movie))
+                        cosine_sparse(current, vectors.get(chosen.movie.id) or feature_vector(chosen.movie))
                         for chosen in selected
                     )
                 value = float(rec.score.final) + .018 * (diversity - .5)
@@ -212,6 +195,28 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
 
         self._assert_no_blocked_leak(selected)
         return selected
+
+    def _annotate_final_als(self, selected: list[Recommendation]) -> None:
+        """Explain ALS only for final visible results, never the 60-120 item internal pool."""
+        if not selected or not self.collaborative.is_ready():
+            return
+        imdb_ids = [str(rec.movie.imdb_id or "") for rec in selected if rec.movie.imdb_id]
+        mapped_scores, _raw, mapped_ratings = self.collaborative.score_candidates(imdb_ids)
+        if not mapped_scores or mapped_ratings < 20:
+            return
+
+        adaptive_prefix: dict[int, str] = {}
+        for rec in selected:
+            for name, _pts, reason in rec.score.contributions:
+                if name == "Preferințe adaptive locale" and reason:
+                    adaptive_prefix[rec.movie.id] = str(reason)
+                    break
+
+        self._annotate_als_explanations(selected, mapped_scores, mapped_ratings)
+        for rec in selected:
+            prefix = adaptive_prefix.get(rec.movie.id)
+            if prefix:
+                rec.score.personal_reason = prefix + " " + (rec.score.personal_reason or "")
 
     def recommend(self, when: date | None = None, count: int = 3, exclude_ids: set[int] | None = None,
                   record: bool = False, slot: str = "today", candidate_limit: int = 100000,
@@ -234,6 +239,7 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
             runtime_min=runtime_min,
         )
         selected = self._adaptive_rerank(list(base), requested)
+        self._annotate_final_als(selected)
 
         if record and selected:
             now = utcnow_iso()
@@ -256,4 +262,6 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
         requested = max(1, int(count))
         expanded = min(self.ADAPTIVE_POOL_MAX, max(40, requested * 8))
         base = super().recommend_romanian(when=when, count=expanded)
-        return self._adaptive_rerank(list(base), requested)
+        selected = self._adaptive_rerank(list(base), requested)
+        self._annotate_final_als(selected)
+        return selected

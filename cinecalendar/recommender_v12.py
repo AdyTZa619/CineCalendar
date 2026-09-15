@@ -5,13 +5,17 @@ from datetime import date
 from .models import Recommendation
 from .profile import get_profile
 from .recommendation import row_to_movie
-from .recommender_v11 import ALS_WEIGHT, CONTENT_WEIGHT, FastRecommendationEngineV11
+from .recommender_v11 import (
+    ALS_WEIGHT,
+    CONTENT_WEIGHT,
+    DIVERSITY_SHORTLIST_THRESHOLD,
+    FastRecommendationEngineV11,
+)
 from .romanian_cinema import RomanianCinemaProvider
-from .semantic import feature_vector
-from .util import clamp, cosine_sparse, json_loads, normalize_text
+from .util import clamp, json_loads, normalize_text
 
 
-ENGINE_VERSION = "12.3.0-als-global-calibrated-romanian-language-first"
+ENGINE_VERSION = "12.4.0-fast-shortlist-romanian-language-first"
 
 
 class FastRecommendationEngineV12(FastRecommendationEngineV11):
@@ -177,35 +181,11 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
             reverse=True,
         )
 
-        selected: list[Recommendation] = []
-        pool = candidates[:max(250, count * 35)]
-        while pool and len(selected) < count:
-            best = None
-            best_value = -1.0
-            for rec in pool:
-                if not selected:
-                    diversity = 1.0
-                else:
-                    diversity = 1.0 - max(
-                        cosine_sparse(feature_vector(rec.movie), feature_vector(chosen.movie))
-                        for chosen in selected
-                    )
-                adjusted = rec.score.final + .03 * (diversity - .5)
-                if adjusted > best_value:
-                    best_value = adjusted
-                    best = (rec, diversity)
-            if best is None:
-                break
-            rec, diversity = best
-            rec.score.diversity = clamp(diversity)
-            rec.score.final = clamp(best_value)
-            rec.score.contributions.append(
-                ("Diversitate", rec.score.diversity * .03 * 100.0, "Evită o listă de filme românești aproape identice.")
-            )
-            selected.append(rec)
-            pool.remove(rec)
-
+        # V13 requests a large Romanian pool only to rerank it adaptively. Avoid doing a full
+        # quadratic diversity pass and dozens of ALS explanations for that internal shortlist;
+        # both are applied after V13 has reduced it to the visible final results.
+        selected = self._select_candidates(candidates, count, "decide")
         self._assert_no_blocked_leak(selected)
-        if collaborative_active:
+        if collaborative_active and int(count) <= DIVERSITY_SHORTLIST_THRESHOLD:
             self._annotate_als_explanations(selected, collaborative, mapped_ratings)
         return selected

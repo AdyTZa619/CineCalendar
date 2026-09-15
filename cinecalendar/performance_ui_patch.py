@@ -11,17 +11,16 @@ def install_performance_ui_patch(window_cls) -> None:
 
     The original base window was written for a tiny catalog. It performs a ratings-folder
     scan on the GUI thread every 15 seconds and calculates candidate count with a full
-    260k-row join. Those operations are harmless on SSD test runners but visibly stall a
-    portable install stored on a mechanical HDD.
+    260k-row join. On a portable install stored on a mechanical HDD those operations can
+    compete with recommendation work. This patch keeps monitoring best-effort and invisible.
     """
     original_init = window_cls.__init__
 
     def __init__(self, service):
         self.ratings_watch_worker = None
+        self.ratings_watch_failures = 0
         original_init(self, service)
-        # Automatic IMDb detection does not need a 15-second polling cadence. One minute is
-        # still effectively immediate for a manually exported ratings.csv and removes a
-        # recurring source of UI/disk pressure.
+        # A ratings export is a manual, infrequent action. Polling once per minute is enough.
         try:
             self.watch_timer.setInterval(60_000)
         except Exception:
@@ -39,18 +38,53 @@ def install_performance_ui_patch(window_cls) -> None:
         rated = int(row["rated"] or 0)
         return total, rated, max(0, total - rated)
 
-    def scan_ratings_folder(self):
-        if not self.db.get_setting("auto_watch_enabled", False):
+    def _foreground_busy(self) -> bool:
+        # Do not add HDD work while the user is waiting for a recommendation, calendar program,
+        # metadata hydration or a catalog bootstrap. The next timer tick will retry automatically.
+        for name in (
+            "today_worker",
+            "browse_worker",
+            "calendar_worker",
+            "metadata_worker",
+            "worker",
+        ):
+            obj = getattr(self, name, None)
+            try:
+                if obj is not None and obj.isRunning():
+                    return True
+            except RuntimeError:
+                continue
+        try:
+            return bool(self.db.get_setting("catalog_bootstrap_running", False))
+        except Exception:
+            return False
+
+    def scan_ratings_folder(self, manual: bool = False):
+        # QPushButton.clicked(bool) supplies False for a normal button, so detect an explicit
+        # user click by sender as well. QTimer.timeout has the watch timer as sender.
+        sender = self.sender()
+        if sender is not None and sender is not getattr(self, "watch_timer", None):
+            manual = True
+        manual = bool(manual)
+
+        if not manual and not self.db.get_setting("auto_watch_enabled", False):
             return
+        if not manual and _foreground_busy(self):
+            return
+
         worker = getattr(self, "ratings_watch_worker", None)
         if worker is not None and worker.isRunning():
+            if manual:
+                self.set_status("Scanarea IMDb este deja în curs.", True)
             return
 
         folder = self.db.get_setting("ratings_folder", str(Path.home() / "Downloads"))
+        if manual:
+            self.set_status("Scanez folderul pentru un export IMDb nou…", True)
 
         def fn(_progress):
-            # RatingsFolderWatcher already rebuilds the profile exactly once when a changed
-            # export is imported; the UI callback must not rebuild it again.
+            # RatingsFolderWatcher rebuilds the profile exactly once when a changed export is
+            # imported. Invalid/unrelated CSV files are ignored inside the watcher.
             return RatingsFolderWatcher(self.db, folder).scan()
 
         worker = WorkerThread(fn, self)
@@ -58,24 +92,38 @@ def install_performance_ui_patch(window_cls) -> None:
 
         def success(results):
             self.ratings_watch_worker = None
+            self.ratings_watch_failures = 0
             if not results:
+                if manual:
+                    self.set_status("Nu am găsit un export IMDb nou și valid în folderul urmărit.", False)
                 return
-            r = results[0]
+            result = results[0]
             self.set_status(
-                f"Export IMDb nou importat: {len(r.new_ratings)} ratinguri noi, "
-                f"{len(r.changed_ratings)} modificate."
+                f"Export IMDb nou importat: {len(result.new_ratings)} ratinguri noi, "
+                f"{len(result.changed_ratings)} modificate.",
+                False,
             )
             if self.current_page == "ratings":
                 self.show_page("ratings")
 
         def failure(message):
             self.ratings_watch_worker = None
+            self.ratings_watch_failures = int(getattr(self, "ratings_watch_failures", 0)) + 1
             self.s.log.error("ratings watcher failed: %s", message)
-            # Do not interrupt/rebuild the current page. The user can still import manually.
-            self.set_status("Monitorizarea IMDb a întâmpinat o eroare.")
+            if manual:
+                detail = str(message or "eroare necunoscută").strip().replace("\n", " ")[:180]
+                self.set_status(f"Scanarea IMDb a eșuat: {detail}", False)
+            elif self.ratings_watch_failures >= 3:
+                # One transient file/lock error must never leave a scary persistent message in
+                # the sidebar. Escalate only after repeated real failures.
+                self.set_status(
+                    "Monitorul IMDb este temporar indisponibil; importul manual rămâne disponibil.",
+                    False,
+                )
 
         worker.success.connect(success)
         worker.failure.connect(failure)
+        worker.finished.connect(worker.deleteLater)
         worker.start()
 
     window_cls.__init__ = __init__
