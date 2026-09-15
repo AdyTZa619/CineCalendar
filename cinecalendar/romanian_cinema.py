@@ -11,15 +11,24 @@ from .util import json_dumps, json_loads, normalize_text, utcnow_iso
 WDQS = "https://query.wikidata.org/sparql"
 USER_AGENT = "CineCalendar/2.4 Romanian cinema discovery (Wikidata country-of-origin lookup)"
 CACHE_PROVIDER = "romanian-cinema"
-CACHE_KEY = "wikidata-country-origin-ro-imdb-v1"
+# v2 deliberately drops the broad "Romania appears anywhere in P495" cache.  The main
+# Romanian lane is now precision-first: Romania-only productions, plus co-productions whose
+# original language is Romanian.  Broad co-productions no longer leak into the main list.
+CACHE_KEY = "wikidata-strong-romanian-film-imdb-v2"
 
 
 class RomanianCinemaProvider:
-    """Discover Romanian productions without treating 'about Romania' as Romanian cinema.
+    """Discover films with a strong Romanian production identity.
 
-    Eligibility is based on country of origin (Wikidata P495 = Romania/Q218), then intersected
-    with the local IMDb catalog. Results are cached locally because this list changes slowly.
-    Existing local country metadata is always merged in and provides an offline fallback.
+    The old rule accepted every item for which Romania appeared anywhere in Wikidata P495.
+    That is technically a Romanian co-production but, in practice, it allowed many films that
+    do not read as Romanian cinema to dominate the page.  The primary lane is now intentionally
+    stricter:
+      * Romania is the only declared country of origin; OR
+      * Romania is one of the countries of origin and Romanian is an original language.
+
+    Local/offline fallback is stricter still because the local catalog does not reliably carry
+    original-language metadata: only titles whose local country list is Romania-only are used.
     """
 
     def __init__(self, db: Database):
@@ -46,8 +55,17 @@ class RomanianCinemaProvider:
         return out
 
     @staticmethod
-    def _contains_romania(countries) -> bool:
-        return any(normalize_text(str(value)) == "romania" for value in (countries or []))
+    def _normalized_countries(countries) -> set[str]:
+        return {
+            normalize_text(str(value))
+            for value in (countries or [])
+            if normalize_text(str(value))
+        }
+
+    @classmethod
+    def _romania_only(cls, countries) -> bool:
+        values = cls._normalized_countries(countries)
+        return values == {"romania"}
 
     def _cached(self, allow_expired: bool = False) -> set[str] | None:
         with self.db.connect() as con:
@@ -71,7 +89,12 @@ class RomanianCinemaProvider:
 
     def _store(self, ids: set[str], days: int = 90) -> None:
         expires = (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0).isoformat()
-        payload = {"imdb_ids": sorted(ids), "country": "Romania", "wikidata_qid": "Q218"}
+        payload = {
+            "imdb_ids": sorted(ids),
+            "country": "Romania",
+            "wikidata_qid": "Q218",
+            "policy": "romania-only-or-romanian-original-language",
+        }
         with self.db.tx() as con:
             con.execute(
                 """INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at)
@@ -82,17 +105,33 @@ class RomanianCinemaProvider:
                 (CACHE_PROVIDER, CACHE_KEY, json_dumps(payload), utcnow_iso(), expires),
             )
 
-    def _fetch_wikidata_ids(self) -> set[str]:
-        # P495 is the production country. This deliberately avoids title/theme heuristics.
-        query = """SELECT DISTINCT ?imdb WHERE {
-          ?item wdt:P495 wd:Q218 ;
-                wdt:P345 ?imdb .
+    @staticmethod
+    def wikidata_query() -> str:
+        # Q11424 = film, Q218 = Romania, Q7913 = Romanian language.
+        # P31/P279 keeps non-film IMDb title entities out.  For co-productions we require
+        # Romanian as an original language; otherwise Romania must be the only P495 country.
+        return """SELECT DISTINCT ?imdb WHERE {
+          ?item wdt:P345 ?imdb ;
+                wdt:P495 wd:Q218 ;
+                wdt:P31/wdt:P279* wd:Q11424 .
           FILTER(STRSTARTS(STR(?imdb), "tt"))
+          {
+            FILTER NOT EXISTS {
+              ?item wdt:P495 ?otherCountry .
+              FILTER(?otherCountry != wd:Q218)
+            }
+          }
+          UNION
+          {
+            ?item wdt:P364 wd:Q7913 .
+          }
         }
         LIMIT 10000"""
+
+    def _fetch_wikidata_ids(self) -> set[str]:
         response = self.session.get(
             WDQS,
-            params={"query": query, "format": "json"},
+            params={"query": self.wikidata_query(), "format": "json"},
             timeout=(10, 35),
         )
         response.raise_for_status()
@@ -111,7 +150,9 @@ class RomanianCinemaProvider:
         for row in rows:
             countries = json_loads(row["countries_json"], []) or []
             iid = str(row["imdb_id"] or "")
-            if self._valid_imdb_id(iid) and self._contains_romania(countries):
+            # Offline local data has no trustworthy original-language field, so fail closed:
+            # a mixed country list is a co-production and does not enter the main Romanian lane.
+            if self._valid_imdb_id(iid) and self._romania_only(countries):
                 out.add(iid)
         self.last_local_count = len(out)
         return out
@@ -120,7 +161,7 @@ class RomanianCinemaProvider:
         local = self.local_imdb_ids()
         cached = None if refresh else self._cached()
         if cached is not None:
-            self.last_source = "cache+local"
+            self.last_source = "strict-cache+local"
             self.last_external_count = len(cached)
             self.last_error = ""
             return set(cached) | local
@@ -130,17 +171,17 @@ class RomanianCinemaProvider:
             external = self._fetch_wikidata_ids()
             if external:
                 self._store(external)
-            self.last_source = "wikidata+local"
+            self.last_source = "strict-wikidata+local"
             self.last_external_count = len(external)
             self.last_error = ""
             return external | local
         except requests.RequestException as exc:
             self.last_error = str(exc)
             if stale:
-                self.last_source = "stale-cache+local"
+                self.last_source = "strict-stale-cache+local"
                 self.last_external_count = len(stale)
                 return set(stale) | local
-            self.last_source = "local-only"
+            self.last_source = "romania-only-local"
             self.last_external_count = 0
             return local
 
@@ -150,4 +191,5 @@ class RomanianCinemaProvider:
             "external_count": int(self.last_external_count),
             "local_count": int(self.last_local_count),
             "error": self.last_error,
+            "policy": "romania-only-or-romanian-original-language",
         }
