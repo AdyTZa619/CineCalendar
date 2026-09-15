@@ -20,6 +20,9 @@ class _Rows:
         return False
 
     def execute(self, _sql, _params=()):
+        return self
+
+    def fetchall(self):
         return list(self.rows)
 
 
