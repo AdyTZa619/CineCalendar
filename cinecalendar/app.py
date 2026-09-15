@@ -31,6 +31,7 @@ def main():
     from .als_ui_patch import install_als_ui_patch
     from .daily_genre_ui_patch import install_daily_genre_ui_patch
     from .romanian_cinema_ui_patch import install_romanian_cinema_ui_patch
+    from .decision_action_patch import install_decision_action_patch
     from . import library_ui
 
     # Remove inherited small-catalog hot spots before the window is instantiated: the IMDb
@@ -52,6 +53,10 @@ def main():
     # Dedicated Romanian cinema lane: genuine production-country eligibility, ranked with the
     # same ALS + personal profile. It is opt-in by page, not another setting the user must manage.
     install_romanian_cinema_ui_patch(CalendarPremiumWindow)
+
+    # "Aleg filmul" must be a visible state transition, not a database-only no-op. Install this
+    # after the Home/genre patches so it can wrap the final page_today implementation.
+    install_decision_action_patch(CalendarPremiumWindow)
 
     # The renderer calls the date sort key without an explicit mode; keep a safe default
     # while retaining the same implementation for every other explicit sort mode.

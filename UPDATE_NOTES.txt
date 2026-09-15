@@ -1,3 +1,17 @@
+CineCalendar 2.6.1 repară acțiunea „Aleg filmul”, care în 2.6.0 putea părea că nu face nimic vizibil.
+
+Alegerea este acum o tranziție reală de stare: după apăsare, pagina „Ce văd acum?” trece pe un ecran clar „ALES PENTRU AZI”, păstrează filmul selectat chiar dacă se termină între timp un worker de metadate și oferă acțiuni explicite pentru IMDb, răzgândire sau marcarea filmului ca văzut.
+
+Semnalul pentru Watch Intent este acum timestamp-uit la momentul exact al clickului. În 2.6.0 se modifica doar câmpul action al unei înregistrări de recomandare mai vechi, iar modelul putea interpreta greșit vechimea alegerii folosind recommended_at. 2.6.1 reîmprospătează timestamp-ul când transformă o expunere proaspătă în alegere/skip și păstrează un rând separat dacă utilizatorul face o a doua acțiune explicită asupra aceluiași film (de exemplu ales -> răzgândit). Astfel tokenul Watch Intent se invalidează imediat și ambele semnale rămân observabile.
+
+„Alt film” folosește aceeași logică robustă: salvează momentul real al skip-ului, îl exclude din sesiunea curentă, elimină alegerea confirmată dacă utilizatorul s-a răzgândit și pornește calculul următorului film.
+
+Alegerea zilei este păstrată local pentru data curentă, inclusiv după redeschiderea aplicației în aceeași zi. A doua zi expiră automat din interfață. Nu schimbă ratingul estimat 1–10 și nu marchează filmul ca văzut decât dacă utilizatorul apasă explicit „L-am văzut”.
+
+Au fost adăugate teste de regresie pentru timestamp-ul real al alegerii, invalidarea tokenului Watch Intent, secvența ales -> răzgândit și persistența/ștergerea alegerii zilei.
+
+---
+
 CineCalendar 2.6.0 adaugă un model separat pentru o problemă diferită de gustul pe termen lung: „ce film îmi vine să aleg acum?”.
 
 Motorul existent rămâne responsabil pentru calitatea reală a recomandării: Personal Candidate Generation 2.5.0, ALS MovieLens calibrat global, profilul personal de conținut, modelul adaptiv local, controlul calității IMDb și diversitatea finală. Watch Intent nu poate transforma un film slab într-o recomandare bună; el rerankează numai candidații deja considerați potriviți.
