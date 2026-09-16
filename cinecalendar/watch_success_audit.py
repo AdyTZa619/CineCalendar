@@ -55,6 +55,7 @@ def build_watch_success_audit(db, days: int = 90) -> dict:
         "watched",
     )}
     stremio_attempts = 0
+    playback_confirmations = 0
     confirmed_starts = 0
     watched = 0
     skipped = 0
@@ -68,19 +69,22 @@ def build_watch_success_audit(db, days: int = 90) -> dict:
         if final in final_counts:
             final_counts[final] += 1
         has_stremio = "stremio_opened" in actions
-        has_confirmed = "playback_confirmed" in actions or "watched" in actions
+        has_playback_confirmation = "playback_confirmed" in actions
         has_watched = "watched" in actions
+        has_confirmed_start = has_playback_confirmation or has_watched
         if has_stremio:
             stremio_attempts += 1
-        if has_confirmed:
+        if has_playback_confirmation:
+            playback_confirmations += 1
+        if has_confirmed_start:
             confirmed_starts += 1
         if has_watched:
             watched += 1
         if final == "skip_today":
             skipped += 1
-        if has_stremio and has_confirmed:
+        if has_stremio and has_confirmed_start:
             confirmed_after_stremio += 1
-        if "playback_confirmed" in actions and has_watched:
+        if has_playback_confirmation and has_watched:
             watched_after_confirmed += 1
 
     def ratio(num: int, den: int):
@@ -93,11 +97,12 @@ def build_watch_success_audit(db, days: int = 90) -> dict:
         "raw_action_rows": len(rows),
         "final_outcomes": final_counts,
         "stremio_attempts": stremio_attempts,
+        "playback_confirmations": playback_confirmations,
         "confirmed_starts": confirmed_starts,
         "watched": watched,
         "skipped": skipped,
         "stremio_to_confirmed_rate": ratio(confirmed_after_stremio, stremio_attempts),
-        "confirmed_to_watched_rate": ratio(watched_after_confirmed, confirmed_starts),
+        "confirmed_to_watched_rate": ratio(watched_after_confirmed, playback_confirmations),
         "watch_rate_per_funnel": ratio(watched, len(funnels)),
         "skip_rate_per_funnel": ratio(skipped, len(funnels)),
         "enough_data_for_tuning": len(funnels) >= 20 and confirmed_starts >= 5,
