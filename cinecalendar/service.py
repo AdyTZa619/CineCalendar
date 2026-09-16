@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 
+from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
 from .autoseed import ensure_initial_ratings
 from .calendar_engine_v2 import RichCalendarEngine
 from .db import Database
@@ -18,6 +19,10 @@ class CineCalendarService:
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = RichCalendarEngine()
         self.recommender = FastRecommendationEngineV15(self.db, self.calendar)
+        # V13 constructs the legacy adaptive learner for backwards-compatible engine composition.
+        # The production service replaces it immediately with V2: a larger feature space and a
+        # temporal ranking/calibration quality gate determine how much adaptive influence is earned.
+        self.recommender.adaptive = AdaptivePreferenceLearnerV2(self.db)
         # ALS may warm in the background immediately because it is a read-mostly model load.
         # Do NOT start the adaptive trainer here: with thousands of ratings it walks the local DB
         # and uses CPU at exactly the moment Home is computing its first pool. V13-V15 start it only
