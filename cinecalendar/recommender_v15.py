@@ -10,29 +10,32 @@ from .util import clamp
 from .watch_success import WatchSuccessIntentLearner
 
 
-ENGINE_VERSION = "15.0.0-watch-success-startability"
+ENGINE_VERSION = "15.1.0-watch-success-truthful-funnel"
 
 
 class FastRecommendationEngineV15(FastRecommendationEngineV14):
-    """V14 + a bounded Startability layer focused on actually getting to Play.
+    """V14 + bounded Watch Success and Startability.
 
-    Long-term taste remains the gatekeeper. Startability only reranks already-good candidates by
-    practical friction: current intent, personal rating/confidence, runtime, premise completeness,
-    metadata and public quality evidence. It never changes the estimated 1-10 rating.
+    Long-term taste remains the gatekeeper. Startability is only allowed to break near-ties among
+    already-good candidates. Generic assumptions such as "a 105-minute film is easier to start"
+    get a small voice; real recent Watch Success evidence can increase that voice, but never enough
+    to rescue a substantially weaker taste match. The estimated personal rating is never changed by
+    Startability.
     """
 
-    STARTABILITY_BLEND_MAX = 0.18
+    STARTABILITY_GENERIC_MAX = 0.07
+    STARTABILITY_EVIDENCE_MAX = 0.14
+    STARTABILITY_NEAR_TIE_MARGIN = 0.08
 
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
-        # Replace v1 intent with the Watch Success learner: choosing is weaker than opening playback.
         self.watch_intent = WatchSuccessIntentLearner(db)
 
     def _state_token(self) -> tuple:
         return super()._state_token() + (ENGINE_VERSION,)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        return f"decision_pool_v15:{when.isoformat()}:{mode}"
+        return f"decision_pool_v15_1:{when.isoformat()}:{mode}"
 
     @staticmethod
     def _runtime_score(minutes: int | None) -> float:
@@ -101,14 +104,16 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         intent_payload = intent_payload or {}
         intent = float(intent_payload.get("score", 0.5) or 0.5) if intent_payload.get("active") else 0.5
 
+        # This is a bounded heuristic used only to break close ties. It is deliberately not called
+        # a probability: there is no calibrated ground-truth dataset yet for "will start tonight".
         score = clamp(
-            0.44 * taste
-            + 0.14 * confidence
-            + 0.14 * intent
-            + 0.10 * runtime
-            + 0.08 * premise
-            + 0.05 * metadata
-            + 0.05 * quality
+            0.40 * taste
+            + 0.15 * confidence
+            + 0.18 * intent
+            + 0.09 * runtime
+            + 0.07 * premise
+            + 0.04 * metadata
+            + 0.07 * quality
         )
 
         bits: list[str] = []
@@ -120,62 +125,79 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         if premise >= 0.90:
             bits.append("premisă clară")
         if quality >= 0.70:
-            bits.append("destule semnale publice de calitate")
+            bits.append("semnale publice solide")
         if intent >= 0.64:
-            bits.append("se potrivește cu ce ai pornit sau ales recent")
+            bits.append("se potrivește cu traseele recente de vizionare")
 
-        if score >= 0.74:
-            lead = "Bun de pornit acum"
-        elif score >= 0.62:
-            lead = "Ușor de încercat acum"
+        if score >= 0.76:
+            lead = "Ușurință de pornire ridicată"
+        elif score >= 0.64:
+            lead = "Ușurință de pornire bună"
+        elif score >= 0.52:
+            lead = "Ușurință de pornire medie"
         else:
-            lead = "Potrivire bună, dar cu puțin mai multă fricțiune"
+            lead = "Ușurință de pornire scăzută"
         detail = ", ".join(bits[:3]) if bits else "potrivirea personală rămâne criteriul principal"
-        return score, f"{lead}: {detail}."
+        return score, f"{lead}: {detail}. Folosit doar pentru departajarea recomandărilor apropiate."
+
+    def _startability_blend(self, rec: Recommendation, best_final: float, intent_payload: dict) -> float:
+        gap = max(0.0, float(best_final) - float(rec.score.final))
+        margin = float(self.STARTABILITY_NEAR_TIE_MARGIN)
+        if gap >= margin:
+            return 0.0
+        proximity = 1.0 - gap / margin
+        has_real_intent = bool(intent_payload.get("active")) and float(intent_payload.get("confidence", 0.0) or 0.0) > 0.0
+        cap = self.STARTABILITY_EVIDENCE_MAX if has_real_intent else self.STARTABILITY_GENERIC_MAX
+        taste_confidence = clamp(float(rec.score.confidence))
+        return cap * proximity * (0.60 + 0.40 * taste_confidence)
 
     def _apply_watch_success(self, recs: list[Recommendation]) -> list[Recommendation]:
-        """Apply intent + Startability in one batch, avoiding hundreds of SQLite token queries."""
+        """Apply intent, then allow Startability to break only near-ties."""
         recs = list(recs)
         if not recs:
             return []
         payloads = self.watch_intent.score_many([rec.movie for rec in recs])
-        adjusted: list[Recommendation] = []
 
+        # First apply the learned short-horizon intent. This signal itself already has confidence
+        # and sample-size caps inside WatchSuccessIntentLearner.
         for rec, intent_payload in zip(recs, payloads):
-            if intent_payload.get("active"):
-                intent_score = float(intent_payload.get("score", 0.5) or 0.5)
-                blend = float(intent_payload.get("blend_weight", 0.0) or 0.0)
-                if blend > 0:
-                    old_final = float(rec.score.final)
-                    rec.score.final = clamp((1.0 - blend) * old_final + blend * intent_score)
-                    reason = str(intent_payload.get("reason") or "")
-                    rec.score.contributions.insert(
-                        0,
-                        (
-                            "Intenție de vizionare acum",
-                            blend * (intent_score - 0.5) * 100.0,
-                            reason,
-                        ),
-                    )
-                    if reason:
-                        rec.score.personal_reason = reason + " " + (rec.score.personal_reason or "")
-
-            startability, reason = self._startability(rec, intent_payload)
+            if not intent_payload.get("active"):
+                continue
+            intent_score = float(intent_payload.get("score", 0.5) or 0.5)
+            blend = float(intent_payload.get("blend_weight", 0.0) or 0.0)
+            if blend <= 0:
+                continue
             old_final = float(rec.score.final)
-            start_blend = min(
-                self.STARTABILITY_BLEND_MAX,
-                0.10 + 0.08 * clamp(float(rec.score.confidence)),
-            )
-            rec.score.startability = startability
-            rec.score.final = clamp((1.0 - start_blend) * old_final + start_blend * startability)
+            rec.score.final = clamp((1.0 - blend) * old_final + blend * intent_score)
+            reason = str(intent_payload.get("reason") or "")
             rec.score.contributions.insert(
                 0,
                 (
-                    "Startability",
-                    start_blend * (startability - 0.5) * 100.0,
+                    "Intenție de vizionare acum",
+                    blend * (intent_score - 0.5) * 100.0,
                     reason,
                 ),
             )
+            if reason:
+                rec.score.personal_reason = reason + " " + (rec.score.personal_reason or "")
+
+        best_pre_start = max(float(rec.score.final) for rec in recs)
+        adjusted: list[Recommendation] = []
+        for rec, intent_payload in zip(recs, payloads):
+            startability, reason = self._startability(rec, intent_payload)
+            rec.score.startability = startability
+            start_blend = self._startability_blend(rec, best_pre_start, intent_payload)
+            if start_blend > 0.001:
+                old_final = float(rec.score.final)
+                rec.score.final = clamp((1.0 - start_blend) * old_final + start_blend * startability)
+                rec.score.contributions.insert(
+                    0,
+                    (
+                        "Startability",
+                        start_blend * (startability - 0.5) * 100.0,
+                        reason,
+                    ),
+                )
             adjusted.append(rec)
 
         adjusted.sort(
@@ -186,15 +208,23 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
 
     # Kept public for focused tests and diagnostics.
     def _apply_startability(self, recs: list[Recommendation]) -> list[Recommendation]:
-        payloads = self.watch_intent.score_many([rec.movie for rec in recs]) if recs else []
+        recs = list(recs)
+        if not recs:
+            return []
+        payloads = self.watch_intent.score_many([rec.movie for rec in recs])
+        best_final = max(float(rec.score.final) for rec in recs)
         adjusted: list[Recommendation] = []
-        for rec, payload in zip(list(recs), payloads):
+        for rec, payload in zip(recs, payloads):
             startability, reason = self._startability(rec, payload)
-            old_final = float(rec.score.final)
-            blend = min(self.STARTABILITY_BLEND_MAX, 0.10 + 0.08 * clamp(float(rec.score.confidence)))
             rec.score.startability = startability
-            rec.score.final = clamp((1.0 - blend) * old_final + blend * startability)
-            rec.score.contributions.insert(0, ("Startability", blend * (startability - 0.5) * 100.0, reason))
+            blend = self._startability_blend(rec, best_final, payload)
+            if blend > 0.001:
+                old_final = float(rec.score.final)
+                rec.score.final = clamp((1.0 - blend) * old_final + blend * startability)
+                rec.score.contributions.insert(
+                    0,
+                    ("Startability", blend * (startability - 0.5) * 100.0, reason),
+                )
             adjusted.append(rec)
         adjusted.sort(
             key=lambda r: (r.score.final, r.score.startability, r.score.predicted_rating, r.score.confidence),
