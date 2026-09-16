@@ -8,6 +8,7 @@ import sqlite3
 import tempfile
 import time
 
+from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
 from .collaborative_als import CollaborativeALSProvider
 from .db import Database
 from .recommender_v16 import FastRecommendationEngineV16
@@ -204,6 +205,8 @@ def run_local_backtest(
             eval_date = date.today()
 
         engine = FastRecommendationEngineV16(test_db)
+        # Match production exactly: service.py replaces V13's compatibility learner with V2.
+        engine.adaptive = AdaptivePreferenceLearnerV2(test_db)
         _wait_for_als(engine.collaborative, als_timeout)
 
         # Candidate recall: inspect the exact pre-hydration pool used by the production engine.
