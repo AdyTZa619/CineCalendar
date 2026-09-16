@@ -54,10 +54,12 @@ def test_audit_reports_observed_funnel_without_treating_legacy_launch_as_play(tm
 
     assert report["funnels"] == 3
     assert report["stremio_attempts"] == 2
+    assert report["playback_confirmations"] == 1
     assert report["confirmed_starts"] == 1
     assert report["watched"] == 1
     assert report["skipped"] == 1
     assert report["stremio_to_confirmed_rate"] == 0.5
+    assert report["confirmed_to_watched_rate"] == 1.0
     assert report["watch_rate_per_funnel"] == round(1 / 3, 4)
     assert report["final_outcomes"]["watched"] == 1
     assert report["final_outcomes"]["stremio_opened"] == 1
