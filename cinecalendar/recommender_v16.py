@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
 import math
 
 from .models import Recommendation
+from .recommender_v12 import FastRecommendationEngineV12
 from .recommender_v15 import FastRecommendationEngineV15
-from .util import clamp
+from .trust_audit import ensure_trust_audit_schema, record_trust_snapshot
+from .util import clamp, utcnow_iso
 
 
 ENGINE_VERSION = "16.0.0-top3-trust-gate"
@@ -215,18 +218,24 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
         for rec, payload in chosen:
             supports = list(payload["supports"])
             if payload["red_flag"]:
+                status = "red_flag"
                 reason = "Rezervă de ultimă instanță: " + str(payload["red_reason"] or "semnale insuficiente") + "."
             elif id(rec) in trusted_ids:
+                status = "trusted"
                 reason = (
                     f"Poartă Top 3 trecută: {len(supports)} semnale independente"
                     + (f" ({', '.join(supports[:4])})" if supports else "")
                     + "."
                 )
             else:
+                status = "backfill"
                 reason = (
                     "Backfill conservator: film competitiv, dar nu are încă suficiente semnale independente "
                     "pentru statutul de recomandare cu încredere ridicată."
                 )
+            audit_payload = dict(payload)
+            audit_payload["status"] = status
+            rec.score.trust_audit = audit_payload
             rec.score.contributions.insert(0, ("Poartă de încredere Top 3", 0.0, reason))
             if reason not in (rec.score.personal_reason or ""):
                 rec.score.personal_reason = reason + " " + (rec.score.personal_reason or "")
@@ -250,15 +259,29 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
         # Large result lists are diagnostics/browsing surfaces, not a Top-3 decision. Preserve the
         # established ranking there so backtests can still inspect 25/50/100 positions.
         if requested > self.QUALITY_GATE_MAX_VISIBLE:
+            selected = super()._adaptive_rerank(recs, requested)
+            for rec in selected:
+                rec.score.trust_audit = {
+                    "status": "bypassed",
+                    "trust": None,
+                    "gate_score": None,
+                    "supports": [],
+                    "trusted": False,
+                    "red_flag": False,
+                    "red_reason": "",
+                    "gap": None,
+                    "als": None,
+                    "public_bayes": None,
+                }
             self._quality_gate_stats = {
                 "pool": len(recs),
                 "trusted": 0,
                 "red_flags": 0,
                 "fallback": 0,
-                "returned": requested,
+                "returned": len(selected),
                 "bypassed": True,
             }
-            return super()._adaptive_rerank(recs, requested)
+            return selected
 
         gate_pool_size = min(
             len(recs),
@@ -267,3 +290,69 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
         )
         mature_pool = super()._adaptive_rerank(recs, gate_pool_size)
         return self._quality_gate(mature_pool, requested)
+
+    def _record_selected(self, selected, when: date, slot: str, candidate_count: int) -> None:
+        """Persist the real V16 engine version and the trust decision behind every visible result."""
+        if not selected:
+            return
+        now = utcnow_iso()
+        with self.db.tx() as con:
+            ensure_trust_audit_schema(con)
+            run = con.execute(
+                """INSERT INTO recommendation_runs(
+                       context_date,slot,generated_at,candidate_count,result_count,engine_version
+                   ) VALUES(?,?,?,?,?,?)""",
+                (when.isoformat(), slot, now, int(candidate_count), len(selected), ENGINE_VERSION),
+            )
+            run_id = int(run.lastrowid)
+            for rank_position, rec in enumerate(selected, start=1):
+                history = con.execute(
+                    """INSERT INTO recommendation_history(
+                           movie_id,recommended_at,context_date,slot,final_score
+                       ) VALUES(?,?,?,?,?)""",
+                    (rec.movie.id, now, when.isoformat(), slot, rec.score.final),
+                )
+                payload = getattr(rec.score, "trust_audit", None)
+                record_trust_snapshot(
+                    con,
+                    history_id=int(history.lastrowid),
+                    run_id=run_id,
+                    movie_id=int(rec.movie.id),
+                    context_date=when.isoformat(),
+                    slot=slot,
+                    rank_position=rank_position,
+                    engine_version=ENGINE_VERSION,
+                    payload=payload if isinstance(payload, dict) else {"status": "unclassified"},
+                    created_at=now,
+                )
+
+    def recommend(self, when: date | None = None, count: int = 3, exclude_ids: set[int] | None = None,
+                  record: bool = False, slot: str = "today", candidate_limit: int = 100000,
+                  mode: str = "decide", runtime_max: int | None = None, runtime_min: int | None = None):
+        """Run the established V13-V16 pipeline, but record V16 rather than V13 telemetry."""
+        when = when or date.today()
+        requested = max(1, int(count))
+        expanded = min(
+            self.ADAPTIVE_POOL_MAX,
+            max(self.ADAPTIVE_POOL_MIN, requested * 12),
+        )
+        # This is deliberately the same base call used by V13's recommend(). Calling V13's public
+        # method directly would make it own the persistence step and stamp the old V13 module
+        # constant into recommendation_runs.
+        base = FastRecommendationEngineV12.recommend(
+            self,
+            when=when,
+            count=expanded,
+            exclude_ids=exclude_ids,
+            record=False,
+            slot=slot,
+            candidate_limit=candidate_limit,
+            mode=mode,
+            runtime_max=runtime_max,
+            runtime_min=runtime_min,
+        )
+        selected = self._adaptive_rerank(list(base), requested)
+        self._annotate_final_als(selected)
+        if record and selected:
+            self._record_selected(selected, when, slot, len(base))
+        return selected

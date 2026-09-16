@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 
+from .trust_audit import build_trust_outcome_audit
+
 
 AUDIT_ACTIONS = (
     "chosen",
@@ -106,4 +108,5 @@ def build_watch_success_audit(db, days: int = 90) -> dict:
         "watch_rate_per_funnel": ratio(watched, len(funnels)),
         "skip_rate_per_funnel": ratio(skipped, len(funnels)),
         "enough_data_for_tuning": len(funnels) >= 20 and confirmed_starts >= 5,
+        "trust_gate": build_trust_outcome_audit(db, days=days),
     }
