@@ -69,11 +69,12 @@ def test_official_stremio_routes_and_trailer_search_are_deterministic():
 
 
 class _NeutralIntent:
-    def status(self):
-        return {"active": False}
-
-    def score(self, movie):
+    @staticmethod
+    def _payload():
         return {"active": False, "score": 0.5, "confidence": 0.0, "blend_weight": 0.0, "reason": ""}
+
+    def score_many(self, movies):
+        return [self._payload() for _movie in movies]
 
 
 def test_startability_can_reorder_close_candidates_without_changing_predicted_rating():
