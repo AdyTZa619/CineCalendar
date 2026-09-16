@@ -219,8 +219,8 @@ def test_extreme_short_horizon_intent_cannot_overturn_large_long_term_taste_gap(
 
 def test_combined_short_horizon_shift_is_capped_to_ten_points():
     engine = object.__new__(FastRecommendationEngineV15)
-    assert engine._cap_to_base(0.80, 0.20) == 0.70
-    assert engine._cap_to_base(0.80, 1.00) == 0.90
+    assert abs(engine._cap_to_base(0.80, 0.20) - 0.70) < 1e-12
+    assert abs(engine._cap_to_base(0.80, 1.00) - 0.90) < 1e-12
 
 
 def test_service_uses_v15_watch_success_engine():
