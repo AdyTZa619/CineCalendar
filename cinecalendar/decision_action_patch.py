@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 
 from PySide6.QtCore import Qt, QUrl
@@ -7,7 +8,11 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 from .recommendation import row_to_movie
-from .trust_audit import ensure_trust_audit_schema, resolve_exposure_history_id
+from .trust_audit import (
+    ensure_trust_audit_schema,
+    resolve_exposure_history_id,
+    validate_exposure_history_id,
+)
 from .util import utcnow_iso
 
 
@@ -15,8 +20,36 @@ CHOICE_SETTING = "chosen_for_today_v1"
 _VALID_ACTIONS = {"chosen", "skip_today"}
 
 
-def record_decision_action(db, movie_id: int, action: str) -> int:
-    """Persist choose/skip without losing the recommendation exposure that caused the action."""
+@dataclass(frozen=True)
+class TodayChoiceState:
+    movie: object
+    exposure_history_id: int | None
+    chosen_at: str
+
+
+def _safe_exposure(con, movie_id: int, today: str, exposure_history_id: int | None):
+    if exposure_history_id is not None:
+        row = validate_exposure_history_id(
+            con,
+            exposure_history_id,
+            movie_id=int(movie_id),
+        )
+        if row is None:
+            raise ValueError("Expunerea recomandării nu mai este validă pentru filmul selectat.")
+        return row
+    # Compatibility only. v3.3 UI passes the id explicitly. If more than one same-day exposure
+    # exists, resolver returns None rather than guessing the newest row.
+    resolved = resolve_exposure_history_id(con, int(movie_id), today)
+    return validate_exposure_history_id(con, resolved, movie_id=int(movie_id)) if resolved is not None else None
+
+
+def record_decision_action(
+    db,
+    movie_id: int,
+    action: str,
+    exposure_history_id: int | None = None,
+) -> int:
+    """Append a decision event; recommendation exposure rows are immutable in v3.3."""
     action = str(action or "").strip()
     if action not in _VALID_ACTIONS:
         raise ValueError(f"Unsupported decision action: {action}")
@@ -31,51 +64,40 @@ def record_decision_action(db, movie_id: int, action: str) -> int:
         if movie is None:
             raise ValueError("Filmul nu mai există în catalog.")
 
-        exposure_id = resolve_exposure_history_id(con, movie_id, today)
-        row = None
-        if exposure_id is not None:
-            row = con.execute(
-                "SELECT id,slot,final_score,action FROM recommendation_history WHERE id=?",
-                (int(exposure_id),),
-            ).fetchone()
+        root = _safe_exposure(con, movie_id, today, exposure_history_id)
+        exposure_id = int(root["id"]) if root is not None else None
+        event_context_date = str(root["context_date"]) if root is not None else today
+        final_score = (
+            float(root["final_score"])
+            if root is not None and root["final_score"] is not None
+            else None
+        )
 
-        # A freshly displayed recommendation has action=NULL. Keep the same row id so the trust
-        # snapshot and this explicit outcome remain one exact exposure.
-        if row is not None and not str(row["action"] or "").strip():
-            con.execute(
-                """UPDATE recommendation_history
-                   SET action=?, ignored=?, recommended_at=?, context_date=?
-                   WHERE id=?""",
-                (action, ignored, now, today, int(row["id"])),
-            )
-            return int(row["id"])
-
-        # A second action on the same exposure (chosen -> changed mind) is a separate event linked
-        # back to the original exposure; the earlier signal is never overwritten.
-        final_score = float(row["final_score"]) if row is not None and row["final_score"] is not None else None
         cur = con.execute(
             """INSERT INTO recommendation_history(
                    movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id
                ) VALUES(?,?,?,?,?,?,?,?)""",
-            (movie_id, now, today, "decision_action", final_score, ignored, action, exposure_id),
+            (movie_id, now, event_context_date, "decision_action", final_score, ignored, action, exposure_id),
         )
         return int(cur.lastrowid)
 
 
-def set_today_choice(db, movie_id: int) -> None:
+def set_today_choice(
+    db,
+    movie_id: int,
+    exposure_history_id: int | None = None,
+) -> None:
+    movie_id = int(movie_id)
     today = date.today().isoformat()
-    exposure_id = None
-    try:
-        with db.connect() as con:
-            ensure_trust_audit_schema(con)
-            exposure_id = resolve_exposure_history_id(con, int(movie_id), today)
-    except Exception:
-        exposure_id = None
+    with db.connect() as con:
+        ensure_trust_audit_schema(con)
+        root = _safe_exposure(con, movie_id, today, exposure_history_id)
+        exposure_id = int(root["id"]) if root is not None else None
     db.set_setting(
         CHOICE_SETTING,
         {
             "date": today,
-            "movie_id": int(movie_id),
+            "movie_id": movie_id,
             "chosen_at": utcnow_iso(),
             "exposure_history_id": exposure_id,
         },
@@ -93,7 +115,7 @@ def clear_today_choice(db, movie_id: int | None = None) -> None:
     db.set_setting(CHOICE_SETTING, {})
 
 
-def current_today_choice(db):
+def current_today_choice_state(db) -> TodayChoiceState | None:
     payload = db.get_setting(CHOICE_SETTING, {})
     if not isinstance(payload, dict) or str(payload.get("date") or "") != date.today().isoformat():
         return None
@@ -103,19 +125,58 @@ def current_today_choice(db):
         return None
     if movie_id <= 0:
         return None
+
+    exposure_id = payload.get("exposure_history_id")
+    try:
+        exposure_id = int(exposure_id) if exposure_id is not None else None
+    except (TypeError, ValueError):
+        exposure_id = None
+
     with db.connect() as con:
         row = con.execute("SELECT * FROM movies WHERE id=?", (movie_id,)).fetchone()
-    return row_to_movie(row) if row is not None else None
+        if row is None:
+            return None
+        if exposure_id is not None:
+            valid = validate_exposure_history_id(
+                con,
+                exposure_id,
+                movie_id=movie_id,
+            )
+            if valid is None:
+                # Do not silently retarget a persisted choice to another exposure.
+                exposure_id = None
+    return TodayChoiceState(
+        movie=row_to_movie(row),
+        exposure_history_id=exposure_id,
+        chosen_at=str(payload.get("chosen_at") or ""),
+    )
+
+
+def current_today_choice(db):
+    state = current_today_choice_state(db)
+    return state.movie if state is not None else None
+
+
+def _visible_exposure(window, movie_id: int) -> int | None:
+    mapping = getattr(window, "_visible_exposures", None)
+    if isinstance(mapping, dict):
+        try:
+            value = mapping.get(int(movie_id))
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def install_decision_action_patch(window_cls) -> None:
-    """Make Choose Film a real, visible state transition and timestamp intent correctly."""
+    """Make explicit decisions immutable events linked to the concrete visible exposure."""
     original_page_today = window_cls.page_today
 
-    def _render_chosen_today(self, movie):
+    def _render_chosen_today(self, state: TodayChoiceState):
+        movie = state.movie
         page, content = self.page_shell(
             "Ce văd acum?",
-            "Alegerea este confirmată pentru azi. CineCalendar a salvat și semnalul pentru Watch Intent.",
+            "Ai o alegere păstrată pentru azi. Acțiunile următoare rămân legate de recomandarea exactă care a produs-o.",
         )
         box = QFrame()
         box.setObjectName("HeroCard")
@@ -152,8 +213,7 @@ def install_decision_action_patch(window_cls) -> None:
         right.addWidget(label)
 
         confirm = QLabel(
-            "Filmul a fost înregistrat ca alegere explicită. Acest semnal este pozitiv pentru "
-            "intenția de vizionare, separat de nota ta estimată 1–10."
+            "Alegerea este stocată ca eveniment separat; recomandarea originală nu este rescrisă."
         )
         confirm.setObjectName("BodyStrong")
         confirm.setWordWrap(True)
@@ -168,7 +228,9 @@ def install_decision_action_patch(window_cls) -> None:
             )
             actions.addWidget(imdb)
         change = QPushButton("M-am răzgândit — alt film")
-        change.clicked.connect(lambda _, mid=movie.id: self.skip_decision(mid))
+        change.clicked.connect(
+            lambda _, mid=movie.id, eid=state.exposure_history_id: self.skip_decision(mid, eid)
+        )
         actions.addWidget(change)
         seen = QPushButton("L-am văzut")
 
@@ -188,20 +250,22 @@ def install_decision_action_patch(window_cls) -> None:
         return page
 
     def page_today(self):
-        movie = current_today_choice(self.db)
-        if movie is not None:
-            return _render_chosen_today(self, movie)
+        state = current_today_choice_state(self.db)
+        if state is not None:
+            return _render_chosen_today(self, state)
         return original_page_today(self)
 
-    def choose_decision(self, movie_id: int):
+    def choose_decision(self, movie_id: int, exposure_history_id: int | None = None):
+        movie_id = int(movie_id)
+        exposure_id = exposure_history_id
+        if exposure_id is None:
+            exposure_id = _visible_exposure(self, movie_id)
         try:
-            record_decision_action(self.db, int(movie_id), "chosen")
-            set_today_choice(self.db, int(movie_id))
-            # Prevent a metadata worker finishing a moment later from repainting the old chooser
-            # over the confirmed-choice page.
+            record_decision_action(self.db, movie_id, "chosen", exposure_id)
+            set_today_choice(self.db, movie_id, exposure_id)
             if hasattr(self, "today_result"):
                 self.today_result = None
-            self.set_status("Filmul a fost ales pentru azi și semnalul a fost salvat.", False)
+            self.set_status("Filmul a fost ales pentru azi; expunerea originală a rămas intactă.", False)
 
             modal = QApplication.activeModalWidget()
             if isinstance(modal, QDialog) and modal is not self:
@@ -210,11 +274,14 @@ def install_decision_action_patch(window_cls) -> None:
         except Exception as exc:
             QMessageBox.critical(self, "CineCalendar", f"Nu am putut salva alegerea:\n{exc}")
 
-    def skip_decision(self, movie_id: int):
+    def skip_decision(self, movie_id: int, exposure_history_id: int | None = None):
         movie_id = int(movie_id)
+        exposure_id = exposure_history_id
+        if exposure_id is None:
+            exposure_id = _visible_exposure(self, movie_id)
         try:
             self.session_skips.add(movie_id)
-            record_decision_action(self.db, movie_id, "skip_today")
+            record_decision_action(self.db, movie_id, "skip_today", exposure_id)
             clear_today_choice(self.db, movie_id)
             if hasattr(self, "today_result"):
                 self.today_result = None

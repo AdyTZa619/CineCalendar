@@ -1,13 +1,17 @@
 # Limitări curente
 
-- **Prima construcție a catalogului necesită internet.** `title.basics.tsv.gz` și `title.ratings.tsv.gz` sunt descărcate din dataseturile oficiale IMDb dacă nu există deja un catalog local utilizabil.
-- **Dataseturile IMDb de bază nu conțin tot.** Pentru overview, keywords, credits și postere bogate este necesar enrichment TMDb sau un catalog local îmbogățit.
-- **TMDb necesită token real și branding conform termenilor TMDb.** Fără token, aplicația nu simulează metadate externe.
-- **ALS nu acoperă toate filmele.** Titlurile fără mapping MovieLens rămân eligibile prin motorul personal de conținut, dar nu au semnal colaborativ.
-- **Watch Success nu este o probabilitate calibrată.** Startability și trust gate sunt semnale conservative de ordonare. Pragurile nu se auto-reglează din câteva interacțiuni.
-- **Auditul trusted/backfill are nevoie de rezultate reale.** Pentru o primă analiză, raportul cere minimum 20 de recomandări auditate și minimum 5 porniri confirmate. Până atunci nu este corect să pretindem că un prag nou este superior.
-- **Datele istorice 3.1 pot avea unele acțiuni fără legătură explicită la expunere.** 3.2 le atribuie retroactiv numai când există un singur candidat neambiguu film/zi; cazurile ambigue sunt raportate și nu sunt ghicite.
-- **Updaterul automat este Windows-only.** Funcționează din bundle-ul PyInstaller `CineCalendar.exe`; rularea directă din Python nu încearcă să se autoînlocuiască.
-- **Posterul este disponibil offline numai după cache.**
-- **Backupul de profil nu include catalogul IMDb complet.** Acesta este intenționat rebuildabil. Backupul păstrează datele utilizatorului și filmele referite de acestea.
-- **Acceptance-ul din `docs/ACCEPTANCE.md` este o fotografie istorică din 13 septembrie 2026.** Valorile de acolo nu trebuie confundate cu schema/testele versiunii curente.
+- **Prima construcție a catalogului necesită internet.** Dataseturile oficiale IMDb sunt descărcate dacă nu există un catalog local utilizabil.
+- **IMDb datasets nu conțin toate metadatele bogate.** Overview, keywords, credits și postere pot necesita TMDb sau cache local.
+- **TMDb necesită token real și respectarea termenilor/brandingului TMDb.** Tokenul rămâne local și nu intră în backup.
+- **ALS nu acoperă toate filmele.** Titlurile fără mapping MovieLens rămân eligibile prin motorul personal de conținut.
+- **Watch Success și Startability nu sunt probabilități calibrate.** Sunt semnale bounded; pragurile nu trebuie auto-reglate din puține interacțiuni.
+- **Auditul pentru tuning cere date reale suficiente.** Minimum orientativ: 20 de expuneri auditate și 5 porniri confirmate; mai mult este preferabil.
+- **Datele istorice 3.1/3.2 pot conține evenimente fără `exposure_history_id`.** Sunt atribuite retroactiv numai când există o singură expunere neambiguă; cazurile ambigue/orfane sunt raportate și nu sunt ghicite.
+- **Updaterul automat este Windows-only.** Bundle-ul și snapshotul SQLite au rollback comun, dar sursa Python nu se autoînlocuiește.
+- **Manifestul Stable este verificat prin HTTPS + SHA-256, nu printr-o semnătură public-key separată.** Semnarea codului/manifestului rămâne o întărire de supply-chain posibilă.
+- **Posterul este offline numai după cache.**
+- **Backupul de profil nu include catalogul IMDb complet.** Catalogul este rebuildabil; backupul păstrează starea utilizatorului și filmele referite.
+- **`merge` și `restore` au intenții diferite.** `merge` păstrează valorile locale mai noi pentru ratinguri/setări/watchlist; `restore` face backupul autoritar pentru aceste stări.
+- **Acceptance-ul din `docs/ACCEPTANCE.md` este o fotografie istorică.** Nu trebuie confundat cu testele sau schema versiunii curente.
+
+- **Recovery-ul automat poate reveni la ultimul snapshot `last_good`.** Dacă baza principală se corupe după modificări recente, recuperarea privilegiază consistența bazei; backupul de profil rămâne mecanismul pentru portabilitatea stării utilizatorului.

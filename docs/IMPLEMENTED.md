@@ -1,48 +1,39 @@
 # Funcții implementate
 
 ## Date și catalog
-
-- import IMDb `ratings.csv` cu detectarea coloanelor după nume, UTF-8 BOM și ordine arbitrară;
-- identitate primară IMDb Const, cu fallback normalizat titlu/original/an/tip;
-- detectare rating nou/modificat și reconciliere cu ratingurile introduse manual;
-- catalog automat din dataseturile oficiale IMDb, cu download `.part`, validare și import streaming/batch;
-- catalog CSV local și enrichment TMDb opțional;
-- postere asincrone cu cache local.
+- import IMDb `ratings.csv` cu identitate primară IMDb Const și fallback normalizat;
+- detectare rating nou/modificat și reconciliere cu ratingurile locale;
+- catalog automat din dataseturile oficiale IMDb, validare și import streaming/batch;
+- enrichment TMDb opțional și postere asincrone cu cache local.
 
 ## Recomandări
-
 - motor de producție V16;
-- retrieval personal pe întregul catalog prin ALS + vecini ai favoritelor + discovery generic când mapping-ul permite;
-- fallback content pentru titluri fără acoperire MovieLens;
-- profil personal construit din ratinguri 1–10, features semantice și feedback;
-- Adaptive Personal v2 cu holdout temporal și influență plafonată;
-- calendar ortodox fix/mobil, calendar secular/istoric selectiv și sezonalitate;
-- filtrare explicită de gen pentru ziua curentă; nu există un veto global permanent pe Romance;
-- repetare penalizată, diversitate finală și excluderea filmelor evaluate/văzute/respinse;
-- Watch Success v3: `chosen`, trailer, Stremio handoff, playback confirmat, watched și skip;
-- Startability folosit numai pentru departajarea candidaților apropiați;
-- Top-3 trust gate V16 cu semnale multiple, red flags și backfill conservator;
-- telemetry locală `trusted/backfill/red_flag`, fără reglare automată a pragurilor.
+- retrieval ALS + vecini ai favoritelor + content/discovery fallback;
+- profil personal din ratinguri 1–10, semantică și feedback;
+- Adaptive Personal v2 cu validare temporală și influență plafonată;
+- calendar ortodox/secular/istoric/sezonier;
+- Watch Success + Startability + Top-3 trust gate;
+- în 3.3, Watch Success învață și auditează la nivel de expunere concretă, nu `movie_id + zi`.
 
-## UI
-
-- „Ce văd acum?”, recomandări, profil, ratinguri, watchlist, calendar, program lunar, istoric, actualizări și setări;
-- dark/light, DPI PerMonitorV2, carduri cu poster și explicații;
-- deschidere Stremio/Stremio Web, trailer și confirmare explicită că filmul a pornit;
-- pagină dedicată cinematografiei românești și filtru de gen pentru ziua curentă.
+## UI și acțiuni
+- Home, recomandări, profil, ratinguri, watchlist, calendar, program lunar, istoric, update și setări;
+- Stremio/Stremio Web, trailer, confirmare explicită playback și watched;
+- fiecare recomandare vizibilă primește un `exposure_history_id` care este transportat până la acțiunea utilizatorului;
+- două expuneri ale aceluiași film în aceeași zi rămân două funnel-uri distincte.
 
 ## Persistență și siguranță
-
-- SQLite WAL cu migrații automate; schema curentă v5;
-- evenimentele de interacțiune sunt legate de expunerea exactă prin `exposure_history_id`;
-- feedbackul `seen` nu suprascrie evenimentul `watched`;
-- backup profil v2: ratinguri, feedback, watchlist, istoric, recommendation runs și trust telemetry, fără întregul catalog rebuildabil;
-- import backup v1/v2 merge-safe și idempotent pentru evenimentele restaurate;
-- tokenul TMDb și stările tranzitorii nu intră în backup;
-- log rotativ local.
+- SQLite WAL, schema curentă v5, `quick_check` la startup și snapshot automat `last_good` pentru recovery;
+- expunerile de recomandare sunt rădăcini imuabile; `chosen`, `skip_today`, `trailer_opened`, `stremio_opened`, `playback_confirmed` și `watched` sunt evenimente append-only;
+- feedbackul nu mai modifică expunerea originală;
+- migrațiile sunt idempotente, verificate cu `foreign_key_check`/`quick_check` și precedate de snapshot SQLite când este necesară o schimbare/reparație;
+- backup profil v2 compact, exportat dintr-un singur snapshot WAL consistent;
+- import `merge` păstrează datele locale mai noi, iar `restore` este explicit autoritar;
+- tokenul TMDb și stările tranzitorii nu intră în backup.
 
 ## Update și distribuție
-
-- updater stable Windows pentru bundle `onedir`, cu SHA-256, staging, backup temporar, health-check și rollback;
-- build local și GitHub Actions aliniate pe aceeași arhitectură `onedir`;
-- teste automate, benchmark pe catalog mare, build Windows și smoke launch înainte de publicarea stable.
+- updater stable Windows `onedir`, SHA-256, staging, health-check și rollback;
+- din 3.3 updaterul păstrează și snapshot SQLite și îl restaurează împreună cu bundle-ul la health-check eșuat;
+- build local și GitHub Actions folosesc aceeași arhitectură `onedir`;
+- single-instance Windows blochează a doua instanță înainte de SQLite/workeri;
+- compoziția UI de producție are o singură ordine canonică verificată;
+- testele, benchmark-ul, build-ul și smoke launch rulează înainte de publicarea stable.

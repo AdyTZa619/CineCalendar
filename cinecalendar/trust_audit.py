@@ -19,7 +19,7 @@ _EVENT_SLOTS = ("decision_action", "watch_success_v3")
 
 
 def ensure_trust_audit_schema(con) -> None:
-    """Fail fast if the canonical v5 migration was not applied."""
+    """Fail fast if the canonical v5 schema is not available."""
     table = con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_trust_audit'"
     ).fetchone()
@@ -28,33 +28,72 @@ def ensure_trust_audit_schema(con) -> None:
         raise RuntimeError("Schema CineCalendar incompletă: migrarea SQLite v5 nu este aplicată.")
 
 
-def resolve_exposure_history_id(con, movie_id: int, context_date: str) -> int | None:
-    """Return the concrete recommendation exposure that subsequent actions belong to.
+def validate_exposure_history_id(
+    con,
+    exposure_history_id: int | None,
+    *,
+    movie_id: int | None = None,
+    context_date: str | None = None,
+):
+    """Return the immutable root exposure row only when the supplied id is valid.
 
-    V16 trust snapshots are authoritative. The fallback keeps older/non-V16 recommendation paths
-    usable without ever treating an event row as a fresh exposure.
+    Event rows are never accepted as exposure roots. Optional movie/date checks prevent stale UI
+    state from attaching an action to an unrelated recommendation.
     """
-    movie_id = int(movie_id)
-    context_date = str(context_date)
-    row = con.execute(
-        """SELECT history_id FROM recommendation_trust_audit
-           WHERE movie_id=? AND context_date=?
-           ORDER BY id DESC LIMIT 1""",
-        (movie_id, context_date),
-    ).fetchone()
-    if row is not None:
-        return int(row[0])
-
+    if exposure_history_id is None:
+        return None
+    try:
+        exposure_history_id = int(exposure_history_id)
+    except (TypeError, ValueError):
+        return None
     marks = ",".join("?" for _ in _EVENT_SLOTS)
     row = con.execute(
-        f"""SELECT id FROM recommendation_history
-            WHERE movie_id=? AND context_date=?
+        f"""SELECT * FROM recommendation_history
+            WHERE id=?
               AND exposure_history_id IS NULL
               AND slot NOT IN ({marks})
-            ORDER BY id DESC LIMIT 1""",
-        (movie_id, context_date, *_EVENT_SLOTS),
+            LIMIT 1""",
+        (exposure_history_id, *_EVENT_SLOTS),
     ).fetchone()
-    return int(row[0]) if row is not None else None
+    if row is None:
+        return None
+    if movie_id is not None and int(row["movie_id"]) != int(movie_id):
+        return None
+    if context_date is not None and str(row["context_date"] or "") != str(context_date):
+        return None
+    return row
+
+
+def _candidate_exposure_ids(con, movie_id: int, context_date: str) -> list[int]:
+    marks = ",".join("?" for _ in _EVENT_SLOTS)
+    rows = con.execute(
+        f"""SELECT h.id
+            FROM recommendation_history h
+            WHERE h.movie_id=? AND h.context_date=?
+              AND h.exposure_history_id IS NULL
+              AND h.slot NOT IN ({marks})
+              AND (
+                    h.action IS NULL
+                    OR EXISTS(
+                        SELECT 1 FROM recommendation_trust_audit t
+                        WHERE t.history_id=h.id
+                    )
+                  )
+            ORDER BY h.id ASC""",
+        (int(movie_id), str(context_date), *_EVENT_SLOTS),
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def resolve_exposure_history_id(con, movie_id: int, context_date: str) -> int | None:
+    """Resolve only an unambiguous exposure.
+
+    v3.3 intentionally refuses the old "latest movie + day" guess. UI paths pass the exposure id
+    explicitly; this resolver exists for legacy compatibility and returns None whenever multiple
+    valid roots exist.
+    """
+    ids = _candidate_exposure_ids(con, int(movie_id), str(context_date))
+    return ids[0] if len(ids) == 1 else None
 
 
 def record_trust_snapshot(
@@ -129,12 +168,7 @@ def _ratio(num: int, den: int):
 
 
 def build_trust_outcome_audit(db, days: int = 90) -> dict:
-    """Correlate each V16 exposure with its own observed watch outcome.
-
-    New v5 rows are linked exactly through `exposure_history_id`. Older 3.1 action rows can be
-    recovered only when one movie/day maps to exactly one trust exposure; ambiguous legacy rows are
-    counted but deliberately not guessed.
-    """
+    """Correlate each V16 exposure with observed outcomes without guessing ambiguous links."""
     days = max(1, min(int(days or 90), 3650))
     start_day = (date.today() - timedelta(days=days - 1)).isoformat()
 
@@ -166,6 +200,7 @@ def build_trust_outcome_audit(db, days: int = 90) -> dict:
     actions_by_exposure: dict[int, list[str]] = defaultdict(list)
     legacy_linked_actions = 0
     ambiguous_unlinked_actions = 0
+    orphan_unlinked_actions = 0
     exact_linked_actions = 0
 
     for row in action_rows:
@@ -179,11 +214,13 @@ def build_trust_outcome_audit(db, days: int = 90) -> dict:
             if root in trust_ids:
                 actions_by_exposure[root].append(action)
                 exact_linked_actions += 1
+            else:
+                orphan_unlinked_actions += 1
             continue
 
         row_id = int(row["id"])
         if row_id in trust_ids:
-            # Choosing/skipping can update the exposure row itself instead of appending an event.
+            # Compatibility with 3.2 rows where choose/skip mutated the exposure itself.
             actions_by_exposure[row_id].append(action)
             exact_linked_actions += 1
             continue
@@ -198,6 +235,8 @@ def build_trust_outcome_audit(db, days: int = 90) -> dict:
             legacy_linked_actions += 1
         elif len(candidates) > 1:
             ambiguous_unlinked_actions += 1
+        else:
+            orphan_unlinked_actions += 1
 
     summaries = {status: _empty_status() for status in TRUST_STATUSES}
     trust_values: dict[str, list[float]] = defaultdict(list)
@@ -249,9 +288,10 @@ def build_trust_outcome_audit(db, days: int = 90) -> dict:
         "exact_linked_actions": exact_linked_actions,
         "legacy_linked_actions": legacy_linked_actions,
         "ambiguous_unlinked_actions": ambiguous_unlinked_actions,
+        "orphan_unlinked_actions": orphan_unlinked_actions,
         "enough_data_for_tuning": total >= 20 and total_confirmed >= 5,
         "note": (
             "Pragurile V16 nu sunt ajustate automat. Comparația trusted/backfill devine utilă "
-            "abia după suficiente rezultate reale de vizionare."
+            "abia după suficiente rezultate reale de vizionare și legături exacte."
         ),
     }
