@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import math
 
 from .recommendation import row_to_movie
+from .semantic import feature_vector
+from .util import clamp, cosine_sparse
 from .watch_intent import WatchIntentLearner
 
 
@@ -182,8 +185,8 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
                 "state": "ready",
                 "version": MODEL_VERSION,
                 "active": active,
-                # The inherited scorer uses explicit_events for confidence. Use effective evidence
-                # rather than raw clicks so repeated trailer opens cannot rapidly unlock 28% blend.
+                # The scorer uses explicit_events for confidence. Use effective evidence rather
+                # than raw clicks so repeated trailer opens cannot rapidly unlock 28% blend.
                 "explicit_events": effective_count,
                 "raw_explicit_events": raw_events,
                 "play_events": play_events,
@@ -193,3 +196,74 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
                 "negative_evidence": round(negative_weight, 4),
                 "max_blend_weight": round(max_blend, 4),
             }
+
+    @staticmethod
+    def _inactive_score() -> dict:
+        return {
+            "active": False,
+            "score": 0.5,
+            "confidence": 0.0,
+            "blend_weight": 0.0,
+            "positive_similarity": 0.0,
+            "negative_similarity": 0.0,
+            "reason": "",
+        }
+
+    @classmethod
+    def _score_snapshot(cls, movie, status: dict, positive: dict[str, float], negative: dict[str, float]) -> dict:
+        if not status.get("active"):
+            return cls._inactive_score()
+        vec = feature_vector(movie)
+        if not vec:
+            return cls._inactive_score()
+
+        pos = clamp(cosine_sparse(vec, positive)) if positive else 0.0
+        neg = clamp(cosine_sparse(vec, negative)) if negative else 0.0
+        if positive and negative:
+            probability = clamp(0.5 + 0.5 * math.tanh(2.15 * (pos - neg)))
+        elif positive:
+            probability = clamp(0.35 + 0.65 * pos)
+        else:
+            probability = clamp(0.65 - 0.65 * neg)
+
+        explicit = int(status.get("explicit_events", 0) or 0)
+        recent = int(status.get("recent_rating_signals", 0) or 0)
+        both_sides = 1.0 if positive and negative else 0.62
+        sample_conf = 1.0 - math.exp(-(explicit + 0.12 * recent) / 18.0)
+        confidence = clamp((0.22 + 0.78 * sample_conf) * both_sides)
+        cap = float(status.get("max_blend_weight", 0.0) or 0.0)
+        blend = min(0.28, cap * (0.45 + 0.55 * confidence))
+
+        if probability >= 0.68:
+            label = "ridicată"
+        elif probability >= 0.54:
+            label = "bună"
+        elif probability <= 0.36:
+            label = "scăzută"
+        else:
+            label = "neutră"
+        reason = (
+            f"Probabilitate de pornire acum {label}; semnal separat de nota estimată, "
+            "învățat local din alegeri, trailere, play, skip-uri și feedback recent."
+        )
+        return {
+            "active": True,
+            "score": probability,
+            "confidence": confidence,
+            "blend_weight": blend,
+            "positive_similarity": pos,
+            "negative_similarity": neg,
+            "reason": reason,
+        }
+
+    def score_many(self, movies) -> list[dict]:
+        """Prepare once and score a whole finalist pool without one SQLite token query per film."""
+        movies = list(movies)
+        if not movies:
+            return []
+        self._prepare()
+        with self._lock:
+            status = dict(self._status)
+            positive = dict(self._positive)
+            negative = dict(self._negative)
+        return [self._score_snapshot(movie, status, positive, negative) for movie in movies]
