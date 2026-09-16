@@ -10,7 +10,7 @@ from .util import clamp
 from .watch_success import WatchSuccessIntentLearner
 
 
-ENGINE_VERSION = "15.1.0-watch-success-truthful-funnel"
+ENGINE_VERSION = "15.1.1-watch-success-truthful-funnel"
 
 
 class FastRecommendationEngineV15(FastRecommendationEngineV14):
@@ -18,14 +18,13 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
 
     Long-term taste remains the gatekeeper. Short-horizon intent can only influence candidates that
     are still reasonably close to the best long-term fit, and Startability is stricter still: it is
-    only allowed to break near-ties. Generic assumptions such as "a 105-minute film is easier to
-    start" get a small voice; real Watch Success evidence can increase that voice, but never enough
-    to rescue a substantially weaker taste match. The estimated personal rating is never changed by
-    either short-horizon layer.
+    only allowed to break near-ties. The two short-horizon layers together may move a candidate by
+    at most 0.10 final-score points away from its long-term base score. The estimated personal
+    rating is never changed by either short-horizon layer.
     """
 
     INTENT_GOOD_MATCH_MARGIN = 0.16
-    INTENT_MAX_ABS_SHIFT = 0.10
+    SHORT_HORIZON_MAX_ABS_SHIFT = 0.10
     STARTABILITY_GENERIC_MAX = 0.07
     STARTABILITY_EVIDENCE_MAX = 0.14
     STARTABILITY_NEAR_TIE_MARGIN = 0.08
@@ -152,7 +151,7 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         margin = float(self.INTENT_GOOD_MATCH_MARGIN)
         if gap >= margin:
             return 0.0
-        # Full voice for candidates within 0.04 of the best, then taper linearly to zero at 0.16.
+        # Full voice within 0.04 of the best, then fade to zero at 0.16.
         full_voice = 0.04
         if gap <= full_voice:
             proximity = 1.0
@@ -160,11 +159,15 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
             proximity = 1.0 - (gap - full_voice) / max(0.001, margin - full_voice)
         return requested_blend * clamp(proximity)
 
+    def _cap_to_base(self, base_final: float, candidate_final: float) -> float:
+        max_shift = float(self.SHORT_HORIZON_MAX_ABS_SHIFT)
+        lower = max(0.0, float(base_final) - max_shift)
+        upper = min(1.0, float(base_final) + max_shift)
+        return max(lower, min(upper, clamp(float(candidate_final))))
+
     def _mix_intent(self, old_final: float, intent_score: float, blend: float) -> float:
         mixed = clamp((1.0 - blend) * float(old_final) + blend * float(intent_score))
-        max_shift = float(self.INTENT_MAX_ABS_SHIFT)
-        delta = max(-max_shift, min(max_shift, mixed - float(old_final)))
-        return clamp(float(old_final) + delta)
+        return self._cap_to_base(old_final, mixed)
 
     def _startability_blend(self, rec: Recommendation, best_final: float, intent_payload: dict) -> float:
         gap = max(0.0, float(best_final) - float(rec.score.final))
@@ -183,11 +186,11 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         if not recs:
             return []
         payloads = self.watch_intent.score_many([rec.movie for rec in recs])
-        best_base_final = max(float(rec.score.final) for rec in recs)
+        base_finals = {int(rec.movie.id): float(rec.score.final) for rec in recs}
+        best_base_final = max(base_finals.values())
 
         # Learned short-horizon intent never gets permission to rescue a clearly weaker long-term
-        # match. Its existing sample-size/confidence cap is multiplied by a taste-proximity gate,
-        # and any single intent adjustment is additionally capped to ±0.10 final-score points.
+        # match. Its sample-size/confidence cap is multiplied by a taste-proximity gate.
         for rec, intent_payload in zip(recs, payloads):
             if not intent_payload.get("active"):
                 continue
@@ -218,15 +221,19 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
             start_blend = self._startability_blend(rec, best_pre_start, intent_payload)
             if start_blend > 0.001:
                 old_final = float(rec.score.final)
-                rec.score.final = clamp((1.0 - start_blend) * old_final + start_blend * startability)
-                rec.score.contributions.insert(
-                    0,
-                    (
-                        "Startability",
-                        start_blend * (startability - 0.5) * 100.0,
-                        reason,
-                    ),
-                )
+                candidate = clamp((1.0 - start_blend) * old_final + start_blend * startability)
+                base_final = base_finals[int(rec.movie.id)]
+                rec.score.final = self._cap_to_base(base_final, candidate)
+                actual_delta = rec.score.final - old_final
+                if abs(actual_delta) > 1e-8:
+                    rec.score.contributions.insert(
+                        0,
+                        (
+                            "Startability",
+                            actual_delta * 100.0,
+                            reason,
+                        ),
+                    )
             adjusted.append(rec)
 
         adjusted.sort(
@@ -252,7 +259,7 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
                 rec.score.final = clamp((1.0 - blend) * old_final + blend * startability)
                 rec.score.contributions.insert(
                     0,
-                    ("Startability", blend * (startability - 0.5) * 100.0, reason),
+                    ("Startability", (rec.score.final - old_final) * 100.0, reason),
                 )
             adjusted.append(rec)
         adjusted.sort(
