@@ -1,11 +1,17 @@
-CineCalendar 3.1.0 este o versiune de integritate și măsurare pentru motorul V16. Nu schimbă ponderile, pragurile sau formula Top-3 din 3.0.0 înainte să existe suficiente rezultate reale de vizionare.
+CineCalendar 3.2.0 este versiunea de integritate completă pentru fluxul recomandare → acțiune → vizionare → backup/release.
 
-Este corectată o problemă de telemetry moștenită din V13: rulările produse efectiv de motorul V16 puteau fi salvate în `recommendation_runs` cu versiunea `13.3.0-personal-candidate-generation`. În 3.1.0, rulările vizibile produse de V16 sunt înregistrate explicit ca `16.0.0-top3-trust-gate`.
+Schema SQLite trece oficial la v5. `recommendation_trust_audit`, introdus în 3.1, nu mai este creat ad-hoc în timpul rulării: face parte din migrarea canonică. `recommendation_history` primește `exposure_history_id`, astfel încât trailerul, handoff-ul Stremio, confirmarea playback-ului, `watched` și skip-ul pot fi legate de recomandarea exactă care le-a produs.
 
-Pentru fiecare recomandare vizibilă se păstrează local și decizia porții Top 3: `trusted`, `backfill`, `red_flag` sau `bypassed`, împreună cu poziția în listă, scorul de trust, scorul după poartă, numărul și etichetele semnalelor de susținere, red flag-ul și motivul lui, distanța față de cea mai bună potrivire, scorul ALS și ratingul public bayesian când acestea există.
+Auditul `trusted/backfill/red_flag` nu mai atribuie evenimente doar după `movie_id + zi`. Pentru datele noi folosește legătura exactă de expunere. Acțiunile istorice 3.1 fără legătură explicită sunt recuperate numai dacă există un singur exposure neambiguu pentru filmul respectiv în ziua respectivă; cazurile ambigue sunt numărate separat și nu sunt ghicite.
 
-Auditul Watch Success corelează acum aceste etichete cu rezultate observabile: deschidere Stremio, pornire confirmată, vizionare și skip. Raportul separă ratele pentru `trusted` și `backfill`, astfel încât următoarele reglaje ale pragurilor să poată fi făcute pe rezultate reale, nu după impresie.
+A fost reparat un defect important în fluxul „L-am văzut”: după salvarea evenimentului `watched`, feedbackul `seen` putea suprascrie ultimul rând din `recommendation_history` și putea elimina exact semnalul puternic de Watch Success. Feedbackul adnotează acum numai o expunere care nu are încă acțiune și nu mai distruge `watched`, `playback_confirmed`, Stremio sau skip-uri existente.
 
-Datele de audit rămân exclusiv în SQLite-ul local. Nu sunt trimise în exterior și nu sunt prezentate ca probabilități. Pragurile V16 nu sunt ajustate automat. Raportul marchează datele ca suficiente pentru o primă analiză numai după cel puțin 20 de recomandări auditate și cel puțin 5 porniri confirmate.
+Backupul de profil este refăcut ca format v2. Exportul nu mai copiază întregul catalog IMDb rebuildabil, care poate conține sute de mii de titluri. Sunt salvate numai filmele referite de datele utilizatorului, împreună cu ratingurile, feedbackul, watchlist-ul, recommendation history, recommendation runs și trust telemetry. Tokenul TMDb și stările tranzitorii sunt excluse. Importul acceptă în continuare backupurile v1 și este idempotent pentru feedback și istoricul restaurat, astfel încât același ZIP importat de două ori nu trebuie să dubleze semnalele.
 
-Au fost adăugate teste de regresie pentru eticheta persistabilă produsă de poarta V16, versiunea corectă a motorului în `recommendation_runs`, persistența snapshot-ului de trust și corelarea `trusted/backfill` cu rezultate reale de vizionare.
+`ScoreBreakdown` declară explicit payloadul `trust_audit` în modelul de date, în loc să primească dinamic un atribut ascuns la runtime.
+
+Build-ul local Windows este aliniat cu release-ul real: `scripts/build_windows.bat` folosește acum PyInstaller `--onedir`, include `_internal`, rulează testele și benchmark-ul înainte de build și face smoke launch într-un director de date temporar. Vechea cale one-file nu mai este prezentată drept build oficial.
+
+Documentația a fost rescrisă pentru arhitectura 3.x: motor V16, schema v5, updater Windows real, backup v2, Watch Success, ALS/content fallback și limitele reale ale calibrării. Executabilul vechi urmărit în `releases/CineCalendar_LATEST.exe` este eliminat; distribuția oficială rămâne exclusiv release-ul stable ZIP generat de CI.
+
+Testele noi acoperă migrarea v4→v5, legarea exactă a evenimentelor la exposure, protejarea `watched` împotriva `seen`, auditul fără atribuire ambiguă, backup/restore v2 cu reimport idempotent, excluderea catalogului nereferit și consistența build/documentație.

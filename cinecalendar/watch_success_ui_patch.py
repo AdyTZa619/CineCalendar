@@ -8,6 +8,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 from .decision_action_patch import clear_today_choice, current_today_choice, set_today_choice
+from .trust_audit import ensure_trust_audit_schema, resolve_exposure_history_id
 from .util import utcnow_iso
 
 
@@ -30,6 +31,7 @@ def trailer_search_url(title: str, year: int | None = None) -> str:
 
 
 def record_watch_event(db, movie_id: int, action: str) -> int:
+    """Append a watch event and link it to the exact recommendation exposure when available."""
     action = str(action or "").strip()
     if action not in _WATCH_ACTIONS:
         raise ValueError(f"Unsupported watch event: {action}")
@@ -37,14 +39,23 @@ def record_watch_event(db, movie_id: int, action: str) -> int:
     now = utcnow_iso()
     today = date.today().isoformat()
     with db.tx() as con:
+        ensure_trust_audit_schema(con)
         movie = con.execute("SELECT id FROM movies WHERE id=?", (movie_id,)).fetchone()
         if movie is None:
             raise ValueError("Filmul nu mai există în catalog.")
-        previous = con.execute(
-            """SELECT final_score FROM recommendation_history
-               WHERE movie_id=? ORDER BY id DESC LIMIT 1""",
-            (movie_id,),
-        ).fetchone()
+        exposure_id = resolve_exposure_history_id(con, movie_id, today)
+        previous = None
+        if exposure_id is not None:
+            previous = con.execute(
+                "SELECT final_score FROM recommendation_history WHERE id=?",
+                (int(exposure_id),),
+            ).fetchone()
+        if previous is None:
+            previous = con.execute(
+                """SELECT final_score FROM recommendation_history
+                   WHERE movie_id=? AND context_date=? ORDER BY id DESC LIMIT 1""",
+                (movie_id, today),
+            ).fetchone()
         final_score = (
             float(previous["final_score"])
             if previous is not None and previous["final_score"] is not None
@@ -52,9 +63,9 @@ def record_watch_event(db, movie_id: int, action: str) -> int:
         )
         cur = con.execute(
             """INSERT INTO recommendation_history(
-                   movie_id,recommended_at,context_date,slot,final_score,ignored,action
-               ) VALUES(?,?,?,?,?,?,?)""",
-            (movie_id, now, today, "watch_success_v3", final_score, 0, action),
+                   movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id
+               ) VALUES(?,?,?,?,?,?,?,?)""",
+            (movie_id, now, today, "watch_success_v3", final_score, 0, action, exposure_id),
         )
         return int(cur.lastrowid)
 
@@ -165,8 +176,8 @@ def install_watch_success_ui_patch(window_cls) -> None:
             record_watch_event(self.db, int(movie.id), "watched")
         except Exception:
             pass
-        # The Watch Success wrapper must clear the persisted choice too. Without this, the old
-        # 2.7.0 screen could keep showing the same film even after "L-am văzut".
+        # Preserve `watched` as a Watch Success event. Feedback `seen` is stored separately and
+        # must never overwrite this strongest observed funnel outcome.
         clear_today_choice(self.db, int(movie.id))
         self.feedback(int(movie.id), "seen")
         self.show_page("today")

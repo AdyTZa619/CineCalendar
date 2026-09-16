@@ -1,14 +1,21 @@
-CineCalendar 0.2.0 — Windows 10/11 x64
+CineCalendar Premium — Windows 10/11 x64
 
-UTILIZARE NORMALĂ
-1. Rulează CineCalendar.exe.
-2. Importă ratings.csv din „Ratinguri IMDb”.
-3. Gata: dacă nu există încă un catalog nevăzut, CineCalendar descarcă automat dataseturile oficiale IMDb, le validează și construiește catalogul local. Nu trebuie să adaugi filme manual.
-4. Intră la „Azi” pentru cele 3 recomandări și la „Programul lunii” pentru calendarul cinematografic.
+PORNIRE
+1. Dezarhivează întregul ZIP într-un folder normal cu drept de scriere.
+2. Păstrează CineCalendar.exe împreună cu folderul _internal și celelalte fișiere din bundle.
+3. Rulează CineCalendar.exe.
+4. Importă exportul IMDb ratings.csv. Dacă nu există încă un catalog de filme nevăzute, CineCalendar poate construi automat catalogul din dataseturile oficiale IMDb.
 
-În Setări există „Actualizează catalogul de pe IMDb”. Importul manual al dataseturilor este doar fallback avansat.
+DATE
+Datele personale, baza SQLite, cache-ul, logurile, backupurile și fișierele updaterului sunt în folderul CineCalendarData de lângă aplicație. Actualizarea bundle-ului nu șterge CineCalendarData.
 
-Opțional: introdu un TMDb API Read Access Token pentru postere și metadate semantice mai bogate.
-Datele, cache-ul, logurile și backupurile sunt în CineCalendarData lângă EXE.
+RECOMANDĂRI
+Motorul curent combină profilul tău de ratinguri, retrieval ALS/content, contextul calendaristic și semnale locale de vizionare. Deschiderea Stremio nu este tratată ca dovadă că filmul a pornit; confirmarea playback-ului și „L-am văzut” sunt semnale distincte.
+
+BACKUP
+„Export profile” creează un backup portabil al datelor tale relevante fără a copia întregul catalog IMDb rebuildabil și fără tokenul TMDb.
+
+UPDATE
+Actualizările stable se pot instala din aplicație. ZIP-ul este verificat SHA-256, noul bundle este staged, iar updaterul păstrează temporar versiunea veche pentru rollback până trece health-check-ul.
 
 Sursa catalogului automat: IMDb datasets oficiale pentru uz personal/necomercial. Nu se face scraping IMDb.

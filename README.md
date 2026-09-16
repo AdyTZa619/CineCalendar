@@ -1,199 +1,112 @@
 # CineCalendar
 
-## 0.2.0 — catalog automat
+CineCalendar este o aplicație Windows portabilă pentru recomandări personale de filme. Sursa principală de adevăr pentru gust este istoricul real de ratinguri al utilizatorului; calendarul ortodox/secular/sezonier, semnalele de intenție și calitatea publică sunt contexte suplimentare, nu înlocuitori pentru gust.
 
-Fluxul normal nu mai cere utilizatorului să descarce sau să adauge manual filme. După importul `ratings.csv`, dacă nu există candidați nevăzuți, CineCalendar descarcă automat `title.basics.tsv.gz` și `title.ratings.tsv.gz` din endpointul oficial IMDb datasets, validează fișierele, le păstrează în cache și construiește catalogul SQLite. Descărcarea folosește fișier `.part`, poate relua un transfer întrerupt și face rename atomic doar după terminare.
+## Flux normal
 
-Importul manual al dataseturilor rămâne în Setări doar ca fallback avansat. `Actualizează catalogul de pe IMDb` forțează redescărcarea copiilor oficiale.
+1. Pornești `CineCalendar.exe` din folderul portabil.
+2. Importi exportul IMDb `ratings.csv` din pagina „Ratinguri IMDb”.
+3. Dacă baza locală nu are încă filme nevăzute, aplicația poate descărca automat dataseturile oficiale IMDb `title.basics.tsv.gz` și `title.ratings.tsv.gz`, le validează și construiește catalogul SQLite.
+4. Pagina „Ce văd acum?” produce setul mic de recomandări pentru decizie; calendarul și programul lunar folosesc aceeași bază personală, cu context temporal suplimentar.
 
+Datele aplicației sunt păstrate în `CineCalendarData` lângă bundle-ul portabil. Update-ul nu șterge acest director.
 
+## Motorul de recomandare curent
 
-CineCalendar este o aplicație Windows portabilă pentru recomandări personalizate de filme, construită în jurul ratingurilor reale ale utilizatorului, al unui calendar cinematografic ortodox/secular/sezonier și al unui motor de scoring explicabil.
+Serviciul de producție folosește `FastRecommendationEngineV16`.
 
-## Stare
+Pipeline-ul este intenționat stratificat:
 
-Versiune sursă: **0.1.0**.
+- **retrieval personal**: când modelul colaborativ este disponibil, pool-ul combină candidați ALS, vecini ai favoritelor explicite și discovery generic;
+- **profil personal pe termen lung**: ratingurile 1–10, genurile, regizorii, țările, perioadele, runtime-ul și semantica locală contribuie la potrivire;
+- **Adaptive Personal v2**: model local cu validare temporală și influență plafonată; dacă validarea nu justifică modelul, motorul revine conservator la baza ALS + content;
+- **calendar**: sărbători ortodoxe fixe/mobile, repere seculare/istorice și sezon, fără a domina gustul personal;
+- **Watch Success / Startability**: semnale pe termen scurt pentru departajarea unor candidați deja buni; deschiderea Stremio nu este confundată cu pornirea filmului;
+- **Top-3 trust gate (V16)**: înainte ca setul mic vizibil să fie afișat, sunt combinate mai multe semnale independente. Un candidat cu red flag nu este promovat peste unul sigur doar pentru un scor marginal mai bun.
 
-Nucleul funcțional este implementat și testat: SQLite cu migrații, import IMDb `ratings.csv`, rating manual, reconciliere/duplicate, profil personal ponderat temporal, CalendarEngine, RecommendationEngine, istoric, feedback, watchlist, backup, monitorizare folder, catalog CSV, import al dataset-urilor IMDb oficiale și provider TMDb opțional cu enrichment în batch.
+Nota estimată „pentru tine” și semnalul „ușurință de pornire” sunt concepte separate.
 
-Build-ul Windows este definit prin `scripts/build_windows.bat` și `.github/workflows/windows-build.yml`. Mediul în care a fost generat acest proiect este Linux și nu conține toolchain Windows/PyInstaller pentru a produce un `.exe` Windows verificabil local; de aceea repository-ul nu conține un executabil pretins ca testat.
+## Semnale de vizionare
 
-## Principii implementate
+CineCalendar diferențiază explicit:
 
-- **Gust personal > calendar.** Ponderea gustului + similarității semantice este 58%; calendarul are 14%.
-- Ratingurile recente pot cântări cu cel mult aproximativ 15% mai mult decât cele vechi.
-- Un singur rating extrem este regularizat prin shrinkage pe fiecare feature.
-- `6/10` produce doar un semnal ușor pozitiv, nu este tratat ca apreciere puternică.
-- Titlurile evaluate sunt excluse din candidați la nivel SQL.
-- `Romance` este exclus implicit când este dominant. Romance secundar poate trece numai cu un motiv non-romantic puternic și primește penalizare.
-- Recomandările recente primesc penalizare; respingerile explicite și `Am văzut` suprimă titlul.
-- Feedbackul are ponderi moderate și nu poate suprascrie brutal istoricul de ratinguri.
+- `chosen` — film păstrat/ales;
+- `trailer_opened` — interes slab;
+- `stremio_opened` — handoff către Stremio, nu dovadă de playback;
+- `playback_confirmed` — utilizatorul confirmă că filmul a pornit;
+- `watched` — utilizatorul confirmă că l-a văzut;
+- `skip_today` — refuz contextual pentru moment.
 
-## Scoring
+În schema v5, evenimentele noi sunt legate de expunerea exactă de recomandare prin `exposure_history_id`. Telemetry pentru trust gate este locală și poate compara rezultatele `trusted`, `backfill` și `red_flag` fără a ghici legătura doar după film și zi.
 
-Formula de bază:
+## Catalog și metadate
 
-- 36% gust personal;
-- 22% similaritate semantică;
-- 14% relevanță calendaristică;
-- 8% potrivire sezonieră;
-- 7% regizor/cinematografie;
-- 5% noutate;
-- 3% diversitate;
-- 5% calitate publică regularizată după numărul de voturi.
+### IMDb
 
-Se aplică separat penalizări pentru repetare și Romance secundar.
+Importul `ratings.csv` folosește `Const` drept identitate principală și are fallback normalizat titlu/original/an/tip. Dataseturile oficiale IMDb sunt folosite pentru catalogul de bază; aplicația nu face scraping IMDb.
 
-`De ce mi-ai recomandat asta?` afișează contribuțiile pozitive și negative în puncte procentuale aproximative.
+### TMDb opțional
 
-## CalendarEngine
+TMDb poate completa overview, keywords, credits și postere. Tokenul API rămâne local și nu este inclus în backupul de profil.
 
-Include sărbători ortodoxe fixe și mobile, perioade religioase, o selecție limitată de zile seculare/istorice cu relevanță cinematografică și faze sezoniere.
+### MovieLens / ALS
 
-Paștele ortodox este calculat pentru anul cerut folosind Pascalionul iulian și conversie generală la calendarul gregorian. Pentru 2026 rezultatul testat este 12 aprilie. Sărbătorile mobile precum Floriile, Înălțarea și Rusaliile sunt derivate din această dată.
-
-Relevanța calendaristică diferențiază:
-
-- directă;
-- istorică;
-- spirituală;
-- atmosferică;
-- slabă.
-
-Exemplu de regulă implementată: un film generic despre Patimile lui Hristos nu este considerat automat `direct` pentru Înălțarea Sfintei Cruci; pentru relevanță directă acolo sunt necesare semnale specifice legate de Sfânta Cruce.
-
-## Surse de metadate
-
-### 1. CSV local
-
-`Setări -> Import catalog CSV` acceptă coloane precum:
-
-`imdb_id,title,original_title,year,title_type,runtime,genres,directors,countries,overview,keywords,imdb_rating,num_votes,release_date,poster_url`
-
-Ordinea coloanelor nu contează.
-
-### 2. IMDb datasets oficiale
-
-`Setări -> Import IMDb title.basics + title.ratings` citește fișierele `.tsv.gz` descărcate de utilizator. Nu se face scraping IMDb.
-
-IMDb precizează că pentru utilizare personală/necomercială datele trebuie luate din dataset-urile puse la dispoziție și interzice screen scraping-ul. Vezi: https://help.imdb.com/article/imdb/general-information/can-i-use-imdb-data-in-my-software/G5JTRESSHJBBHTGX
-
-Attribution:
-
-> Information courtesy of IMDb (https://www.imdb.com). Used with permission.
-
-### 3. TMDb opțional
-
-`cinecalendar/tmdb.py` implementează autentificarea cu Bearer `API Read Access Token`, `/find/{imdb_id}`, detalii, credits, keywords și cache local. Din UI poate îmbogăți în batch câte 100 de titluri, prioritar cele evaluate, apoi recalculează profilul. Fără token nu este simulată nicio conexiune. Tokenul rămâne local și este exclus din `Export profile`.
-
-Documentație oficială: https://developer.themoviedb.org/docs/authentication-application
-
-TMDb impune attribution și logo oficial aprobat în aplicațiile care folosesc API-ul. Textul obligatoriu este afișat în Setări; logo-ul oficial nu este inclus în acest pachet sursă și trebuie adăugat înaintea unei distribuții cu integrarea TMDb activată. Vezi: https://developer.themoviedb.org/docs/faq
+Modelul colaborativ este folosit când mapping-ul și numărul de ratinguri permit. Filmele fără acoperire MovieLens rămân eligibile prin motorul personal de conținut.
 
 ## SQLite și persistență
 
-DB implicit: `CineCalendarData/data/cinecalendar.db` lângă executabil.
+Schema curentă este **v5** și este migrată automat la pornire. Tabelele importante includ:
 
-Tabele principale:
+- `movies`, `ratings`, `feedback`, `watchlist`;
+- `recommendation_history`, `recommendation_runs`;
+- `recommendation_trust_audit`;
+- `user_profile`, `settings`, `metadata_cache`, `import_files`.
 
-- `movies`
-- `ratings`
-- `user_profile`
-- `recommendation_history`
-- `recommendation_runs`
-- `feedback`
-- `watchlist`
-- `metadata_cache`
-- `settings`
-- `calendar_events`
-- `import_files`
-- `schema_migrations`
-
-SQLite rulează cu WAL, `foreign_keys=ON`, `busy_timeout` și migrații versionate.
-
-## Import IMDb ratings.csv
-
-Importerul:
-
-- detectează coloanele după nume/alias, nu după poziție;
-- suportă UTF-8 BOM și diacritice;
-- validează antetul;
-- folosește `Const` ca identitate principală;
-- fallback: titlu + original title + an + tip, cu `title_norm` / `original_title_norm` indexate în schema v4;
-- nu confundă remake-urile din ani diferiți;
-- identifică hash-ul fișierului și nu reimportă același export;
-- detectează rating nou și rating modificat;
-- reconciliază ratingurile manuale cu IMDb fără duplicare.
-
-## Detectare automată
-
-Monitorizarea folderului este prin polling la 30 secunde, fără dependență fragilă de hooks de filesystem. Sunt comparate numele, dimensiunea, `mtime_ns` și hash-ul înainte de import.
-
-## UI
-
-Secțiuni implementate:
-
-- Azi;
-- Calendar;
-- Programul lunii;
-- Profilul meu;
-- Ratinguri IMDb;
-- Watchlist;
-- Istoric recomandări;
-- Setări.
-
-UI-ul are dark/light, sidebar, carduri, scrolling, DPI manifest PerMonitorV2, poster cu încărcare asincronă și cache local, plus placeholder când imaginea nu există.
+SQLite folosește WAL, `foreign_keys=ON`, timeout de blocare și indexuri pentru căutările frecvente.
 
 ## Backup
 
-`Export profile` produce ZIP cu JSON pentru filme, ratinguri locale, feedback, setări, istoric, watchlist și profil. `Import profile` face merge pe IMDb ID / identity key.
+Formatul de profil curent este v2. Exportul nu mai copiază întregul catalog IMDb rebuildabil; salvează doar filmele referite de datele utilizatorului, plus ratingurile, feedbackul, watchlist-ul, istoricul recomandărilor, rulările motorului și telemetry trust-gate.
 
-## Logging
+Importul acceptă și backupurile vechi v1. Este merge-safe și evită dublarea feedbackului/istoricului când același backup este importat din nou. Profilul derivat este recalculat după import.
 
-`CineCalendarData/logs/CineCalendar.log`, rotație 2 MB × 5 fișiere. Tokenul TMDb nu este scris în log.
+Nu se exportă `tmdb_token` și nici stări tranzitorii precum bootstrap-ul catalogului sau alegerea temporară pentru ziua curentă.
+
+## Updater
+
+Updaterul Windows este implementat pentru bundle-ul `onedir`:
+
+1. citește manifestul stable;
+2. descarcă ZIP-ul;
+3. verifică SHA-256;
+4. extrage într-un staging sigur;
+5. păstrează temporar bundle-ul anterior;
+6. înlocuiește fișierele fără a atinge `CineCalendarData`;
+7. pornește versiunea nouă și așteaptă health-check;
+8. face rollback dacă noua versiune nu confirmă pornirea.
 
 ## Build Windows
 
-Pe Windows 10/11 x64 cu Python 3.12:
+Calea locală și GitHub Actions folosesc aceeași arhitectură `onedir`:
 
 ```bat
 scripts\build_windows.bat
 ```
 
-Scriptul:
+Scriptul rulează testele, benchmark-ul pe catalog mare, construiește `dist\CineCalendar\CineCalendar.exe` + `_internal` și face smoke launch cu un director de date temporar.
 
-1. creează `.venv`;
-2. instalează dependențele;
-3. rulează testele;
-4. produce `dist\CineCalendar.exe` cu PyInstaller `--onefile --windowed`;
-5. pornește EXE-ul pentru un smoke check și îl închide după câteva secunde.
+Workflow-ul stable rulează aceleași etape esențiale, publică ZIP-ul Windows și actualizează manifestul updaterului numai după succes.
 
-Workflow-ul GitHub Actions face aceleași verificări pe `windows-latest` și publică `CineCalendar_Portable_win64.zip` ca artifact.
-
-## Teste
+## Teste și audit
 
 ```bash
 python -m pytest -q
-python scripts/smoke_test.py
+python scripts/benchmark_engine_v3.py
+python scripts/audit_watch_success.py "C:\cale\CineCalendarData\data\cinecalendar.db"
 ```
 
-În rularea finală sunt **18/18 teste trecute**. Acoperirea include import, duplicate, rating modificat, diacritice, coloană reordonată, CSV invalid, reconciliere manuală inclusiv când `Original Title` diferă, Paști, sărbători mobile, relevanță pentru 14 septembrie, echinocțiu, Romance, excluderea filmelor văzute, feedback, repetări, backup fără tokenul TMDb și persistență la restart.
+Auditul Watch Success este descriptiv. Pragurile V16 nu se auto-reglează din câteva clickuri; raportul marchează datele ca suficiente pentru o primă analiză abia după minimum 20 de recomandări auditate și minimum 5 porniri confirmate.
 
-## Acceptance pe exportul real
+## Limitări
 
-În mediul de dezvoltare a fost folosit exportul `ratinguri imdb 05.09.2026.csv`:
-
-- 2.434 rânduri importate;
-- 2.434 ratinguri persistate;
-- 0 IMDb IDs duplicate;
-- 0 ratinguri duplicate pe același `movie_id`;
-- Paști 2026: 12.04.2026;
-- echinocțiul de toamnă 2026: 23.09.2026;
-- pentru 13.09.2026 CalendarEngine detectează apropierea Înălțării Sfintei Cruci;
-- gruparea 13–30 septembrie 2026 este generată dinamic: 13–15, 16–22, 23–26, 27–30.
-
-Generarea celor 3 recomandări reale necesită și un catalog de titluri **nevăzute**. Exportul `ratings.csv` conține numai titluri deja evaluate, deci aplicația nu inventează candidați și nu tratează o listă hardcodată de 20–50 de filme ca bază de date.
-
-## Limitări curente
-
-Vezi `docs/LIMITATIONS.md`.
+Vezi `docs/LIMITATIONS.md` pentru limitele actuale și condițiile în care anumite semnale nu sunt disponibile.

@@ -64,6 +64,9 @@ class ScoreBreakdown:
     # Separate from the estimated 1-10 taste rating: how easy this already-good candidate looks
     # to actually start now after runtime, premise, quality and short-horizon intent are considered.
     startability: float = 0.0
+    # Final V16 trust-gate snapshot. This is telemetry/explanation metadata; it does not change the
+    # estimated personal rating and is persisted only when the recommendation exposure is recorded.
+    trust_audit: dict = field(default_factory=dict)
 
 @dataclass
 class Recommendation:

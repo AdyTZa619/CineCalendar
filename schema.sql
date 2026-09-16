@@ -1,5 +1,5 @@
--- CineCalendar SQLite schema v4
--- Generated from the same migrations used by the application.
+-- CineCalendar SQLite schema v5
+-- Kept in sync with migrations in cinecalendar/db.py.
 
 CREATE TABLE calendar_events(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,8 +57,11 @@ CREATE TABLE movies(
   poster_url TEXT,
   source TEXT NOT NULL DEFAULT 'local',
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-, tmdb_id INTEGER, title_norm TEXT, original_title_norm TEXT);
+  updated_at TEXT NOT NULL,
+  tmdb_id INTEGER,
+  title_norm TEXT,
+  original_title_norm TEXT
+);
 
 CREATE TABLE ratings(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,7 +81,8 @@ CREATE TABLE recommendation_history(
   slot TEXT NOT NULL DEFAULT 'today',
   final_score REAL,
   ignored INTEGER NOT NULL DEFAULT 0,
-  action TEXT
+  action TEXT,
+  exposure_history_id INTEGER REFERENCES recommendation_history(id) ON DELETE SET NULL
 );
 
 CREATE TABLE recommendation_runs(
@@ -91,7 +95,32 @@ CREATE TABLE recommendation_runs(
   engine_version TEXT NOT NULL
 );
 
-CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+CREATE TABLE recommendation_trust_audit(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  history_id INTEGER NOT NULL UNIQUE REFERENCES recommendation_history(id) ON DELETE CASCADE,
+  run_id INTEGER REFERENCES recommendation_runs(id) ON DELETE SET NULL,
+  movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  context_date TEXT NOT NULL,
+  slot TEXT NOT NULL,
+  rank_position INTEGER NOT NULL,
+  engine_version TEXT NOT NULL,
+  trust_status TEXT NOT NULL,
+  trust_score REAL,
+  gate_score REAL,
+  support_count INTEGER NOT NULL DEFAULT 0,
+  support_labels TEXT NOT NULL DEFAULT '[]',
+  red_flag INTEGER NOT NULL DEFAULT 0,
+  red_reason TEXT,
+  score_gap REAL,
+  als_score REAL,
+  public_bayes REAL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE schema_migrations(
+  version INTEGER PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
 
 CREATE TABLE settings(
   key TEXT PRIMARY KEY,
@@ -113,17 +142,14 @@ CREATE TABLE watchlist(
 );
 
 CREATE INDEX ix_feedback_movie ON feedback(movie_id);
-
 CREATE INDEX ix_movies_identity ON movies(identity_key);
-
 CREATE INDEX ix_movies_original_norm_year_type ON movies(original_title_norm,year,title_type);
-
 CREATE INDEX ix_movies_title_norm_year_type ON movies(title_norm,year,title_type);
-
 CREATE INDEX ix_movies_tmdb ON movies(tmdb_id);
-
 CREATE INDEX ix_movies_votes ON movies(num_votes);
-
 CREATE INDEX ix_movies_year ON movies(year);
-
 CREATE INDEX ix_rec_hist_movie_date ON recommendation_history(movie_id,recommended_at);
+CREATE INDEX ix_rec_hist_exposure ON recommendation_history(exposure_history_id);
+CREATE INDEX ix_rec_hist_context_action ON recommendation_history(context_date,action);
+CREATE INDEX ix_rec_trust_date_status ON recommendation_trust_audit(context_date,trust_status);
+CREATE INDEX ix_rec_trust_movie_date ON recommendation_trust_audit(movie_id,context_date);

@@ -15,41 +15,46 @@ OUTCOME_ACTIONS = (
     "playback_confirmed",
     "watched",
 )
+_EVENT_SLOTS = ("decision_action", "watch_success_v3")
 
 
 def ensure_trust_audit_schema(con) -> None:
-    """Create the 3.1 trust telemetry table without changing the core DB migration path."""
-    con.execute(
-        """CREATE TABLE IF NOT EXISTS recommendation_trust_audit(
-               id INTEGER PRIMARY KEY AUTOINCREMENT,
-               history_id INTEGER NOT NULL UNIQUE REFERENCES recommendation_history(id) ON DELETE CASCADE,
-               run_id INTEGER REFERENCES recommendation_runs(id) ON DELETE SET NULL,
-               movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
-               context_date TEXT NOT NULL,
-               slot TEXT NOT NULL,
-               rank_position INTEGER NOT NULL,
-               engine_version TEXT NOT NULL,
-               trust_status TEXT NOT NULL,
-               trust_score REAL,
-               gate_score REAL,
-               support_count INTEGER NOT NULL DEFAULT 0,
-               support_labels TEXT NOT NULL DEFAULT '[]',
-               red_flag INTEGER NOT NULL DEFAULT 0,
-               red_reason TEXT,
-               score_gap REAL,
-               als_score REAL,
-               public_bayes REAL,
-               created_at TEXT NOT NULL
-           )"""
-    )
-    con.execute(
-        "CREATE INDEX IF NOT EXISTS ix_rec_trust_date_status "
-        "ON recommendation_trust_audit(context_date,trust_status)"
-    )
-    con.execute(
-        "CREATE INDEX IF NOT EXISTS ix_rec_trust_movie_date "
-        "ON recommendation_trust_audit(movie_id,context_date)"
-    )
+    """Fail fast if the canonical v5 migration was not applied."""
+    table = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_trust_audit'"
+    ).fetchone()
+    columns = {str(row[1]) for row in con.execute("PRAGMA table_info(recommendation_history)").fetchall()}
+    if table is None or "exposure_history_id" not in columns:
+        raise RuntimeError("Schema CineCalendar incompletă: migrarea SQLite v5 nu este aplicată.")
+
+
+def resolve_exposure_history_id(con, movie_id: int, context_date: str) -> int | None:
+    """Return the concrete recommendation exposure that subsequent actions belong to.
+
+    V16 trust snapshots are authoritative. The fallback keeps older/non-V16 recommendation paths
+    usable without ever treating an event row as a fresh exposure.
+    """
+    movie_id = int(movie_id)
+    context_date = str(context_date)
+    row = con.execute(
+        """SELECT history_id FROM recommendation_trust_audit
+           WHERE movie_id=? AND context_date=?
+           ORDER BY id DESC LIMIT 1""",
+        (movie_id, context_date),
+    ).fetchone()
+    if row is not None:
+        return int(row[0])
+
+    marks = ",".join("?" for _ in _EVENT_SLOTS)
+    row = con.execute(
+        f"""SELECT id FROM recommendation_history
+            WHERE movie_id=? AND context_date=?
+              AND exposure_history_id IS NULL
+              AND slot NOT IN ({marks})
+            ORDER BY id DESC LIMIT 1""",
+        (movie_id, context_date, *_EVENT_SLOTS),
+    ).fetchone()
+    return int(row[0]) if row is not None else None
 
 
 def record_trust_snapshot(
@@ -124,20 +129,19 @@ def _ratio(num: int, den: int):
 
 
 def build_trust_outcome_audit(db, days: int = 90) -> dict:
-    """Correlate V16 trust labels with observed local watch outcomes.
+    """Correlate each V16 exposure with its own observed watch outcome.
 
-    This is descriptive telemetry only. It does not tune thresholds automatically and does not
-    send data outside the local SQLite database.
+    New v5 rows are linked exactly through `exposure_history_id`. Older 3.1 action rows can be
+    recovered only when one movie/day maps to exactly one trust exposure; ambiguous legacy rows are
+    counted but deliberately not guessed.
     """
     days = max(1, min(int(days or 90), 3650))
     start_day = (date.today() - timedelta(days=days - 1)).isoformat()
 
-    with db.tx() as con:
-        ensure_trust_audit_schema(con)
-
     with db.connect() as con:
+        ensure_trust_audit_schema(con)
         trust_rows = con.execute(
-            """SELECT movie_id,context_date,trust_status,trust_score,engine_version
+            """SELECT history_id,movie_id,context_date,trust_status,trust_score,engine_version
                FROM recommendation_trust_audit
                WHERE context_date>=?
                ORDER BY id ASC""",
@@ -145,23 +149,55 @@ def build_trust_outcome_audit(db, days: int = 90) -> dict:
         ).fetchall()
         marks = ",".join("?" for _ in OUTCOME_ACTIONS)
         action_rows = con.execute(
-            f"""SELECT movie_id,context_date,recommended_at,action,id
+            f"""SELECT id,movie_id,context_date,recommended_at,action,exposure_history_id
                 FROM recommendation_history
                 WHERE action IN ({marks}) AND context_date>=?
                 ORDER BY id ASC""",
             (*OUTCOME_ACTIONS, start_day),
         ).fetchall()
 
-    actions_by_key: dict[tuple[int, str], list[str]] = defaultdict(list)
+    trust_ids = {int(row["history_id"]) for row in trust_rows}
+    trust_by_movie_day: dict[tuple[int, str], list[int]] = defaultdict(list)
+    for row in trust_rows:
+        trust_by_movie_day[(int(row["movie_id"]), str(row["context_date"] or ""))].append(
+            int(row["history_id"])
+        )
+
+    actions_by_exposure: dict[int, list[str]] = defaultdict(list)
+    legacy_linked_actions = 0
+    ambiguous_unlinked_actions = 0
+    exact_linked_actions = 0
+
     for row in action_rows:
+        action = str(row["action"] or "").strip()
+        if action == "play_opened":
+            action = "stremio_opened"
+
+        exposure_id = row["exposure_history_id"]
+        if exposure_id is not None:
+            root = int(exposure_id)
+            if root in trust_ids:
+                actions_by_exposure[root].append(action)
+                exact_linked_actions += 1
+            continue
+
+        row_id = int(row["id"])
+        if row_id in trust_ids:
+            # Choosing/skipping can update the exposure row itself instead of appending an event.
+            actions_by_exposure[row_id].append(action)
+            exact_linked_actions += 1
+            continue
+
         day = str(row["context_date"] or "").strip()
         if not day:
             raw = str(row["recommended_at"] or "")
             day = raw[:10] if len(raw) >= 10 else "unknown"
-        action = str(row["action"] or "").strip()
-        if action == "play_opened":
-            action = "stremio_opened"
-        actions_by_key[(int(row["movie_id"]), day)].append(action)
+        candidates = trust_by_movie_day.get((int(row["movie_id"]), day), [])
+        if len(candidates) == 1:
+            actions_by_exposure[candidates[0]].append(action)
+            legacy_linked_actions += 1
+        elif len(candidates) > 1:
+            ambiguous_unlinked_actions += 1
 
     summaries = {status: _empty_status() for status in TRUST_STATUSES}
     trust_values: dict[str, list[float]] = defaultdict(list)
@@ -178,8 +214,7 @@ def build_trust_outcome_audit(db, days: int = 90) -> dict:
         if row["trust_score"] is not None:
             trust_values[status].append(float(row["trust_score"]))
 
-        key = (int(row["movie_id"]), str(row["context_date"] or ""))
-        actions = actions_by_key.get(key, [])
+        actions = actions_by_exposure.get(int(row["history_id"]), [])
         has_stremio = "stremio_opened" in actions
         has_confirmed = "playback_confirmed" in actions or "watched" in actions
         has_watched = "watched" in actions
@@ -211,6 +246,9 @@ def build_trust_outcome_audit(db, days: int = 90) -> dict:
         "engine_versions": dict(engine_versions),
         "by_status": summaries,
         "confirmed_starts": total_confirmed,
+        "exact_linked_actions": exact_linked_actions,
+        "legacy_linked_actions": legacy_linked_actions,
+        "ambiguous_unlinked_actions": ambiguous_unlinked_actions,
         "enough_data_for_tuning": total >= 20 and total_confirmed >= 5,
         "note": (
             "Pragurile V16 nu sunt ajustate automat. Comparația trusted/backfill devine utilă "

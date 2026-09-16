@@ -1,16 +1,13 @@
-# Limitări rămase
+# Limitări curente
 
-- **EXE Windows necompilat în acest mediu.** Mediul de lucru este Linux fără toolchain Windows/PyInstaller și fără acces extern din container. Există build reproducibil pentru Windows și workflow GitHub Actions, dar nu este corect să pretind că un `.exe` a fost compilat și pornit aici.
-- **Catalogul complet nu este inclus.** Exportul IMDb al utilizatorului conține filme văzute, nu candidați nevăzuți. Aplicația poate importa sute de mii/milioane de titluri din IMDb datasets oficiale sau un catalog CSV; nu se livrează o bază hardcodată mică.
-- **Semantică fără enrichment.** Cu doar `title.basics` + `title.ratings`, semantica este bazată pe titlu/gen/deceniu/runtime. Pentru overview/keywords/țări/regizori/poster este necesar catalog CSV îmbogățit sau TMDb; aplicația are acum enrichment TMDb în batch, dar necesită tokenul real al utilizatorului.
-- **TMDb branding.** Textul de attribution este prezent, dar logo-ul oficial aprobat TMDb nu este inclus în pachetul sursă. Pentru distribuirea unei versiuni cu TMDb activ trebuie adăugat un logo oficial aprobat conform termenilor TMDb.
-- **IMDb datasets pot fi mari.** Importul lor poate dura și ocupă spațiu; este streaming și filtrează implicit titlurile fără minimum 50 voturi.
-- **Updater.** Nu este implementat și rămâne dezactivat.
-- **Poster offline.** Posterul este disponibil offline numai după ce a fost descărcat și cache-uit.
-- **Test „mediu Windows curat”.** Este definit în build script ca smoke launch, dar nu a putut fi executat în mediul Linux curent.
-
-- **Acceptance recomandări pe exportul real.** Exportul furnizat are 2.434 titluri, toate evaluate, deci are 0 candidați nevăzuți. Nu am fabricat un catalog ca să forțez trei recomandări; acest ultim test trebuie rerulat după importul unui catalog legitim.
-
-
-### 0.2.0
-Prima inițializare a catalogului necesită internet. Dataseturile IMDb de bază nu includ ploturi/postere/keywords; pentru semantică și postere mai bogate se poate activa TMDb cu tokenul utilizatorului.
+- **Prima construcție a catalogului necesită internet.** `title.basics.tsv.gz` și `title.ratings.tsv.gz` sunt descărcate din dataseturile oficiale IMDb dacă nu există deja un catalog local utilizabil.
+- **Dataseturile IMDb de bază nu conțin tot.** Pentru overview, keywords, credits și postere bogate este necesar enrichment TMDb sau un catalog local îmbogățit.
+- **TMDb necesită token real și branding conform termenilor TMDb.** Fără token, aplicația nu simulează metadate externe.
+- **ALS nu acoperă toate filmele.** Titlurile fără mapping MovieLens rămân eligibile prin motorul personal de conținut, dar nu au semnal colaborativ.
+- **Watch Success nu este o probabilitate calibrată.** Startability și trust gate sunt semnale conservative de ordonare. Pragurile nu se auto-reglează din câteva interacțiuni.
+- **Auditul trusted/backfill are nevoie de rezultate reale.** Pentru o primă analiză, raportul cere minimum 20 de recomandări auditate și minimum 5 porniri confirmate. Până atunci nu este corect să pretindem că un prag nou este superior.
+- **Datele istorice 3.1 pot avea unele acțiuni fără legătură explicită la expunere.** 3.2 le atribuie retroactiv numai când există un singur candidat neambiguu film/zi; cazurile ambigue sunt raportate și nu sunt ghicite.
+- **Updaterul automat este Windows-only.** Funcționează din bundle-ul PyInstaller `CineCalendar.exe`; rularea directă din Python nu încearcă să se autoînlocuiască.
+- **Posterul este disponibil offline numai după cache.**
+- **Backupul de profil nu include catalogul IMDb complet.** Acesta este intenționat rebuildabil. Backupul păstrează datele utilizatorului și filmele referite de acestea.
+- **Acceptance-ul din `docs/ACCEPTANCE.md` este o fotografie istorică din 13 septembrie 2026.** Valorile de acolo nu trebuie confundate cu schema/testele versiunii curente.

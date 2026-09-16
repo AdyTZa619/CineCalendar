@@ -7,6 +7,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 from .recommendation import row_to_movie
+from .trust_audit import ensure_trust_audit_schema, resolve_exposure_history_id
 from .util import utcnow_iso
 
 
@@ -15,16 +16,7 @@ _VALID_ACTIONS = {"chosen", "skip_today"}
 
 
 def record_decision_action(db, movie_id: int, action: str) -> int:
-    """Persist an explicit choose/skip at the moment the user clicks it.
-
-    CineCalendar 2.6.0 only changed the `action` column on an older recommendation-history row.
-    Watch Intent then used that row's *recommendation* timestamp as if it were the interaction
-    timestamp. It also made a repeated action on the same row invisible to the state token.
-
-    Reuse a fresh, action-less exposure row when possible; otherwise append a compact explicit
-    event row. This keeps the existing schema/backward compatibility while giving Watch Intent a
-    real timestamp and a new row id whenever a second explicit action happens.
-    """
+    """Persist choose/skip without losing the recommendation exposure that caused the action."""
     action = str(action or "").strip()
     if action not in _VALID_ACTIONS:
         raise ValueError(f"Unsupported decision action: {action}")
@@ -34,19 +26,21 @@ def record_decision_action(db, movie_id: int, action: str) -> int:
     ignored = 1 if action == "skip_today" else 0
 
     with db.tx() as con:
+        ensure_trust_audit_schema(con)
         movie = con.execute("SELECT id FROM movies WHERE id=?", (movie_id,)).fetchone()
         if movie is None:
             raise ValueError("Filmul nu mai există în catalog.")
 
-        row = con.execute(
-            """SELECT id,slot,final_score,action
-               FROM recommendation_history
-               WHERE movie_id=? ORDER BY id DESC LIMIT 1""",
-            (movie_id,),
-        ).fetchone()
+        exposure_id = resolve_exposure_history_id(con, movie_id, today)
+        row = None
+        if exposure_id is not None:
+            row = con.execute(
+                "SELECT id,slot,final_score,action FROM recommendation_history WHERE id=?",
+                (int(exposure_id),),
+            ).fetchone()
 
-        # A normal freshly displayed recommendation has action=NULL. Turn that exposure into the
-        # explicit event and refresh its timestamp to the actual click time.
+        # A freshly displayed recommendation has action=NULL. Keep the same row id so the trust
+        # snapshot and this explicit outcome remain one exact exposure.
         if row is not None and not str(row["action"] or "").strip():
             con.execute(
                 """UPDATE recommendation_history
@@ -56,22 +50,35 @@ def record_decision_action(db, movie_id: int, action: str) -> int:
             )
             return int(row["id"])
 
-        # If the latest row already contains an action (for example chosen -> changed mind), keep
-        # both signals. The new id also invalidates Watch Intent's cached state immediately.
+        # A second action on the same exposure (chosen -> changed mind) is a separate event linked
+        # back to the original exposure; the earlier signal is never overwritten.
         final_score = float(row["final_score"]) if row is not None and row["final_score"] is not None else None
         cur = con.execute(
             """INSERT INTO recommendation_history(
-                   movie_id,recommended_at,context_date,slot,final_score,ignored,action
-               ) VALUES(?,?,?,?,?,?,?)""",
-            (movie_id, now, today, "decision_action", final_score, ignored, action),
+                   movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id
+               ) VALUES(?,?,?,?,?,?,?,?)""",
+            (movie_id, now, today, "decision_action", final_score, ignored, action, exposure_id),
         )
         return int(cur.lastrowid)
 
 
 def set_today_choice(db, movie_id: int) -> None:
+    today = date.today().isoformat()
+    exposure_id = None
+    try:
+        with db.connect() as con:
+            ensure_trust_audit_schema(con)
+            exposure_id = resolve_exposure_history_id(con, int(movie_id), today)
+    except Exception:
+        exposure_id = None
     db.set_setting(
         CHOICE_SETTING,
-        {"date": date.today().isoformat(), "movie_id": int(movie_id), "chosen_at": utcnow_iso()},
+        {
+            "date": today,
+            "movie_id": int(movie_id),
+            "chosen_at": utcnow_iso(),
+            "exposure_history_id": exposure_id,
+        },
     )
 
 
