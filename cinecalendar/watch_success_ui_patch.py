@@ -7,8 +7,16 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
-from .decision_action_patch import clear_today_choice, current_today_choice, set_today_choice
-from .trust_audit import ensure_trust_audit_schema, resolve_exposure_history_id
+from .decision_action_patch import (
+    clear_today_choice,
+    current_today_choice_state,
+    set_today_choice,
+)
+from .trust_audit import (
+    ensure_trust_audit_schema,
+    resolve_exposure_history_id,
+    validate_exposure_history_id,
+)
 from .util import utcnow_iso
 
 
@@ -30,8 +38,30 @@ def trailer_search_url(title: str, year: int | None = None) -> str:
     return "https://www.youtube.com/results?search_query=" + quote_plus(query)
 
 
-def record_watch_event(db, movie_id: int, action: str) -> int:
-    """Append a watch event and link it to the exact recommendation exposure when available."""
+def _safe_exposure(con, movie_id: int, today: str, exposure_history_id: int | None):
+    if exposure_history_id is not None:
+        row = validate_exposure_history_id(
+            con,
+            exposure_history_id,
+            movie_id=int(movie_id),
+        )
+        if row is None:
+            raise ValueError("Expunerea recomandării nu mai este validă pentru această acțiune.")
+        return row
+    resolved = resolve_exposure_history_id(con, int(movie_id), today)
+    return validate_exposure_history_id(con, resolved, movie_id=int(movie_id)) if resolved is not None else None
+
+
+def record_watch_event(
+    db,
+    movie_id: int,
+    action: str,
+    exposure_history_id: int | None = None,
+) -> int:
+    """Append a watch event linked to the concrete exposure when known.
+
+    v3.3 never guesses between multiple same-day exposures and never mutates the exposure root.
+    """
     action = str(action or "").strip()
     if action not in _WATCH_ACTIONS:
         raise ValueError(f"Unsupported watch event: {action}")
@@ -43,29 +73,21 @@ def record_watch_event(db, movie_id: int, action: str) -> int:
         movie = con.execute("SELECT id FROM movies WHERE id=?", (movie_id,)).fetchone()
         if movie is None:
             raise ValueError("Filmul nu mai există în catalog.")
-        exposure_id = resolve_exposure_history_id(con, movie_id, today)
-        previous = None
-        if exposure_id is not None:
-            previous = con.execute(
-                "SELECT final_score FROM recommendation_history WHERE id=?",
-                (int(exposure_id),),
-            ).fetchone()
-        if previous is None:
-            previous = con.execute(
-                """SELECT final_score FROM recommendation_history
-                   WHERE movie_id=? AND context_date=? ORDER BY id DESC LIMIT 1""",
-                (movie_id, today),
-            ).fetchone()
+
+        root = _safe_exposure(con, movie_id, today, exposure_history_id)
+        exposure_id = int(root["id"]) if root is not None else None
+        event_context_date = str(root["context_date"]) if root is not None else today
         final_score = (
-            float(previous["final_score"])
-            if previous is not None and previous["final_score"] is not None
+            float(root["final_score"])
+            if root is not None and root["final_score"] is not None
             else None
         )
+
         cur = con.execute(
             """INSERT INTO recommendation_history(
                    movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id
                ) VALUES(?,?,?,?,?,?,?,?)""",
-            (movie_id, now, today, "watch_success_v3", final_score, 0, action, exposure_id),
+            (movie_id, now, event_context_date, "watch_success_v3", final_score, 0, action, exposure_id),
         )
         return int(cur.lastrowid)
 
@@ -88,8 +110,23 @@ def _startability_label(value: float) -> str:
     return "scăzută"
 
 
+def _window_exposure(window, movie_id: int) -> int | None:
+    state = current_today_choice_state(window.db)
+    if state is not None and int(state.movie.id or 0) == int(movie_id):
+        if state.exposure_history_id is not None:
+            return int(state.exposure_history_id)
+    mapping = getattr(window, "_visible_exposures", None)
+    if isinstance(mapping, dict):
+        try:
+            value = mapping.get(int(movie_id))
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def install_watch_success_ui_patch(window_cls) -> None:
-    """Turn Home into a short, truthful path from recommendation to confirmed playback."""
+    """Turn Home into a truthful recommendation → attempt → confirmed playback funnel."""
     original_page_today = window_cls.page_today
     original_human_reason = window_cls.human_reason
 
@@ -102,15 +139,24 @@ def install_watch_success_ui_patch(window_cls) -> None:
     def open_trailer(self, movie):
         url = trailer_search_url(movie.title, movie.year)
         opened = QDesktopServices.openUrl(QUrl(url))
-        if opened:
-            try:
-                record_watch_event(self.db, int(movie.id), "trailer_opened")
-            except Exception:
-                pass
-            self.set_status("Am deschis căutarea pentru trailer. Este un semnal slab de interes, nu o vizionare.", False)
-        else:
+        if not opened:
             QMessageBox.warning(self, "CineCalendar", "Nu am putut deschide browserul pentru trailer.")
-        return bool(opened)
+            return False
+        exposure_id = _window_exposure(self, int(movie.id))
+        try:
+            record_watch_event(self.db, int(movie.id), "trailer_opened", exposure_id)
+            self.set_status(
+                "Am deschis căutarea pentru trailer. Este un semnal slab de interes, nu o vizionare.",
+                False,
+            )
+        except Exception as exc:
+            self.set_status("Trailerul s-a deschis, dar semnalul local nu a fost salvat.", False)
+            QMessageBox.warning(
+                self,
+                "CineCalendar",
+                f"Trailerul s-a deschis, dar nu am putut salva evenimentul local:\n{exc}",
+            )
+        return True
 
     def _open_stremio(self, movie, web_only: bool = False):
         iid = str(movie.imdb_id or "").strip()
@@ -125,23 +171,25 @@ def install_watch_success_ui_patch(window_cls) -> None:
         target = stremio_web_link(iid) if web_only else stremio_deep_link(iid)
         opened = QDesktopServices.openUrl(QUrl(target))
         if not opened and not web_only:
-            # No desktop URL handler: use Stremio Web rather than leaving a dead button.
             opened = QDesktopServices.openUrl(QUrl(stremio_web_link(iid)))
         if not opened:
             QMessageBox.warning(self, "CineCalendar", "Nu am putut deschide Stremio sau Stremio Web.")
             return False
 
+        exposure_id = _window_exposure(self, int(movie.id))
         try:
-            # A successful URL handoff proves intent, not actual playback. Playback becomes a
-            # strong signal only after the user explicitly confirms that the film really started.
-            record_watch_event(self.db, int(movie.id), "stremio_opened")
-            set_today_choice(self.db, int(movie.id))
+            record_watch_event(self.db, int(movie.id), "stremio_opened", exposure_id)
+            set_today_choice(self.db, int(movie.id), exposure_id)
         except Exception as exc:
-            QMessageBox.warning(self, "CineCalendar", f"Am deschis Stremio, dar nu am putut salva semnalul local:\n{exc}")
+            QMessageBox.warning(
+                self,
+                "CineCalendar",
+                f"Am deschis Stremio, dar nu am putut salva semnalul local:\n{exc}",
+            )
         if hasattr(self, "today_result"):
             self.today_result = None
         self.set_status(
-            "Am trimis filmul către Stremio. Asta nu înseamnă încă că a pornit; confirmă «A PORNIT FILMUL» dacă începe redarea.",
+            "Am trimis filmul către Stremio. Confirmă «A PORNIT FILMUL» numai dacă redarea chiar începe.",
             False,
         )
         return True
@@ -159,10 +207,14 @@ def install_watch_success_ui_patch(window_cls) -> None:
         return opened
 
     def confirm_playback(self, movie):
+        exposure_id = _window_exposure(self, int(movie.id))
         try:
-            record_watch_event(self.db, int(movie.id), "playback_confirmed")
-            set_today_choice(self.db, int(movie.id))
-            self.set_status("Am notat că filmul a pornit. Acesta este semnalul puternic de Watch Success.", False)
+            record_watch_event(self.db, int(movie.id), "playback_confirmed", exposure_id)
+            set_today_choice(self.db, int(movie.id), exposure_id)
+            self.set_status(
+                "Am notat că filmul a pornit. Acesta este semnalul puternic de Watch Success.",
+                False,
+            )
             if hasattr(self, "today_result"):
                 self.today_result = None
             self.show_page("today")
@@ -172,30 +224,50 @@ def install_watch_success_ui_patch(window_cls) -> None:
             return False
 
     def mark_watched_from_choice(self, movie):
+        exposure_id = _window_exposure(self, int(movie.id))
         try:
-            record_watch_event(self.db, int(movie.id), "watched")
-        except Exception:
-            pass
-        # Preserve `watched` as a Watch Success event. Feedback `seen` is stored separately and
-        # must never overwrite this strongest observed funnel outcome.
+            record_watch_event(self.db, int(movie.id), "watched", exposure_id)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "CineCalendar",
+                f"Nu am putut salva evenimentul «watched». Alegerea a rămas activă și nu am pierdut starea:\n{exc}",
+            )
+            return False
+
         clear_today_choice(self.db, int(movie.id))
-        self.feedback(int(movie.id), "seen")
-        self.show_page("today")
+        try:
+            self.feedback(int(movie.id), "seen")
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "CineCalendar",
+                f"Vizionarea a fost salvată, dar feedbackul derivat «seen» nu a putut fi recalculat:\n{exc}",
+            )
+            self.show_page("today")
+        return True
 
     def decision_hero(self, rec):
         m, s = rec.movie, rec.score
-        box = QFrame(); box.setObjectName("HeroCard")
-        main = QHBoxLayout(box); main.setContentsMargins(26, 26, 26, 26); main.setSpacing(28)
+        box = QFrame()
+        box.setObjectName("HeroCard")
+        main = QHBoxLayout(box)
+        main.setContentsMargins(26, 26, 26, 26)
+        main.setSpacing(28)
         poster = self.poster_label(222, 326)
         main.addWidget(poster, 0, Qt.AlignTop)
         if m.poster_url:
             self.load_poster_async(poster, m.poster_url, m.imdb_id or str(m.id))
 
-        right = QVBoxLayout(); right.setSpacing(11)
+        right = QVBoxLayout()
+        right.setSpacing(11)
         kicker = QLabel("RECOMANDAREA DE PORNIT ACUM")
-        kicker.setObjectName("Kicker"); right.addWidget(kicker)
+        kicker.setObjectName("Kicker")
+        right.addWidget(kicker)
         title = QLabel(m.title + (f"  ({m.year})" if m.year else ""))
-        title.setObjectName("HeroTitle"); title.setWordWrap(True); right.addWidget(title)
+        title.setObjectName("HeroTitle")
+        title.setWordWrap(True)
+        right.addWidget(title)
 
         metric = QHBoxLayout()
         metric.addWidget(self.score_badge(s.predicted_rating, "pentru tine"))
@@ -204,21 +276,29 @@ def install_watch_success_ui_patch(window_cls) -> None:
             metric.addWidget(self.metric_badge(_startability_label(s.startability), "ușurință acum"))
         if m.imdb_rating is not None:
             metric.addWidget(self.metric_badge(f"{m.imdb_rating:.1f}", "IMDb"))
-        metric.addStretch(1); right.addLayout(metric)
+        metric.addStretch(1)
+        right.addLayout(metric)
 
         chips = QHBoxLayout()
         for text in self.movie_chips(m):
             chips.addWidget(self.pill(text))
-        chips.addStretch(1); right.addLayout(chips)
+        chips.addStretch(1)
+        right.addLayout(chips)
 
         overview = QLabel(self.overview_text(m))
-        overview.setObjectName("Overview"); overview.setWordWrap(True); overview.setMaximumHeight(118)
+        overview.setObjectName("Overview")
+        overview.setWordWrap(True)
+        overview.setMaximumHeight(118)
         right.addWidget(overview)
         pitch = QLabel(human_reason(self, rec))
-        pitch.setWordWrap(True); pitch.setObjectName("BodyStrong"); right.addWidget(pitch)
+        pitch.setWordWrap(True)
+        pitch.setObjectName("BodyStrong")
+        right.addWidget(pitch)
         if s.calendar_reason and s.calendar >= .48:
             now = QLabel("De ce acum: " + s.calendar_reason)
-            now.setObjectName("Muted"); now.setWordWrap(True); right.addWidget(now)
+            now.setObjectName("Muted")
+            now.setWordWrap(True)
+            right.addWidget(now)
 
         actions = QHBoxLayout()
         play = QPushButton("DESCHIDE ÎN STREMIO")
@@ -229,7 +309,9 @@ def install_watch_success_ui_patch(window_cls) -> None:
         trailer.clicked.connect(lambda _, movie=m: open_trailer(self, movie))
         actions.addWidget(trailer)
         other = QPushButton("Alt film")
-        other.clicked.connect(lambda _, mid=m.id: self.skip_decision(mid))
+        other.clicked.connect(
+            lambda _, mid=m.id, eid=getattr(rec, "exposure_history_id", None): self.skip_decision(mid, eid)
+        )
         actions.addWidget(other)
         detail = QPushButton("Detalii")
         detail.clicked.connect(lambda _, r=rec: self.open_details(r))
@@ -238,45 +320,58 @@ def install_watch_success_ui_patch(window_cls) -> None:
         right.addLayout(actions)
 
         keep = QPushButton("Îl păstrez pentru azi, fără să-l pornesc încă")
-        keep.clicked.connect(lambda _, mid=m.id: self.choose_decision(mid))
+        keep.clicked.connect(
+            lambda _, mid=m.id, eid=getattr(rec, "exposure_history_id", None): self.choose_decision(mid, eid)
+        )
         right.addWidget(keep, alignment=Qt.AlignLeft)
         main.addLayout(right, 1)
         return box
 
-    def _render_watch_choice(self, movie):
+    def _render_watch_choice(self, state):
+        movie = state.movie
         page, content = self.page_shell(
             "Ce văd acum?",
-            "Ai ales filmul. CineCalendar separă acum deschiderea Stremio de pornirea reală a filmului.",
+            "Ai ales filmul. CineCalendar separă deschiderea Stremio de pornirea reală a filmului.",
         )
-        box = QFrame(); box.setObjectName("HeroCard")
-        main = QHBoxLayout(box); main.setContentsMargins(26, 26, 26, 26); main.setSpacing(26)
+        box = QFrame()
+        box.setObjectName("HeroCard")
+        main = QHBoxLayout(box)
+        main.setContentsMargins(26, 26, 26, 26)
+        main.setSpacing(26)
         poster = self.poster_label(190, 278)
         main.addWidget(poster, 0, Qt.AlignTop)
         if movie.poster_url:
             self.load_poster_async(poster, movie.poster_url, movie.imdb_id or str(movie.id))
 
-        right = QVBoxLayout(); right.setSpacing(11)
+        right = QVBoxLayout()
+        right.setSpacing(11)
         kicker = QLabel("ALES PENTRU AZI")
-        kicker.setObjectName("Kicker"); right.addWidget(kicker)
+        kicker.setObjectName("Kicker")
+        right.addWidget(kicker)
         title = QLabel(movie.title + (f"  ({movie.year})" if movie.year else ""))
-        title.setObjectName("HeroTitle"); title.setWordWrap(True); right.addWidget(title)
+        title.setObjectName("HeroTitle")
+        title.setWordWrap(True)
+        right.addWidget(title)
 
         meta = []
-        if movie.imdb_rating is not None: meta.append(f"IMDb {movie.imdb_rating:.1f}")
-        if movie.runtime_min: meta.append(self.runtime_text(movie.runtime_min))
-        if movie.genres: meta.append(", ".join(movie.genres[:4]))
+        if movie.imdb_rating is not None:
+            meta.append(f"IMDb {movie.imdb_rating:.1f}")
+        if movie.runtime_min:
+            meta.append(self.runtime_text(movie.runtime_min))
+        if movie.genres:
+            meta.append(", ".join(movie.genres[:4]))
         ml = QLabel("  •  ".join(meta) or "Alegere salvată")
-        ml.setObjectName("Muted"); ml.setWordWrap(True); right.addWidget(ml)
-
-        overview = QLabel(self.overview_text(movie))
-        overview.setObjectName("Overview"); overview.setWordWrap(True); overview.setMaximumHeight(118)
-        right.addWidget(overview)
+        ml.setObjectName("Muted")
+        ml.setWordWrap(True)
+        right.addWidget(ml)
 
         explain = QLabel(
-            "Deschiderea Stremio înseamnă că ai încercat recomandarea, nu că redarea a început. "
-            "Dacă filmul chiar pornește, apasă «A PORNIT FILMUL»; abia acela este semnalul puternic pentru motor."
+            "Deschiderea Stremio înseamnă doar încercare. «A PORNIT FILMUL» confirmă redarea; "
+            "toate aceste evenimente rămân legate de aceeași expunere de recomandare."
         )
-        explain.setObjectName("BodyStrong"); explain.setWordWrap(True); right.addWidget(explain)
+        explain.setObjectName("BodyStrong")
+        explain.setWordWrap(True)
+        right.addWidget(explain)
 
         actions = QHBoxLayout()
         play = QPushButton("DESCHIDE ÎN STREMIO")
@@ -292,25 +387,30 @@ def install_watch_success_ui_patch(window_cls) -> None:
         web = QPushButton("Stremio Web")
         web.clicked.connect(lambda _, movie=movie: watch_now_web(self, movie))
         actions.addWidget(web)
-        actions.addStretch(1); right.addLayout(actions)
+        actions.addStretch(1)
+        right.addLayout(actions)
 
         secondary = QHBoxLayout()
         change = QPushButton("Nu l-am pornit — alt film")
-        change.clicked.connect(lambda _, mid=movie.id: self.skip_decision(mid))
+        change.clicked.connect(
+            lambda _, mid=movie.id, eid=state.exposure_history_id: self.skip_decision(mid, eid)
+        )
         secondary.addWidget(change)
         seen = QPushButton("L-am văzut")
         seen.clicked.connect(lambda _, movie=movie: mark_watched_from_choice(self, movie))
         secondary.addWidget(seen)
-        secondary.addStretch(1); right.addLayout(secondary)
+        secondary.addStretch(1)
+        right.addLayout(secondary)
         right.addStretch(1)
         main.addLayout(right, 1)
-        content.addWidget(box); content.addStretch(1)
+        content.addWidget(box)
+        content.addStretch(1)
         return page
 
     def page_today(self):
-        movie = current_today_choice(self.db)
-        if movie is not None:
-            return _render_watch_choice(self, movie)
+        state = current_today_choice_state(self.db)
+        if state is not None:
+            return _render_watch_choice(self, state)
         return original_page_today(self)
 
     window_cls.human_reason = human_reason

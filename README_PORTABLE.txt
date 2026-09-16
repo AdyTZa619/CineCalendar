@@ -7,15 +7,15 @@ PORNIRE
 4. Importă exportul IMDb ratings.csv. Dacă nu există încă un catalog de filme nevăzute, CineCalendar poate construi automat catalogul din dataseturile oficiale IMDb.
 
 DATE
-Datele personale, baza SQLite, cache-ul, logurile, backupurile și fișierele updaterului sunt în folderul CineCalendarData de lângă aplicație. Actualizarea bundle-ului nu șterge CineCalendarData.
+Datele personale, baza SQLite, cache-ul, logurile, backupurile și fișierele updaterului sunt în folderul CineCalendarData de lângă aplicație. Actualizarea bundle-ului nu șterge CineCalendarData. CineCalendar verifică baza la pornire și păstrează un snapshot last-good pentru recovery; a doua instanță a aplicației este blocată înainte să deschidă baza.
 
 RECOMANDĂRI
-Motorul curent combină profilul tău de ratinguri, retrieval ALS/content, contextul calendaristic și semnale locale de vizionare. Deschiderea Stremio nu este tratată ca dovadă că filmul a pornit; confirmarea playback-ului și „L-am văzut” sunt semnale distincte.
+Motorul curent combină profilul tău de ratinguri, retrieval ALS/content, contextul calendaristic și semnale locale de vizionare. Din 3.3, fiecare card vizibil are o expunere imuabilă proprie, iar alegerea, skip-ul, Stremio, confirmarea playback-ului și „L-am văzut” sunt evenimente separate legate de acea expunere exactă.
 
 BACKUP
-„Export profile” creează un backup portabil al datelor tale relevante fără a copia întregul catalog IMDb rebuildabil și fără tokenul TMDb.
+„Export profile” creează un backup portabil dintr-un singur snapshot SQLite coerent, fără a copia întregul catalog IMDb rebuildabil și fără tokenul TMDb. Importul normal folosește Merge (datele locale mai noi câștigă); Restore este modul autoritar. Importul Merge păstrează informația locală mai nouă; Restore este modul explicit în care backupul devine autoritar.
 
 UPDATE
-Actualizările stable se pot instala din aplicație. ZIP-ul este verificat SHA-256, noul bundle este staged, iar updaterul păstrează temporar versiunea veche pentru rollback până trece health-check-ul.
+Actualizările stable se pot instala din aplicație. ZIP-ul este verificat SHA-256, noul bundle este staged, iar updaterul păstrează temporar versiunea veche și un snapshot SQLite. Dacă health-check-ul noii versiuni eșuează, sunt restaurate atât bundle-ul, cât și baza de date.
 
 Sursa catalogului automat: IMDb datasets oficiale pentru uz personal/necomercial. Nu se face scraping IMDb.

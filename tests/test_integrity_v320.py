@@ -103,40 +103,39 @@ def test_v4_database_migrates_to_canonical_v5(tmp_path):
     assert trust is not None
 
 
-def test_watch_events_link_to_exact_exposure_and_seen_does_not_destroy_watched(tmp_path):
+def test_watch_events_link_to_exact_exposure_and_exposure_stays_immutable(tmp_path):
     db = Database(tmp_path / "cinecalendar.db")
     movie_id = _movie(db, "tt9400001", "Exact Exposure")
     exposure_id = _trust_exposure(db, movie_id, "trusted")
+    with db.connect() as con:
+        before = dict(con.execute("SELECT * FROM recommendation_history WHERE id=?", (exposure_id,)).fetchone())
 
-    chosen_id = record_decision_action(db, movie_id, "chosen")
-    stremio_id = record_watch_event(db, movie_id, "stremio_opened")
-    playback_id = record_watch_event(db, movie_id, "playback_confirmed")
-    watched_id = record_watch_event(db, movie_id, "watched")
+    chosen_id = record_decision_action(db, movie_id, "chosen", exposure_id)
+    stremio_id = record_watch_event(db, movie_id, "stremio_opened", exposure_id)
+    playback_id = record_watch_event(db, movie_id, "playback_confirmed", exposure_id)
+    watched_id = record_watch_event(db, movie_id, "watched", exposure_id)
     apply_feedback(db, movie_id, "seen")
 
-    assert chosen_id == exposure_id
     with db.connect() as con:
         root = con.execute(
-            "SELECT action,exposure_history_id FROM recommendation_history WHERE id=?",
+            "SELECT action,recommended_at,final_score,exposure_history_id FROM recommendation_history WHERE id=?",
             (exposure_id,),
         ).fetchone()
         events = con.execute(
             """SELECT id,action,exposure_history_id FROM recommendation_history
-               WHERE id IN (?,?,?) ORDER BY id""",
-            (stremio_id, playback_id, watched_id),
+               WHERE id IN (?,?,?,?) ORDER BY id""",
+            (chosen_id, stremio_id, playback_id, watched_id),
         ).fetchall()
-        watched = con.execute(
-            "SELECT action FROM recommendation_history WHERE id=?", (watched_id,)
-        ).fetchone()[0]
         seen_feedback = con.execute(
             "SELECT COUNT(*) FROM feedback WHERE movie_id=? AND kind='seen'", (movie_id,)
         ).fetchone()[0]
 
-    assert root["action"] == "chosen"
+    assert root["action"] is None
+    assert root["recommended_at"] == before["recommended_at"]
+    assert root["final_score"] == before["final_score"]
     assert root["exposure_history_id"] is None
-    assert [row["action"] for row in events] == ["stremio_opened", "playback_confirmed", "watched"]
+    assert [row["action"] for row in events] == ["chosen", "stremio_opened", "playback_confirmed", "watched"]
     assert all(int(row["exposure_history_id"]) == exposure_id for row in events)
-    assert watched == "watched"
     assert seen_feedback == 1
 
     audit = build_trust_outcome_audit(db, days=30)
@@ -186,7 +185,7 @@ def test_profile_backup_v2_is_compact_complete_and_idempotent(tmp_path):
             (user_movie, "want_to_watch", now, now),
         )
     exposure_id = _trust_exposure(source, user_movie, "trusted")
-    event_id = record_watch_event(source, user_movie, "watched")
+    record_watch_event(source, user_movie, "watched", exposure_id)
     source.set_setting("theme", "dark")
     source.set_setting("tmdb_token", "must-not-leave-device")
     source.set_setting(

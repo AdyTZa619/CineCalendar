@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import zipfile
@@ -10,10 +11,17 @@ from .util import utcnow_iso
 
 
 PROFILE_VERSION = 2
+MAX_PROFILE_JSON_BYTES = 250 * 1024 * 1024
 _TRANSIENT_OR_SECRET_SETTINGS = {
     "tmdb_token",
     "catalog_bootstrap_running",
     "chosen_for_today_v1",
+}
+_MOVIE_COLUMNS = {
+    "imdb_id", "identity_key", "title", "original_title", "year", "title_type", "runtime_min",
+    "genres_json", "directors_json", "countries_json", "overview", "keywords_json", "semantic_json",
+    "imdb_rating", "num_votes", "release_date", "poster_url", "source", "created_at", "updated_at",
+    "tmdb_id", "title_norm", "original_title_norm",
 }
 
 
@@ -45,7 +53,7 @@ def _movies_for_ids(con, movie_ids: list[int]) -> list[dict]:
 
 
 def export_profile(db: Database, path: str | Path) -> Path:
-    """Export portable user state, not the rebuildable multi-hundred-thousand-title catalog."""
+    """Export portable user state, not the rebuildable IMDb catalog."""
     path = Path(path)
     exported_at = utcnow_iso()
     payload = {
@@ -56,25 +64,32 @@ def export_profile(db: Database, path: str | Path) -> Path:
         "tables": {},
     }
     with db.connect() as con:
-        movie_ids = _referenced_movie_ids(con)
-        payload["tables"]["movies"] = _movies_for_ids(con, movie_ids)
-        payload["tables"]["ratings"] = _rows(con, "SELECT * FROM ratings ORDER BY id")
-        payload["tables"]["feedback"] = _rows(con, "SELECT * FROM feedback ORDER BY id")
-        payload["tables"]["settings"] = _rows(
-            con,
-            "SELECT * FROM settings WHERE key NOT IN (?,?,?) ORDER BY key",
-            tuple(sorted(_TRANSIENT_OR_SECRET_SETTINGS)),
-        )
-        payload["tables"]["recommendation_history"] = _rows(
-            con, "SELECT * FROM recommendation_history ORDER BY id"
-        )
-        payload["tables"]["recommendation_runs"] = _rows(
-            con, "SELECT * FROM recommendation_runs ORDER BY id"
-        )
-        payload["tables"]["recommendation_trust_audit"] = _rows(
-            con, "SELECT * FROM recommendation_trust_audit ORDER BY id"
-        )
-        payload["tables"]["watchlist"] = _rows(con, "SELECT * FROM watchlist ORDER BY movie_id")
+        # One explicit read transaction pins a single WAL snapshot for every exported table.
+        # Without it, a watcher/background worker could commit between SELECTs and create a
+        # logically mixed backup assembled from two different moments in time.
+        con.execute("BEGIN")
+        try:
+            movie_ids = _referenced_movie_ids(con)
+            payload["tables"]["movies"] = _movies_for_ids(con, movie_ids)
+            payload["tables"]["ratings"] = _rows(con, "SELECT * FROM ratings ORDER BY id")
+            payload["tables"]["feedback"] = _rows(con, "SELECT * FROM feedback ORDER BY id")
+            payload["tables"]["settings"] = _rows(
+                con,
+                "SELECT * FROM settings WHERE key NOT IN (?,?,?) ORDER BY key",
+                tuple(sorted(_TRANSIENT_OR_SECRET_SETTINGS)),
+            )
+            payload["tables"]["recommendation_history"] = _rows(
+                con, "SELECT * FROM recommendation_history ORDER BY id"
+            )
+            payload["tables"]["recommendation_runs"] = _rows(
+                con, "SELECT * FROM recommendation_runs ORDER BY id"
+            )
+            payload["tables"]["recommendation_trust_audit"] = _rows(
+                con, "SELECT * FROM recommendation_trust_audit ORDER BY id"
+            )
+            payload["tables"]["watchlist"] = _rows(con, "SELECT * FROM watchlist ORDER BY movie_id")
+        finally:
+            con.rollback()  # End the read snapshot; no user data was changed.
 
     manifest = {
         "format": payload["format"],
@@ -90,18 +105,62 @@ def export_profile(db: Database, path: str | Path) -> Path:
     return path
 
 
+def _parse_time(value) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        try:
+            dt = datetime.fromisoformat(raw[:10])
+        except ValueError:
+            return 0.0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).timestamp()
+
+
+def _backup_row_is_newer(existing, incoming: dict, *time_fields: str) -> bool:
+    if existing is None:
+        return True
+    incoming_time = max((_parse_time(incoming.get(name)) for name in time_fields), default=0.0)
+    existing_time = max((_parse_time(existing[name]) for name in time_fields if name in existing.keys()), default=0.0)
+    # If neither side has useful timestamps, keep the current local value in merge mode.
+    if incoming_time == 0.0 and existing_time == 0.0:
+        return False
+    return incoming_time >= existing_time
+
+
 def _find_or_insert_movie(con, movie: dict) -> int:
     existing = None
     if movie.get("imdb_id"):
-        existing = con.execute("SELECT id FROM movies WHERE imdb_id=?", (movie.get("imdb_id"),)).fetchone()
+        existing = con.execute("SELECT * FROM movies WHERE imdb_id=?", (movie.get("imdb_id"),)).fetchone()
     if existing is None and movie.get("identity_key"):
         existing = con.execute(
-            "SELECT id FROM movies WHERE identity_key=? ORDER BY id LIMIT 1",
+            "SELECT * FROM movies WHERE identity_key=? ORDER BY id LIMIT 1",
             (movie.get("identity_key"),),
         ).fetchone()
     if existing is not None:
-        return int(existing[0])
-    columns = [key for key in movie.keys() if key != "id"]
+        # Merge only missing metadata. A profile backup must never downgrade a richer current catalog.
+        updates = {}
+        for key in _MOVIE_COLUMNS:
+            if key not in movie or key not in existing.keys():
+                continue
+            current = existing[key]
+            incoming = movie.get(key)
+            if (current is None or current == "" or current == "[]" or current == "{}") and incoming not in (None, "", "[]", "{}"):
+                updates[key] = incoming
+        if updates:
+            sets = ",".join(f"{key}=?" for key in updates)
+            con.execute(f"UPDATE movies SET {sets} WHERE id=?", (*updates.values(), int(existing["id"])))
+        return int(existing["id"])
+
+    columns = [key for key in movie.keys() if key != "id" and key in _MOVIE_COLUMNS]
+    if "identity_key" not in columns or "title" not in columns:
+        raise ValueError("Backupul conține un film fără identity_key/title.")
     values = [movie[key] for key in columns]
     cur = con.execute(
         f"INSERT INTO movies({','.join(columns)}) VALUES({','.join('?' for _ in columns)})",
@@ -195,13 +254,7 @@ def _restore_history(con, rows: list[dict], movie_map: dict[int, int]) -> dict[i
     return mapping
 
 
-def _restore_trust(
-    con,
-    rows: list[dict],
-    movie_map: dict[int, int],
-    history_map: dict[int, int],
-    run_map: dict[int, int],
-) -> int:
+def _restore_trust(con, rows: list[dict], movie_map: dict[int, int], history_map: dict[int, int], run_map: dict[int, int]) -> int:
     restored = 0
     for row in rows:
         old_history = row.get("history_id")
@@ -235,29 +288,86 @@ def _restore_trust(
     return restored
 
 
-def import_profile(db: Database, path: str | Path) -> dict:
-    path = Path(path)
+def _load_payload(path: Path) -> dict:
     with zipfile.ZipFile(path, "r") as archive:
-        payload = json.loads(archive.read("profile.json").decode("utf-8"))
+        try:
+            info = archive.getinfo("profile.json")
+        except KeyError as exc:
+            raise ValueError("Backup incompatibil: profile.json lipsește.") from exc
+        if info.file_size <= 0 or info.file_size > MAX_PROFILE_JSON_BYTES:
+            raise ValueError("Backup incompatibil: profile.json are o dimensiune invalidă.")
+        payload = json.loads(archive.read(info).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Backup incompatibil: structură invalidă.")
+    return payload
+
+
+def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
+    """Import profile in safe merge mode by default.
+
+    merge: newer local rating/settings/watchlist values win over an older backup.
+    restore: backup values are authoritative for user state while the rebuildable movie catalog is kept.
+    """
+    mode = str(mode or "merge").strip().lower()
+    if mode not in {"merge", "restore"}:
+        raise ValueError("Mod backup necunoscut. Folosește 'merge' sau 'restore'.")
+
+    path = Path(path)
+    payload = _load_payload(path)
     version = int(payload.get("version") or 0)
     if payload.get("format") != "CineCalendarProfile" or version not in {1, PROFILE_VERSION}:
         raise ValueError("Backup incompatibil.")
     tables = payload.get("tables", {}) or {}
+    if not isinstance(tables, dict):
+        raise ValueError("Backup incompatibil: tables invalid.")
 
-    stats = {"movies": 0, "ratings": 0, "feedback": 0, "history": 0, "trust": 0}
+    stats = {
+        "mode": mode,
+        "movies": 0,
+        "ratings": 0,
+        "feedback": 0,
+        "history": 0,
+        "trust": 0,
+        "conflicts_skipped": 0,
+    }
     with db.tx() as con:
+        if mode == "restore":
+            con.execute("DELETE FROM recommendation_trust_audit")
+            con.execute("DELETE FROM recommendation_history")
+            con.execute("DELETE FROM recommendation_runs")
+            con.execute("DELETE FROM feedback")
+            con.execute("DELETE FROM watchlist")
+            con.execute("DELETE FROM ratings")
+            # Preserve local secrets/transient runtime state; replace all other settings from backup.
+            marks = ",".join("?" for _ in _TRANSIENT_OR_SECRET_SETTINGS)
+            con.execute(
+                f"DELETE FROM settings WHERE key NOT IN ({marks})",
+                tuple(sorted(_TRANSIENT_OR_SECRET_SETTINGS)),
+            )
+
         movie_map: dict[int, int] = {}
         for movie in tables.get("movies", []):
+            if not isinstance(movie, dict):
+                continue
             new_id = _find_or_insert_movie(con, movie)
             if movie.get("id") is not None:
                 movie_map[int(movie["id"])] = new_id
         stats["movies"] = len(movie_map)
 
         for rating in tables.get("ratings", []):
+            if not isinstance(rating, dict):
+                continue
             old_movie = rating.get("movie_id")
             if old_movie is None or int(old_movie) not in movie_map:
                 continue
             movie_id = movie_map[int(old_movie)]
+            existing = con.execute(
+                "SELECT rating,date_rated,source,imported_at,updated_at FROM ratings WHERE movie_id=?",
+                (movie_id,),
+            ).fetchone()
+            if mode == "merge" and existing is not None and not _backup_row_is_newer(existing, rating, "updated_at", "date_rated"):
+                stats["conflicts_skipped"] += 1
+                continue
             con.execute(
                 """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
                    VALUES(?,?,?,?,?,?)
@@ -272,6 +382,8 @@ def import_profile(db: Database, path: str | Path) -> dict:
             stats["ratings"] += 1
 
         for feedback in tables.get("feedback", []):
+            if not isinstance(feedback, dict):
+                continue
             old_movie = feedback.get("movie_id")
             if old_movie is None or int(old_movie) not in movie_map:
                 continue
@@ -284,13 +396,21 @@ def import_profile(db: Database, path: str | Path) -> dict:
             if exists is None:
                 con.execute(
                     "INSERT INTO feedback(movie_id,kind,weight,created_at) VALUES(?,?,?,?)",
-                    (movie_id, feedback.get("kind"), feedback.get("weight"), feedback.get("created_at")),
+                    (movie_id, feedback.get("kind"), feedback.get("weight"), feedback.get("created_at") or utcnow_iso()),
                 )
                 stats["feedback"] += 1
 
         for setting in tables.get("settings", []):
+            if not isinstance(setting, dict):
+                continue
             key = str(setting.get("key") or "")
             if not key or key in _TRANSIENT_OR_SECRET_SETTINGS:
+                continue
+            existing = con.execute(
+                "SELECT value_json,updated_at FROM settings WHERE key=?", (key,)
+            ).fetchone()
+            if mode == "merge" and existing is not None and not _backup_row_is_newer(existing, setting, "updated_at"):
+                stats["conflicts_skipped"] += 1
                 continue
             con.execute(
                 """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
@@ -299,10 +419,18 @@ def import_profile(db: Database, path: str | Path) -> dict:
             )
 
         for watch in tables.get("watchlist", []):
+            if not isinstance(watch, dict):
+                continue
             old_movie = watch.get("movie_id")
             if old_movie is None or int(old_movie) not in movie_map:
                 continue
             movie_id = movie_map[int(old_movie)]
+            existing = con.execute(
+                "SELECT status,added_at,updated_at FROM watchlist WHERE movie_id=?", (movie_id,)
+            ).fetchone()
+            if mode == "merge" and existing is not None and not _backup_row_is_newer(existing, watch, "updated_at", "added_at"):
+                stats["conflicts_skipped"] += 1
+                continue
             con.execute(
                 """INSERT INTO watchlist(movie_id,status,added_at,updated_at) VALUES(?,?,?,?)
                    ON CONFLICT(movie_id) DO UPDATE SET
