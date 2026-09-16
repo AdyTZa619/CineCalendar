@@ -9,16 +9,21 @@ from .util import clamp, cosine_sparse
 from .watch_intent import WatchIntentLearner
 
 
-MODEL_VERSION = "watch-success-v2"
+MODEL_VERSION = "watch-success-v3"
 
-# A click on "Aleg" is interest, not proof that the film was actually started.
-# Stronger downstream actions therefore carry more weight than the initial choice.
+# Watch Success is a funnel, not a bag of independent clicks. Opening Stremio only proves that
+# CineCalendar handed the title off to the app; it does NOT prove playback actually started.
+# Strong success therefore requires an explicit playback confirmation or a later watched signal.
+# `play_opened` is retained as a legacy 2.7.0 action and intentionally downgraded to the same
+# strength as `stremio_opened`.
 _ACTION_SIGNALS = {
-    "chosen": (0.38, 21.0, 0.60),
-    "skip_today": (-0.55, 2.5, 1.00),
-    "trailer_opened": (0.22, 10.0, 0.35),
-    "play_opened": (0.95, 90.0, 1.60),
-    "watched": (1.00, 150.0, 2.00),
+    "chosen": (0.32, 18.0, 0.45),
+    "skip_today": (-0.62, 2.5, 1.00),
+    "trailer_opened": (0.16, 7.0, 0.25),
+    "stremio_opened": (0.44, 18.0, 0.55),
+    "play_opened": (0.44, 18.0, 0.55),  # legacy 2.7.0: URL dispatch, not verified playback
+    "playback_confirmed": (0.95, 75.0, 1.55),
+    "watched": (1.00, 150.0, 1.90),
 }
 
 _FEEDBACK_SIGNALS = {
@@ -44,19 +49,30 @@ _RECENT_RATING_SIGNALS = {
 
 
 class WatchSuccessIntentLearner(WatchIntentLearner):
-    """Short-horizon learner that distinguishes interest from actually moving toward playback.
+    """Short-horizon learner for what actually progresses toward watching.
 
-    `chosen` remains useful, but it is deliberately weaker than `play_opened` or `watched`.
-    This prevents the recommender from congratulating itself merely because the user clicked a
-    choice button and then never watched the film.
+    The learner intentionally distinguishes five concepts:
+      * choosing/keeping a recommendation;
+      * checking a trailer;
+      * handing the title to Stremio;
+      * explicitly confirming that playback started;
+      * confirming that the film was watched.
+
+    Actions for the same movie on the same date are collapsed to the latest funnel outcome before
+    learning. This prevents `chosen -> trailer -> Stremio -> watched` from counting as four positive
+    examples for one film, and makes `chosen -> skip` correctly end as a skip for that day.
     """
 
+    ACTION_NAMES = tuple(_ACTION_SIGNALS)
+
     def state_token(self) -> tuple:
+        marks = ",".join("?" for _ in self.ACTION_NAMES)
         with self.db.connect() as con:
             actions = con.execute(
-                """SELECT COUNT(*),COALESCE(MAX(id),0)
-                   FROM recommendation_history
-                   WHERE action IN ('chosen','skip_today','trailer_opened','play_opened','watched')"""
+                f"""SELECT COUNT(*),COALESCE(MAX(id),0)
+                    FROM recommendation_history
+                    WHERE action IN ({marks})""",
+                self.ACTION_NAMES,
             ).fetchone()
             feedback = con.execute(
                 "SELECT COUNT(*),COALESCE(MAX(id),0) FROM feedback"
@@ -72,6 +88,15 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
             int(ratings[0]), str(ratings[1]),
         )
 
+    @staticmethod
+    def _funnel_key(row) -> tuple[int, str]:
+        movie_id = int(row["intent_movie_id"])
+        day = str(row["intent_context_date"] or "").strip()
+        if not day:
+            raw = str(row["intent_at"] or "")
+            day = raw[:10] if len(raw) >= 10 else "unknown"
+        return movie_id, day
+
     def _prepare(self) -> None:
         token = self.state_token()
         with self._lock:
@@ -84,17 +109,23 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
         positive_weight = 0.0
         negative_weight = 0.0
         effective_events = 0.0
-        raw_events = 0
-        play_events = 0
+        raw_action_events = 0
+        collapsed_action_events = 0
+        launch_events = 0
+        playback_events = 0
         trailer_events = 0
         recent_rating_signals = 0
 
+        marks = ",".join("?" for _ in self.ACTION_NAMES)
         with self.db.connect() as con:
             action_rows = con.execute(
-                """SELECT m.*,h.action AS intent_action,h.recommended_at AS intent_at
-                   FROM recommendation_history h JOIN movies m ON m.id=h.movie_id
-                   WHERE h.action IN ('chosen','skip_today','trailer_opened','play_opened','watched')
-                   ORDER BY h.id DESC LIMIT 500"""
+                f"""SELECT m.*,m.id AS intent_movie_id,
+                           h.id AS intent_event_id,h.action AS intent_action,
+                           h.recommended_at AS intent_at,h.context_date AS intent_context_date
+                    FROM recommendation_history h JOIN movies m ON m.id=h.movie_id
+                    WHERE h.action IN ({marks})
+                    ORDER BY h.id DESC LIMIT 900""",
+                self.ACTION_NAMES,
             ).fetchall()
             feedback_rows = con.execute(
                 """SELECT m.*,f.kind AS intent_kind,f.created_at AS intent_at
@@ -109,7 +140,21 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
                    ORDER BY COALESCE(r.date_rated,r.updated_at) DESC LIMIT 300"""
             ).fetchall()
 
+        # Rows arrive newest-first. Keep only the latest outcome for one movie/day funnel.
+        latest_by_funnel: dict[tuple[int, str], object] = {}
+        raw_action_events = len(action_rows)
         for row in action_rows:
+            key = self._funnel_key(row)
+            if key not in latest_by_funnel:
+                latest_by_funnel[key] = row
+
+        collapsed_rows = sorted(
+            latest_by_funnel.values(),
+            key=lambda row: int(row["intent_event_id"]),
+            reverse=True,
+        )
+
+        for row in collapsed_rows:
             kind = str(row["intent_action"] or "")
             cfg = _ACTION_SIGNALS.get(kind)
             if not cfg:
@@ -119,10 +164,12 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
             strength = abs(signal) * decay
             if strength < 0.015:
                 continue
-            raw_events += 1
+            collapsed_action_events += 1
             effective_events += event_credit * decay
-            if kind in {"play_opened", "watched"}:
-                play_events += 1
+            if kind in {"stremio_opened", "play_opened"}:
+                launch_events += 1
+            elif kind in {"playback_confirmed", "watched"}:
+                playback_events += 1
             elif kind == "trailer_opened":
                 trailer_events += 1
             movie = row_to_movie(row)
@@ -142,7 +189,6 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
             strength = abs(signal) * decay
             if strength < 0.015:
                 continue
-            raw_events += 1
             effective_events += event_credit * decay
             movie = row_to_movie(row)
             if signal > 0:
@@ -152,8 +198,8 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
                 self._accumulate(negative, movie, strength)
                 negative_weight += strength
 
-        # Ratings remain only a weak bootstrap. They say what the user liked, not what they are
-        # likely to start in this particular session.
+        # Ratings remain only a weak bootstrap. They say what the user liked, not whether the
+        # recommendation succeeded in getting the film started in this session.
         for row in rating_rows:
             rating = max(1, min(10, int(row["intent_rating"])))
             signal = float(_RECENT_RATING_SIGNALS.get(rating, 0.0))
@@ -185,11 +231,13 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
                 "state": "ready",
                 "version": MODEL_VERSION,
                 "active": active,
-                # The scorer uses explicit_events for confidence. Use effective evidence rather
-                # than raw clicks so repeated trailer opens cannot rapidly unlock 28% blend.
+                # The scorer uses explicit_events for confidence. Effective evidence is based on
+                # collapsed funnels, so repeatedly clicking the same film cannot unlock 28% blend.
                 "explicit_events": effective_count,
-                "raw_explicit_events": raw_events,
-                "play_events": play_events,
+                "raw_action_events": raw_action_events,
+                "collapsed_action_events": collapsed_action_events,
+                "launch_events": launch_events,
+                "playback_events": playback_events,
                 "trailer_events": trailer_events,
                 "recent_rating_signals": recent_rating_signals,
                 "positive_evidence": round(positive_weight, 4),
@@ -220,11 +268,11 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
         pos = clamp(cosine_sparse(vec, positive)) if positive else 0.0
         neg = clamp(cosine_sparse(vec, negative)) if negative else 0.0
         if positive and negative:
-            probability = clamp(0.5 + 0.5 * math.tanh(2.15 * (pos - neg)))
+            intent_score = clamp(0.5 + 0.5 * math.tanh(2.15 * (pos - neg)))
         elif positive:
-            probability = clamp(0.35 + 0.65 * pos)
+            intent_score = clamp(0.35 + 0.65 * pos)
         else:
-            probability = clamp(0.65 - 0.65 * neg)
+            intent_score = clamp(0.65 - 0.65 * neg)
 
         explicit = int(status.get("explicit_events", 0) or 0)
         recent = int(status.get("recent_rating_signals", 0) or 0)
@@ -234,21 +282,22 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
         cap = float(status.get("max_blend_weight", 0.0) or 0.0)
         blend = min(0.28, cap * (0.45 + 0.55 * confidence))
 
-        if probability >= 0.68:
-            label = "ridicată"
-        elif probability >= 0.54:
-            label = "bună"
-        elif probability <= 0.36:
-            label = "scăzută"
+        if intent_score >= 0.68:
+            label = "ridicat"
+        elif intent_score >= 0.54:
+            label = "bun"
+        elif intent_score <= 0.36:
+            label = "scăzut"
         else:
-            label = "neutră"
+            label = "neutru"
         reason = (
-            f"Probabilitate de pornire acum {label}; semnal separat de nota estimată, "
-            "învățat local din alegeri, trailere, play, skip-uri și feedback recent."
+            f"Semnal de intenție de vizionare {label}; nu este o probabilitate calibrată și nu "
+            "înlocuiește nota estimată. Este învățat local din rezultate recente ale traseului "
+            "alegere → trailer/Stremio → pornire confirmată → vizionat, plus skip-uri și feedback."
         )
         return {
             "active": True,
-            "score": probability,
+            "score": intent_score,
             "confidence": confidence,
             "blend_weight": blend,
             "positive_similarity": pos,
