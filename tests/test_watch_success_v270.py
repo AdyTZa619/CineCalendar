@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import inspect
 import json
 
 from cinecalendar.db import Database
@@ -10,6 +11,7 @@ from cinecalendar.service import CineCalendarService
 from cinecalendar.util import utcnow_iso
 from cinecalendar.watch_success import _ACTION_SIGNALS, WatchSuccessIntentLearner
 from cinecalendar.watch_success_ui_patch import (
+    install_watch_success_ui_patch,
     record_watch_event,
     stremio_deep_link,
     stremio_web_link,
@@ -121,6 +123,14 @@ def test_official_stremio_routes_and_trailer_search_are_deterministic():
     assert "The+Matrix+1999+official+trailer" in trailer
 
 
+def test_ui_records_handoff_separately_from_confirmed_playback_and_clears_watched_choice():
+    source = inspect.getsource(install_watch_success_ui_patch)
+    assert 'record_watch_event(self.db, int(movie.id), "stremio_opened")' in source
+    assert 'record_watch_event(self.db, int(movie.id), "playback_confirmed")' in source
+    assert 'clear_today_choice(self.db, int(movie.id))' in source
+    assert 'record_watch_event(self.db, int(movie.id), "play_opened")' not in source
+
+
 class _NeutralIntent:
     @staticmethod
     def _payload():
@@ -128,6 +138,24 @@ class _NeutralIntent:
 
     def score_many(self, movies):
         return [self._payload() for _movie in movies]
+
+
+class _ExtremeIntent:
+    def score_many(self, movies):
+        out = []
+        for movie in movies:
+            if int(movie.id) == 1:
+                score = 0.05
+            else:
+                score = 0.95
+            out.append({
+                "active": True,
+                "score": score,
+                "confidence": 1.0,
+                "blend_weight": 0.28,
+                "reason": "Extreme test signal.",
+            })
+        return out
 
 
 def _hard_to_start(final: float = 0.73) -> Recommendation:
@@ -179,8 +207,26 @@ def test_startability_cannot_rescue_a_substantially_weaker_taste_match():
     assert not any(name == "Startability" for name, _pts, _reason in easy_but_weaker.score.contributions)
 
 
-def test_service_uses_v15_watch_success_engine():
-    import inspect
+def test_extreme_short_horizon_intent_cannot_overturn_large_long_term_taste_gap():
+    engine = object.__new__(FastRecommendationEngineV15)
+    engine.watch_intent = _ExtremeIntent()
+    strong = _hard_to_start(0.86)
+    weak = _easy_to_start(0.60)
 
+    out = engine._apply_watch_success([strong, weak])
+
+    assert out[0].movie.id == 1
+    assert strong.score.final >= 0.74
+    assert weak.score.final <= 0.60 + 1e-9
+    assert not any(name == "Intenție de vizionare acum" for name, _pts, _reason in weak.score.contributions)
+
+
+def test_intent_absolute_shift_is_capped():
+    engine = object.__new__(FastRecommendationEngineV15)
+    mixed = engine._mix_intent(0.80, 0.0, 0.28)
+    assert 0.6999 <= mixed <= 0.7001
+
+
+def test_service_uses_v15_watch_success_engine():
     source = inspect.getsource(CineCalendarService.__init__)
     assert "FastRecommendationEngineV15" in source
