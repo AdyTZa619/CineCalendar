@@ -5,6 +5,7 @@ import inspect
 import requests
 
 from cinecalendar import app as app_module
+from cinecalendar import ui_composition as composition_module
 from cinecalendar.db import Database
 from cinecalendar.recommender_v12 import FastRecommendationEngineV12
 from cinecalendar.romanian_cinema import CACHE_KEY, RomanianCinemaProvider
@@ -125,4 +126,6 @@ def test_ui_patch_adds_dedicated_romanian_page_after_recommendations():
 
 def test_premium_startup_installs_romanian_cinema_patch():
     source = inspect.getsource(app_module.main)
-    assert "install_romanian_cinema_ui_patch(CalendarPremiumWindow)" in source
+    assert "compose_premium_window(CalendarPremiumWindow)" in source
+    composition = inspect.getsource(composition_module.compose_premium_window)
+    assert "install_romanian_cinema_ui_patch(window_cls)" in composition
