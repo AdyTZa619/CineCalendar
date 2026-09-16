@@ -49,7 +49,6 @@ def test_confirmed_playback_is_stronger_than_stremio_handoff_or_choice():
     assert watched_signal >= play_signal
     assert play_credit > launch_credit > chosen_credit
     assert watched_credit > play_credit
-    # Legacy 2.7.0 `play_opened` only meant URL dispatch, so v3 must not keep treating it as play.
     assert _ACTION_SIGNALS["play_opened"][0] == _ACTION_SIGNALS["stremio_opened"][0]
 
 
@@ -144,10 +143,7 @@ class _ExtremeIntent:
     def score_many(self, movies):
         out = []
         for movie in movies:
-            if int(movie.id) == 1:
-                score = 0.05
-            else:
-                score = 0.95
+            score = 0.05 if int(movie.id) == 1 else 0.95
             out.append({
                 "active": True,
                 "score": score,
@@ -180,10 +176,10 @@ def _easy_to_start(final: float = 0.72) -> Recommendation:
     )
 
 
-def test_startability_can_reorder_close_candidates_without_changing_predicted_rating():
+def test_startability_can_break_an_extremely_close_tie_without_changing_predicted_rating():
     engine = object.__new__(FastRecommendationEngineV15)
     engine.watch_intent = _NeutralIntent()
-    hard_to_start = _hard_to_start(0.73)
+    hard_to_start = _hard_to_start(0.725)
     easy_to_start = _easy_to_start(0.72)
 
     out = engine._apply_startability([hard_to_start, easy_to_start])
@@ -216,15 +212,15 @@ def test_extreme_short_horizon_intent_cannot_overturn_large_long_term_taste_gap(
     out = engine._apply_watch_success([strong, weak])
 
     assert out[0].movie.id == 1
-    assert strong.score.final >= 0.74
+    assert strong.score.final >= 0.7599
     assert weak.score.final <= 0.60 + 1e-9
     assert not any(name == "Intenție de vizionare acum" for name, _pts, _reason in weak.score.contributions)
 
 
-def test_intent_absolute_shift_is_capped():
+def test_combined_short_horizon_shift_is_capped_to_ten_points():
     engine = object.__new__(FastRecommendationEngineV15)
-    mixed = engine._mix_intent(0.80, 0.0, 0.28)
-    assert 0.6999 <= mixed <= 0.7001
+    assert engine._cap_to_base(0.80, 0.20) == 0.70
+    assert engine._cap_to_base(0.80, 1.00) == 0.90
 
 
 def test_service_uses_v15_watch_success_engine():
