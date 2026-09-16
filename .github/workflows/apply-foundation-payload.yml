@@ -38,6 +38,21 @@ jobs:
           tar -xzf foundation33.tar.gz
           if ($LASTEXITCODE -ne 0) { throw 'Foundation archive extraction failed.' }
           Remove-Item 'foundation33.tar.gz' -Force
+
+          $fixParts = @(Get-ChildItem '.foundation_payload\fix1*' -File | Sort-Object Name)
+          if ($fixParts.Count -ne 3) { throw "Expected 3 fix overlay chunks, got $($fixParts.Count)." }
+          $fix64 = ($fixParts | ForEach-Object { (Get-Content -LiteralPath $_.FullName -Raw).Trim() }) -join ''
+          if ($fix64.Length -ne 9804) { throw "Fix overlay base64 length mismatch: $($fix64.Length)." }
+          $fixBytes = [Convert]::FromBase64String($fix64)
+          [IO.File]::WriteAllBytes('foundation33-fix1.tar.gz', $fixBytes)
+          $fixSha = (Get-FileHash 'foundation33-fix1.tar.gz' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($fixSha -ne 'ae4c7e93b329a76c988e7162d6e7aac400346c459123e5056199e1aca7e17459') {
+            throw "Foundation fix overlay SHA mismatch: $fixSha"
+          }
+          tar -xzf foundation33-fix1.tar.gz
+          if ($LASTEXITCODE -ne 0) { throw 'Foundation fix overlay extraction failed.' }
+          Remove-Item 'foundation33-fix1.tar.gz' -Force
+
           Remove-Item '.foundation_payload' -Recurse -Force
           Remove-Item '.github\workflows\apply-foundation-payload.yml' -Force
           $version = (python -c "from cinecalendar import __version__; print(__version__)").Trim()
