@@ -61,6 +61,9 @@ class ScoreBreakdown:
     uncertainty: float = 1.0
     decision_mode: str = "decide"
     evidence: float = 0.0
+    # Separate from the estimated 1-10 taste rating: how easy this already-good candidate looks
+    # to actually start now after runtime, premise, quality and short-horizon intent are considered.
+    startability: float = 0.0
 
 @dataclass
 class Recommendation:

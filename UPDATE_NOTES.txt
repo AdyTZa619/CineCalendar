@@ -1,3 +1,19 @@
+CineCalendar 2.7.0 mută obiectivul de la „am recomandat un film bun” la „te-am dus mai aproape de Play”.
+
+Noul Watch Success separă interesul de vizionare. Simplul „Aleg filmul” nu mai este tratat ca dovada principală de succes: are o pondere moderată și expiră mai repede. Deschiderea trailerului este un semnal slab de interes, deschiderea filmului pentru vizionare este un semnal mult mai puternic, iar confirmarea „L-am văzut” este cel mai puternic semnal de succes al traseului de vizionare. Ratingul IMDb ulterior rămâne dovada separată pentru cât de mult ți-a plăcut filmul.
+
+Motorul V15 introduce Startability. Acesta NU înlocuiește gustul și nu modifică nota personală estimată 1–10. Rerankează numai candidații deja considerați buni, cu o influență plafonată la 18%, folosind potrivirea personală, încrederea, intenția recentă, durata, claritatea premisei, completitudinea metadatelor și dovezile publice de calitate. Astfel două filme apropiate ca potrivire pot fi ordonate diferit dacă unul este mult mai ușor de pornit acum.
+
+Home devine play-first. Butonul principal este „VĂD ACUM”, care deschide filmul prin deep-link Stremio pe baza IMDb ID-ului. Dacă sistemul nu are handler pentru aplicație, există fallback la Stremio Web. „Trailer” deschide o căutare directă YouTube, iar „Alt film” rămâne refuz contextual. Alegerea poate fi păstrată pentru azi fără a fi confundată cu o vizionare.
+
+Ecranul unei alegeri confirmate nu mai este capăt de drum: oferă direct „VĂD ACUM ÎN STREMIO”, „Trailer”, fallback „Stremio Web”, răzgândire și „L-am văzut”. Scopul este să reducă pașii dintre recomandare și pornirea efectivă a filmului.
+
+Watch Success rămâne local și lightweight. Nu introduce worker greu la startup și nu schimbă optimizările pentru HDD din versiunile anterioare. Evenimentele de trailer/play/vizionare invalidează tokenul motorului și pot schimba următoarea recomandare, fără să fie confundate cu ratingul personal pe termen lung.
+
+Au fost adăugate teste pentru diferența de greutate dintre „Aleg” și „Play”, invalidarea stării după un eveniment de vizionare, rutele Stremio/Trailer și faptul că Startability poate schimba ordinea unor candidați apropiați fără să modifice nota estimată.
+
+---
+
 CineCalendar 2.6.1 repară acțiunea „Aleg filmul”, care în 2.6.0 putea părea că nu face nimic vizibil.
 
 Alegerea este acum o tranziție reală de stare: după apăsare, pagina „Ce văd acum?” trece pe un ecran clar „ALES PENTRU AZI”, păstrează filmul selectat chiar dacă se termină între timp un worker de metadate și oferă acțiuni explicite pentru IMDb, răzgândire sau marcarea filmului ca văzut.
