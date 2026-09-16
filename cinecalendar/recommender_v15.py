@@ -10,7 +10,7 @@ from .util import clamp
 from .watch_success import WatchSuccessIntentLearner
 
 
-ENGINE_VERSION = "15.1.1-watch-success-truthful-funnel"
+ENGINE_VERSION = "15.2.0-adaptive-quality-gate"
 
 
 class FastRecommendationEngineV15(FastRecommendationEngineV14):
@@ -37,7 +37,7 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         return super()._state_token() + (ENGINE_VERSION,)
 
     def _persistent_key(self, when: date, mode: str) -> str:
-        return f"decision_pool_v15_1:{when.isoformat()}:{mode}"
+        return f"decision_pool_v15_2:{when.isoformat()}:{mode}"
 
     @staticmethod
     def _runtime_score(minutes: int | None) -> float:
