@@ -1,0 +1,45 @@
+name: CineCalendar 3.2 Audit Validation
+
+on:
+  push:
+    branches: ["audit-3.2.0"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run full tests
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q
+      - name: Benchmark 260k catalog engine
+        env:
+          PYTHONPATH: .
+        run: python scripts/benchmark_engine_v3.py
+      - name: Build portable Windows bundle
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit launcher.py
+          $exe = 'dist\CineCalendar\CineCalendar.exe'
+          if (!(Test-Path $exe)) { throw 'EXE missing' }
+          if (!(Test-Path 'dist\CineCalendar\_internal')) { throw '_internal missing' }
+          $b = [IO.File]::ReadAllBytes($exe)
+          if ($b.Length -lt 2 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw 'Not a Windows PE executable' }
+      - name: Smoke launch
+        shell: pwsh
+        run: |
+          $env:CINECALENDAR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'cinecalendar-3-2-audit-smoke'
+          $p = Start-Process -FilePath '.\dist\CineCalendar\CineCalendar.exe' -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited -and $p.ExitCode -ne 0) { throw "App exited with $($p.ExitCode)" }
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
