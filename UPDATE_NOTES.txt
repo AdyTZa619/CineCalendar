@@ -1,3 +1,17 @@
+CineCalendar 3.0.0 introduce o poartă finală de încredere pentru recomandările vizibile de pe Home. Motorul nu mai ia pur și simplu primele trei scoruri după reranking: pentru 1-9 rezultate construiește mai întâi un pool matur de 18-36 finaliști și cere confirmare din mai multe semnale independente înainte ca un film să primească statutul de recomandare cu încredere ridicată.
+
+Poarta combină potrivirea finală pe termen lung, nota personală estimată, încrederea și cantitatea de dovezi din istoricul propriu, percentila ALS globală când este disponibilă, ratingul IMDb bayesian și Startability. Un singur semnal nu poate domina. Pentru statutul de recomandare cu încredere ridicată sunt necesare minimum trei confirmări și candidatul trebuie să rămână aproape de cea mai bună potrivire pe termen lung.
+
+Sunt introduse două protecții dure împotriva recomandărilor dezastruoase: un film cu estimare personală sub 5.8/10 la încredere mare sau cu IMDb <=5.2 și cel puțin 5.000 de voturi este retrogradat și poate apărea doar ca ultimă rezervă dacă nu există suficiente alternative. Filmele fără multe voturi sau fără IMDb nu sunt eliminate doar pentru lipsa popularității.
+
+Poarta nu rescrie nota personală 1-10 și nu poate salva un film clar mai slab. Trust-ul este folosit doar pentru departajarea finaliștilor competitivi, iar efectul de ordonare este limitat la +/-0.03 puncte față de scorul final existent. Dacă nu există trei titluri care trec complet poarta, lista este completată conservator cu cei mai buni candidați fără red flags, astfel încât interfața să nu rămână goală.
+
+Backtest-ul temporal 2.9.0 a fost extins pentru a rula separat exact Top 3-ul de producție cu poarta V16, raportând starea porții, acoperirea în holdout, ratingul real mediu al potrivirilor istorice și disaster rate pentru ratinguri 1-4. Listele mari de 25/50/100 rezultate ocolesc intenționat poarta Top 3, astfel încât diagnosticul de ranking general să rămână comparabil.
+
+Au fost adăugate teste pentru preferința față de candidați confirmați de mai multe semnale, retrogradarea red flags, interdicția de a numi „trusted” un candidat prea departe de cea mai bună potrivire, backfill-ul conservator și folosirea V16 în serviciul de producție.
+
+---
+
 CineCalendar 2.9.0 atacă direct problema de candidate recall: un film foarte bun pentru utilizator nu poate fi recomandat dacă nu ajunge în pool-ul de candidați.
 
 Retrieval-ul personal v2 păstrează ALS-ul global, dar schimbă substanțial lane-ul bazat pe favorite. În loc de doar 12 ancore 9/10-10/10, folosește până la 64 de favorite explicite. Candidații nu mai sunt aleși după o singură asemănare maximă: se folosește un consens între mai multe ancore, astfel încât o singură preferință excentrică să nu domine întreaga listă.
