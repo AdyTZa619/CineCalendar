@@ -7,11 +7,11 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
-from .decision_action_patch import current_today_choice, set_today_choice
+from .decision_action_patch import clear_today_choice, current_today_choice, set_today_choice
 from .util import utcnow_iso
 
 
-_WATCH_ACTIONS = {"trailer_opened", "play_opened", "watched"}
+_WATCH_ACTIONS = {"trailer_opened", "stremio_opened", "playback_confirmed", "watched"}
 
 
 def stremio_deep_link(imdb_id: str) -> str:
@@ -54,7 +54,7 @@ def record_watch_event(db, movie_id: int, action: str) -> int:
             """INSERT INTO recommendation_history(
                    movie_id,recommended_at,context_date,slot,final_score,ignored,action
                ) VALUES(?,?,?,?,?,?,?)""",
-            (movie_id, now, today, "watch_success", final_score, 0, action),
+            (movie_id, now, today, "watch_success_v3", final_score, 0, action),
         )
         return int(cur.lastrowid)
 
@@ -66,8 +66,19 @@ def _startability_reason(rec) -> str:
     return ""
 
 
+def _startability_label(value: float) -> str:
+    score = float(value or 0.0)
+    if score >= 0.76:
+        return "ridicată"
+    if score >= 0.64:
+        return "bună"
+    if score >= 0.52:
+        return "medie"
+    return "scăzută"
+
+
 def install_watch_success_ui_patch(window_cls) -> None:
-    """Turn Home from a recommendation endpoint into a short path from suggestion to playback."""
+    """Turn Home into a short, truthful path from recommendation to confirmed playback."""
     original_page_today = window_cls.page_today
     original_human_reason = window_cls.human_reason
 
@@ -85,7 +96,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
                 record_watch_event(self.db, int(movie.id), "trailer_opened")
             except Exception:
                 pass
-            self.set_status("Am deschis căutarea pentru trailer. Acesta este un semnal slab de interes, nu o vizionare.", False)
+            self.set_status("Am deschis căutarea pentru trailer. Este un semnal slab de interes, nu o vizionare.", False)
         else:
             QMessageBox.warning(self, "CineCalendar", "Nu am putut deschide browserul pentru trailer.")
         return bool(opened)
@@ -110,13 +121,18 @@ def install_watch_success_ui_patch(window_cls) -> None:
             return False
 
         try:
-            record_watch_event(self.db, int(movie.id), "play_opened")
+            # A successful URL handoff proves intent, not actual playback. Playback becomes a
+            # strong signal only after the user explicitly confirms that the film really started.
+            record_watch_event(self.db, int(movie.id), "stremio_opened")
             set_today_choice(self.db, int(movie.id))
         except Exception as exc:
             QMessageBox.warning(self, "CineCalendar", f"Am deschis Stremio, dar nu am putut salva semnalul local:\n{exc}")
         if hasattr(self, "today_result"):
             self.today_result = None
-        self.set_status("Am deschis filmul pentru vizionare. Acesta cântărește mai mult decât simplul «Aleg».", False)
+        self.set_status(
+            "Am trimis filmul către Stremio. Asta nu înseamnă încă că a pornit; confirmă «A PORNIT FILMUL» dacă începe redarea.",
+            False,
+        )
         return True
 
     def watch_now(self, movie):
@@ -131,11 +147,27 @@ def install_watch_success_ui_patch(window_cls) -> None:
             self.show_page("today")
         return opened
 
+    def confirm_playback(self, movie):
+        try:
+            record_watch_event(self.db, int(movie.id), "playback_confirmed")
+            set_today_choice(self.db, int(movie.id))
+            self.set_status("Am notat că filmul a pornit. Acesta este semnalul puternic de Watch Success.", False)
+            if hasattr(self, "today_result"):
+                self.today_result = None
+            self.show_page("today")
+            return True
+        except Exception as exc:
+            QMessageBox.warning(self, "CineCalendar", f"Nu am putut salva confirmarea de pornire:\n{exc}")
+            return False
+
     def mark_watched_from_choice(self, movie):
         try:
             record_watch_event(self.db, int(movie.id), "watched")
         except Exception:
             pass
+        # The Watch Success wrapper must clear the persisted choice too. Without this, the old
+        # 2.7.0 screen could keep showing the same film even after "L-am văzut".
+        clear_today_choice(self.db, int(movie.id))
         self.feedback(int(movie.id), "seen")
         self.show_page("today")
 
@@ -149,7 +181,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
             self.load_poster_async(poster, m.poster_url, m.imdb_id or str(m.id))
 
         right = QVBoxLayout(); right.setSpacing(11)
-        kicker = QLabel("FILMUL PE CARE L-AȘ PORNI ACUM")
+        kicker = QLabel("RECOMANDAREA DE PORNIT ACUM")
         kicker.setObjectName("Kicker"); right.addWidget(kicker)
         title = QLabel(m.title + (f"  ({m.year})" if m.year else ""))
         title.setObjectName("HeroTitle"); title.setWordWrap(True); right.addWidget(title)
@@ -158,7 +190,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
         metric.addWidget(self.score_badge(s.predicted_rating, "pentru tine"))
         metric.addWidget(self.metric_badge(f"{round(s.confidence * 100)}%", "încredere"))
         if float(getattr(s, "startability", 0.0) or 0.0) > 0:
-            metric.addWidget(self.metric_badge(f"{round(s.startability * 100)}%", "de pornit acum"))
+            metric.addWidget(self.metric_badge(_startability_label(s.startability), "ușurință acum"))
         if m.imdb_rating is not None:
             metric.addWidget(self.metric_badge(f"{m.imdb_rating:.1f}", "IMDb"))
         metric.addStretch(1); right.addLayout(metric)
@@ -178,7 +210,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
             now.setObjectName("Muted"); now.setWordWrap(True); right.addWidget(now)
 
         actions = QHBoxLayout()
-        play = QPushButton("VĂD ACUM")
+        play = QPushButton("DESCHIDE ÎN STREMIO")
         play.setProperty("accent", True)
         play.clicked.connect(lambda _, movie=m: watch_now(self, movie))
         actions.addWidget(play)
@@ -203,7 +235,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
     def _render_watch_choice(self, movie):
         page, content = self.page_shell(
             "Ce văd acum?",
-            "Ai ales filmul. Pasul util acum este să ajungi la Play, nu să mai compari încă o listă.",
+            "Ai ales filmul. CineCalendar separă acum deschiderea Stremio de pornirea reală a filmului.",
         )
         box = QFrame(); box.setObjectName("HeroCard")
         main = QHBoxLayout(box); main.setContentsMargins(26, 26, 26, 26); main.setSpacing(26)
@@ -213,7 +245,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
             self.load_poster_async(poster, movie.poster_url, movie.imdb_id or str(movie.id))
 
         right = QVBoxLayout(); right.setSpacing(11)
-        kicker = QLabel("ALES PENTRU AZI — ACUM DĂ-I PLAY")
+        kicker = QLabel("ALES PENTRU AZI")
         kicker.setObjectName("Kicker"); right.addWidget(kicker)
         title = QLabel(movie.title + (f"  ({movie.year})" if movie.year else ""))
         title.setObjectName("HeroTitle"); title.setWordWrap(True); right.addWidget(title)
@@ -230,16 +262,19 @@ def install_watch_success_ui_patch(window_cls) -> None:
         right.addWidget(overview)
 
         explain = QLabel(
-            "CineCalendar nu consideră simpla alegere un succes complet. «VĂD ACUM» este semnalul "
-            "puternic că recomandarea te-a dus efectiv spre vizionare."
+            "Deschiderea Stremio înseamnă că ai încercat recomandarea, nu că redarea a început. "
+            "Dacă filmul chiar pornește, apasă «A PORNIT FILMUL»; abia acela este semnalul puternic pentru motor."
         )
         explain.setObjectName("BodyStrong"); explain.setWordWrap(True); right.addWidget(explain)
 
         actions = QHBoxLayout()
-        play = QPushButton("VĂD ACUM ÎN STREMIO")
+        play = QPushButton("DESCHIDE ÎN STREMIO")
         play.setProperty("accent", True)
         play.clicked.connect(lambda _, movie=movie: watch_now(self, movie))
         actions.addWidget(play)
+        started = QPushButton("A PORNIT FILMUL")
+        started.clicked.connect(lambda _, movie=movie: confirm_playback(self, movie))
+        actions.addWidget(started)
         trailer = QPushButton("Trailer")
         trailer.clicked.connect(lambda _, movie=movie: open_trailer(self, movie))
         actions.addWidget(trailer)
@@ -249,7 +284,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
         actions.addStretch(1); right.addLayout(actions)
 
         secondary = QHBoxLayout()
-        change = QPushButton("M-am răzgândit — alt film")
+        change = QPushButton("Nu l-am pornit — alt film")
         change.clicked.connect(lambda _, mid=movie.id: self.skip_decision(mid))
         secondary.addWidget(change)
         seen = QPushButton("L-am văzut")
@@ -271,6 +306,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
     window_cls.open_trailer = open_trailer
     window_cls.watch_now = watch_now
     window_cls.watch_now_web = watch_now_web
+    window_cls.confirm_playback = confirm_playback
     window_cls.mark_watched_from_choice = mark_watched_from_choice
     window_cls.decision_hero = decision_hero
     window_cls.page_today = page_today
