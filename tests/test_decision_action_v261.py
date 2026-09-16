@@ -33,31 +33,62 @@ def _movie(db: Database) -> int:
         return int(cur.lastrowid)
 
 
-def test_choose_updates_fresh_exposure_at_click_time_and_sets_real_action(tmp_path):
+def test_choose_does_not_rewrite_stale_historical_exposure(tmp_path):
     db = Database(tmp_path / "cinecalendar.db")
     movie_id = _movie(db)
     old = "2020-01-01T00:00:00+00:00"
     with db.tx() as con:
-        con.execute(
+        old_row = con.execute(
             """INSERT INTO recommendation_history(movie_id,recommended_at,context_date,slot,final_score)
                VALUES(?,?,?,?,?)""",
             (movie_id, old, "2020-01-01", "decision", 0.8),
         )
+        old_id = int(old_row.lastrowid)
 
     token_before = WatchIntentLearner(db).state_token()
     row_id = record_decision_action(db, movie_id, "chosen")
     token_after = WatchIntentLearner(db).state_token()
 
     with db.connect() as con:
+        current = con.execute("SELECT * FROM recommendation_history WHERE id=?", (row_id,)).fetchone()
+        historical = con.execute("SELECT * FROM recommendation_history WHERE id=?", (old_id,)).fetchone()
+        count = con.execute("SELECT COUNT(*) FROM recommendation_history WHERE movie_id=?", (movie_id,)).fetchone()[0]
+
+    assert count == 2
+    assert row_id != old_id
+    assert historical["action"] is None
+    assert historical["recommended_at"] == old
+    assert historical["context_date"] == "2020-01-01"
+    assert current["action"] == "chosen"
+    assert current["ignored"] == 0
+    assert current["context_date"] == date.today().isoformat()
+    assert current["exposure_history_id"] is None
+    assert token_after != token_before
+
+
+def test_current_same_day_exposure_is_updated_in_place(tmp_path):
+    db = Database(tmp_path / "cinecalendar.db")
+    movie_id = _movie(db)
+    old_click_time = "2020-01-01T00:00:00+00:00"
+    today = date.today().isoformat()
+    with db.tx() as con:
+        cur = con.execute(
+            """INSERT INTO recommendation_history(movie_id,recommended_at,context_date,slot,final_score)
+               VALUES(?,?,?,?,?)""",
+            (movie_id, old_click_time, today, "decision", 0.8),
+        )
+        exposure_id = int(cur.lastrowid)
+
+    row_id = record_decision_action(db, movie_id, "chosen")
+    with db.connect() as con:
         row = con.execute("SELECT * FROM recommendation_history WHERE id=?", (row_id,)).fetchone()
         count = con.execute("SELECT COUNT(*) FROM recommendation_history WHERE movie_id=?", (movie_id,)).fetchone()[0]
 
+    assert row_id == exposure_id
     assert count == 1
     assert row["action"] == "chosen"
-    assert row["ignored"] == 0
-    assert row["recommended_at"] != old
-    assert row["context_date"] == date.today().isoformat()
-    assert token_after != token_before
+    assert row["recommended_at"] != old_click_time
+    assert row["context_date"] == today
 
 
 def test_chosen_then_changed_mind_keeps_both_explicit_intent_events(tmp_path):
