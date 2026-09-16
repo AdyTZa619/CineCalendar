@@ -1,3 +1,19 @@
+CineCalendar 2.8.0 mută îmbunătățirea recomandărilor de la reglaje „după impresie” la o poartă locală de calitate măsurată pe istoricul utilizatorului.
+
+Noul Adaptive Personal v2 nu primește automat o pondere mare doar fiindcă poate prezice aproximativ ratingurile. El este antrenat pe partea mai veche a istoricului și verificat pe aproximativ ultimele 20% dintre ratinguri, pe care nu le-a văzut la antrenare. Validarea urmărește simultan calibrarea ratingului (MAE), calitatea ordonării recomandărilor (NDCG@10) și acuratețea ordinii dintre filme cu diferențe clare de rating (pairwise accuracy).
+
+Baseline-ul de validare este mai greu de bătut. Dacă există suficiente ratinguri IMDb publice, CineCalendar folosește IMDb calibrat cu diferența istorică dintre nota utilizatorului și IMDb; doar când acest baseline nu poate fi construit se revine la media personală. Modelul adaptiv primește influență mare numai dacă este sigur față de baseline pe toate metricile disponibile și aduce cel puțin o îmbunătățire măsurabilă.
+
+Spațiul de hashing al modelului personal crește de la 4.096 la 65.536 dimensiuni, reducând coliziunile dintre genuri, regizori, teme, țări, perioade și interacțiunile dintre ele. Antrenarea testează automat 5, 7 și 9 epoci pe holdout-ul temporal și alege varianta cu cel mai bun compromis între MAE, NDCG@10 și ordonarea perechilor, în loc să presupună că un număr fix de epoci este optim pentru orice profil.
+
+Ponderea modelului devine mai conservatoare când dovezile nu sunt suficiente: maximum 12% când nu există încă o validare temporală utilizabilă și 6% dacă modelul pierde validarea. Numai un model validat poate urca gradual până la maximum 36%. Astfel un model personal slab sau supraînvățat nu poate prelua controlul asupra motorului principal ALS + content.
+
+Validarea mai grea rămâne în workerul adaptiv pornit după prima recomandare, nu la startup. Prima afișare păstrează prioritatea de disc/HDD, iar motorul folosește fallback-ul deja verificat până când modelul personal v2 este gata. Cache-ul pool-ului de recomandări a fost versionat din nou pentru ca o actualizare la 2.8.0 să nu reutilizeze ordonări zilnice calculate cu vechiul model.
+
+Au fost adăugate teste pentru validarea temporală cu ranking, baseline-ul IMDb calibrat, selectarea automată a numărului de epoci, spațiul de 65.536 dimensiuni și faptul că serviciul de producție folosește noul Adaptive Personal v2 fără a muta antrenarea grea pe primul paint.
+
+---
+
 CineCalendar 2.7.1 corectează două probleme de logică găsite după auditul 2.7.0: deschiderea Stremio nu este dovadă că filmul chiar a pornit, iar mai multe clickuri pe același film nu trebuie să fie învățate ca mai multe exemple independente.
 
 Butonul principal devine „DESCHIDE ÎN STREMIO”. Un handoff acceptat de Windows/Stremio este salvat ca `stremio_opened`, semnal moderat de intenție. Semnalul puternic este separat și explicit: „A PORNIT FILMUL” salvează `playback_confirmed`. „L-am văzut” rămâne rezultatul final cel mai puternic. Acțiunea veche 2.7.0 `play_opened` este păstrată pentru compatibilitate, dar este retrogradată la nivelul unui simplu handoff Stremio, deoarece nu confirma redarea.
