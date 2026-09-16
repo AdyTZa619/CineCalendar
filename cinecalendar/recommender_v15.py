@@ -16,13 +16,15 @@ ENGINE_VERSION = "15.1.0-watch-success-truthful-funnel"
 class FastRecommendationEngineV15(FastRecommendationEngineV14):
     """V14 + bounded Watch Success and Startability.
 
-    Long-term taste remains the gatekeeper. Startability is only allowed to break near-ties among
-    already-good candidates. Generic assumptions such as "a 105-minute film is easier to start"
-    get a small voice; real recent Watch Success evidence can increase that voice, but never enough
+    Long-term taste remains the gatekeeper. Short-horizon intent can only influence candidates that
+    are still reasonably close to the best long-term fit, and Startability is stricter still: it is
+    only allowed to break near-ties. Generic assumptions such as "a 105-minute film is easier to
+    start" get a small voice; real Watch Success evidence can increase that voice, but never enough
     to rescue a substantially weaker taste match. The estimated personal rating is never changed by
-    Startability.
+    either short-horizon layer.
     """
 
+    INTENT_GOOD_MATCH_MARGIN = 0.16
     STARTABILITY_GENERIC_MAX = 0.07
     STARTABILITY_EVIDENCE_MAX = 0.14
     STARTABILITY_NEAR_TIE_MARGIN = 0.08
@@ -140,6 +142,23 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         detail = ", ".join(bits[:3]) if bits else "potrivirea personală rămâne criteriul principal"
         return score, f"{lead}: {detail}. Folosit doar pentru departajarea recomandărilor apropiate."
 
+    def _intent_blend(self, rec: Recommendation, best_base_final: float, requested_blend: float) -> float:
+        """Taper intent as long-term fit moves away from the best base candidate."""
+        requested_blend = max(0.0, float(requested_blend))
+        if requested_blend <= 0:
+            return 0.0
+        gap = max(0.0, float(best_base_final) - float(rec.score.final))
+        margin = float(self.INTENT_GOOD_MATCH_MARGIN)
+        if gap >= margin:
+            return 0.0
+        # Full voice for candidates within 0.04 of the best, then taper linearly to zero at 0.16.
+        full_voice = 0.04
+        if gap <= full_voice:
+            proximity = 1.0
+        else:
+            proximity = 1.0 - (gap - full_voice) / max(0.001, margin - full_voice)
+        return requested_blend * clamp(proximity)
+
     def _startability_blend(self, rec: Recommendation, best_final: float, intent_payload: dict) -> float:
         gap = max(0.0, float(best_final) - float(rec.score.final))
         margin = float(self.STARTABILITY_NEAR_TIE_MARGIN)
@@ -152,19 +171,21 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         return cap * proximity * (0.60 + 0.40 * taste_confidence)
 
     def _apply_watch_success(self, recs: list[Recommendation]) -> list[Recommendation]:
-        """Apply intent, then allow Startability to break only near-ties."""
+        """Apply bounded intent, then allow Startability to break only near-ties."""
         recs = list(recs)
         if not recs:
             return []
         payloads = self.watch_intent.score_many([rec.movie for rec in recs])
+        best_base_final = max(float(rec.score.final) for rec in recs)
 
-        # First apply the learned short-horizon intent. This signal itself already has confidence
-        # and sample-size caps inside WatchSuccessIntentLearner.
+        # Learned short-horizon intent never gets permission to rescue a clearly weaker long-term
+        # match. Its existing sample-size/confidence cap is multiplied by a taste-proximity gate.
         for rec, intent_payload in zip(recs, payloads):
             if not intent_payload.get("active"):
                 continue
             intent_score = float(intent_payload.get("score", 0.5) or 0.5)
-            blend = float(intent_payload.get("blend_weight", 0.0) or 0.0)
+            requested_blend = float(intent_payload.get("blend_weight", 0.0) or 0.0)
+            blend = self._intent_blend(rec, best_base_final, requested_blend)
             if blend <= 0:
                 continue
             old_final = float(rec.score.final)
