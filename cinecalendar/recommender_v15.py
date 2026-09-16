@@ -89,7 +89,7 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
             vote_part = clamp(math.log1p(votes) / math.log1p(250_000))
         return clamp(0.62 * rating_part + 0.38 * vote_part)
 
-    def _startability(self, rec: Recommendation) -> tuple[float, str]:
+    def _startability(self, rec: Recommendation, intent_payload: dict | None = None) -> tuple[float, str]:
         m, s = rec.movie, rec.score
         taste = clamp((float(s.predicted_rating) - 5.0) / 5.0)
         confidence = clamp(float(s.confidence))
@@ -98,7 +98,7 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         metadata = self._metadata_score(m)
         quality = self._quality_score(m)
 
-        intent_payload = self.watch_intent.score(m)
+        intent_payload = intent_payload or {}
         intent = float(intent_payload.get("score", 0.5) or 0.5) if intent_payload.get("active") else 0.5
 
         score = clamp(
@@ -122,7 +122,7 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         if quality >= 0.70:
             bits.append("destule semnale publice de calitate")
         if intent >= 0.64:
-            bits.append("se potrivește cu ce ai ales recent")
+            bits.append("se potrivește cu ce ai pornit sau ales recent")
 
         if score >= 0.74:
             lead = "Bun de pornit acum"
@@ -133,23 +133,46 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         detail = ", ".join(bits[:3]) if bits else "potrivirea personală rămâne criteriul principal"
         return score, f"{lead}: {detail}."
 
-    def _apply_startability(self, recs: list[Recommendation]) -> list[Recommendation]:
+    def _apply_watch_success(self, recs: list[Recommendation]) -> list[Recommendation]:
+        """Apply intent + Startability in one batch, avoiding hundreds of SQLite token queries."""
+        recs = list(recs)
+        if not recs:
+            return []
+        payloads = self.watch_intent.score_many([rec.movie for rec in recs])
         adjusted: list[Recommendation] = []
-        for rec in recs:
-            startability, reason = self._startability(rec)
+
+        for rec, intent_payload in zip(recs, payloads):
+            if intent_payload.get("active"):
+                intent_score = float(intent_payload.get("score", 0.5) or 0.5)
+                blend = float(intent_payload.get("blend_weight", 0.0) or 0.0)
+                if blend > 0:
+                    old_final = float(rec.score.final)
+                    rec.score.final = clamp((1.0 - blend) * old_final + blend * intent_score)
+                    reason = str(intent_payload.get("reason") or "")
+                    rec.score.contributions.insert(
+                        0,
+                        (
+                            "Intenție de vizionare acum",
+                            blend * (intent_score - 0.5) * 100.0,
+                            reason,
+                        ),
+                    )
+                    if reason:
+                        rec.score.personal_reason = reason + " " + (rec.score.personal_reason or "")
+
+            startability, reason = self._startability(rec, intent_payload)
             old_final = float(rec.score.final)
-            # Confidence controls only the size of the nudge, never the predicted rating itself.
-            blend = min(
+            start_blend = min(
                 self.STARTABILITY_BLEND_MAX,
                 0.10 + 0.08 * clamp(float(rec.score.confidence)),
             )
             rec.score.startability = startability
-            rec.score.final = clamp((1.0 - blend) * old_final + blend * startability)
+            rec.score.final = clamp((1.0 - start_blend) * old_final + start_blend * startability)
             rec.score.contributions.insert(
                 0,
                 (
                     "Startability",
-                    blend * (startability - 0.5) * 100.0,
+                    start_blend * (startability - 0.5) * 100.0,
                     reason,
                 ),
             )
@@ -161,12 +184,29 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         )
         return adjusted
 
+    # Kept public for focused tests and diagnostics.
+    def _apply_startability(self, recs: list[Recommendation]) -> list[Recommendation]:
+        payloads = self.watch_intent.score_many([rec.movie for rec in recs]) if recs else []
+        adjusted: list[Recommendation] = []
+        for rec, payload in zip(list(recs), payloads):
+            startability, reason = self._startability(rec, payload)
+            old_final = float(rec.score.final)
+            blend = min(self.STARTABILITY_BLEND_MAX, 0.10 + 0.08 * clamp(float(rec.score.confidence)))
+            rec.score.startability = startability
+            rec.score.final = clamp((1.0 - blend) * old_final + blend * startability)
+            rec.score.contributions.insert(0, ("Startability", blend * (startability - 0.5) * 100.0, reason))
+            adjusted.append(rec)
+        adjusted.sort(
+            key=lambda r: (r.score.final, r.score.startability, r.score.predicted_rating, r.score.confidence),
+            reverse=True,
+        )
+        return adjusted
+
     def _adaptive_rerank(self, recs: list[Recommendation], count: int) -> list[Recommendation]:
-        # Run v14 intent once, then Startability on the same finalist pool. Call V13 directly so
-        # intent is not applied twice before the adaptive taste model and final diversity pass.
-        intent_adjusted = self._apply_watch_intent(list(recs))
-        startability_adjusted = self._apply_startability(intent_adjusted)
-        return FastRecommendationEngineV13._adaptive_rerank(self, startability_adjusted, count)
+        # V13 remains responsible for the personal adaptive model and final diversity. Watch
+        # Success and Startability modify only the already-good finalist pool before that step.
+        adjusted = self._apply_watch_success(list(recs))
+        return FastRecommendationEngineV13._adaptive_rerank(self, adjusted, count)
 
     def _annotate_final_als(self, selected: list[Recommendation]) -> None:
         start_prefix: dict[int, str] = {}
