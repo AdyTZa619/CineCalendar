@@ -223,6 +223,6 @@ def test_combined_short_horizon_shift_is_capped_to_ten_points():
     assert abs(engine._cap_to_base(0.80, 1.00) - 0.90) < 1e-12
 
 
-def test_service_uses_v15_watch_success_engine():
+def test_service_uses_v16_top3_gate_over_v15_watch_success():
     source = inspect.getsource(CineCalendarService.__init__)
-    assert "FastRecommendationEngineV15" in source
+    assert "FastRecommendationEngineV16" in source

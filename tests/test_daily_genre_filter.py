@@ -36,9 +36,9 @@ def test_premium_startup_installs_daily_genre_ui_patch():
     source = inspect.getsource(app_module.main)
     assert "install_daily_genre_ui_patch(CalendarPremiumWindow)" in source
     service_source = inspect.getsource(service_module.CineCalendarService.__init__)
-    # V15 inherits V12/V13 daily-genre/adaptive behavior, V14 intent, then adds Watch Success
-    # and Startability. The daily genre patch must remain installed after that engine upgrade.
-    assert "FastRecommendationEngineV15" in service_source
+    # V16 inherits V12/V13 daily-genre/adaptive behavior, V14 intent, V15 Watch Success/
+    # Startability, then adds the final trust gate. The daily genre patch must remain installed.
+    assert "FastRecommendationEngineV16" in service_source
 
 
 def test_genre_ui_is_secondary_not_required_for_default_recommendation():
