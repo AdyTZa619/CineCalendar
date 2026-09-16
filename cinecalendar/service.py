@@ -5,7 +5,7 @@ from .autoseed import ensure_initial_ratings
 from .calendar_engine_v2 import RichCalendarEngine
 from .db import Database
 from .logging_setup import setup_logging
-from .recommender_v14 import FastRecommendationEngineV14
+from .recommender_v15 import FastRecommendationEngineV15
 from .util import AppPaths
 
 
@@ -17,12 +17,12 @@ class CineCalendarService:
         self._defaults()
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = RichCalendarEngine()
-        self.recommender = FastRecommendationEngineV14(self.db, self.calendar)
+        self.recommender = FastRecommendationEngineV15(self.db, self.calendar)
         # ALS may warm in the background immediately because it is a read-mostly model load.
         # Do NOT start the adaptive trainer here: with thousands of ratings it walks the local DB
-        # and uses CPU at exactly the moment Home is computing its first pool. V13/V14 start it only
+        # and uses CPU at exactly the moment Home is computing its first pool. V13-V15 start it only
         # after the base recommendation has already been ranked, so first paint gets disk priority.
-        # Watch Intent is deliberately lightweight and lazy; it does not need a startup worker.
+        # Watch Success/Startability are deliberately lightweight and lazy.
         self.recommender.collaborative.start_background()
 
     def _defaults(self):
