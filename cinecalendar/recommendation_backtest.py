@@ -72,7 +72,7 @@ def candidate_recall_metrics(
 ) -> dict:
     """Measure whether retrieval can surface films the user later rated highly.
 
-    This deliberately separates retrieval from final ranking.  If a hidden 9/10 film is absent from
+    This deliberately separates retrieval from final ranking. If a hidden 9/10 film is absent from
     the candidate pool, no downstream model can recover it.
     """
     ranked = [str(x) for x in ranked_imdb_ids if str(x)]
@@ -156,7 +156,7 @@ def run_local_backtest(
 ) -> dict:
     """Backtest current retrieval/ranking against hidden recent ratings on a DB copy.
 
-    The live CineCalendar database is never modified.  The latest fraction of ratings is removed
+    The live CineCalendar database is never modified. The latest fraction of ratings is removed
     from a temporary SQLite backup, future feedback/watch actions are pruned, and the current engine
     is asked to retrieve/rank those titles as if they were unseen.
     """
@@ -164,6 +164,8 @@ def run_local_backtest(
     if not source_path.is_file():
         raise FileNotFoundError(source_path)
     source_db = Database(source_path)
+    with source_db.connect() as con:
+        source_rating_count = int(con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0])
     holdout = temporal_holdout(source_db, fraction=fraction)
     if not holdout:
         raise RuntimeError("Not enough timestamped IMDb ratings for a temporal holdout")
@@ -173,12 +175,16 @@ def run_local_backtest(
         _sqlite_backup(source_path, temp_path)
         test_db = Database(temp_path)
         cutoff = _remove_future_signals(test_db, holdout)
+        try:
+            eval_date = date.fromisoformat(cutoff) if cutoff else date.today()
+        except ValueError:
+            eval_date = date.today()
 
         engine = FastRecommendationEngineV15(test_db)
         _wait_for_als(engine.collaborative, als_timeout)
 
         # Candidate recall: inspect the exact pre-hydration pool used by the production engine.
-        candidate_rowids = engine._balanced_candidate_ids(date.today(), max(100, int(candidate_limit)))
+        candidate_rowids = engine._balanced_candidate_ids(eval_date, max(100, int(candidate_limit)))
         candidate_imdb: list[str] = []
         with test_db.connect() as con:
             for start in range(0, len(candidate_rowids), 700):
@@ -195,10 +201,10 @@ def run_local_backtest(
         candidate_imdb = [iid for iid in candidate_imdb if iid]
 
         # Force the adaptive model to finish for an audit run; unlike Home, this is explicitly an
-        # offline diagnostic and should measure the mature current engine rather than first-paint fallback.
+        # offline diagnostic and should measure the mature engine rather than first-paint fallback.
         engine.adaptive.status()
         final = engine.recommend(
-            when=date.today(),
+            when=eval_date,
             count=max(3, int(final_limit)),
             record=False,
             candidate_limit=max(100, int(candidate_limit)),
@@ -207,9 +213,8 @@ def run_local_backtest(
 
         report = {
             "cutoff_date": cutoff,
-            "source_rating_count": len(holdout) + int(
-                source_db.connect().execute("SELECT COUNT(*) FROM ratings").fetchone()[0]
-            ) - len(holdout),
+            "source_rating_count": source_rating_count,
+            "training_rating_count": source_rating_count - len(holdout),
             "holdout_fraction": float(fraction),
             "candidate_limit": int(candidate_limit),
             "final_limit": int(final_limit),
