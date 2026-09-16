@@ -10,7 +10,7 @@ import time
 
 from .collaborative_als import CollaborativeALSProvider
 from .db import Database
-from .recommender_v15 import FastRecommendationEngineV15
+from .recommender_v16 import FastRecommendationEngineV16
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,29 @@ def candidate_recall_metrics(
     return out
 
 
+def visible_outcome_metrics(ranked_imdb_ids: list[str], holdout: list[HoldoutRating], *, k: int = 3) -> dict:
+    """Describe known historical outcomes for the small visible recommendation set.
+
+    A single temporal split cannot guarantee that all Top-3 suggestions occur in the hidden future,
+    so unmatched titles are reported explicitly rather than silently counted as failures.
+    """
+    ranked = [str(x) for x in ranked_imdb_ids if str(x)][: max(1, int(k))]
+    rating_by_id = {row.imdb_id: int(row.rating) for row in holdout}
+    matched = [(iid, rating_by_id[iid]) for iid in ranked if iid in rating_by_id]
+    values = [rating for _iid, rating in matched]
+    return {
+        "k": max(1, int(k)),
+        "returned": len(ranked),
+        "matched_hidden_future": len(values),
+        "coverage": round(len(values) / len(ranked), 6) if ranked else 0.0,
+        "mean_actual_rating": round(sum(values) / len(values), 4) if values else None,
+        "rated_8_plus_share": round(sum(v >= 8 for v in values) / len(values), 6) if values else None,
+        "rated_9_plus_share": round(sum(v >= 9 for v in values) / len(values), 6) if values else None,
+        "disaster_4_minus_rate": round(sum(v <= 4 for v in values) / len(values), 6) if values else None,
+        "matched": [{"imdb_id": iid, "rating": rating} for iid, rating in matched],
+    }
+
+
 def _sqlite_backup(source: Path, target: Path) -> None:
     source_con = sqlite3.connect(source)
     target_con = sqlite3.connect(target)
@@ -180,7 +203,7 @@ def run_local_backtest(
         except ValueError:
             eval_date = date.today()
 
-        engine = FastRecommendationEngineV15(test_db)
+        engine = FastRecommendationEngineV16(test_db)
         _wait_for_als(engine.collaborative, als_timeout)
 
         # Candidate recall: inspect the exact pre-hydration pool used by the production engine.
@@ -205,11 +228,22 @@ def run_local_backtest(
         engine.adaptive.status()
         final = engine.recommend(
             when=eval_date,
-            count=max(3, int(final_limit)),
+            count=max(10, int(final_limit)),
             record=False,
             candidate_limit=max(100, int(candidate_limit)),
         )
         final_imdb = [str(rec.movie.imdb_id or "") for rec in final if rec.movie.imdb_id]
+
+        # Run the actual Home-sized decision separately so V16's trust gate is exercised. The broad
+        # ranking above intentionally bypasses it in order to retain 25/50/100 ranking diagnostics.
+        top3 = engine.recommend(
+            when=eval_date,
+            count=3,
+            record=False,
+            candidate_limit=max(100, int(candidate_limit)),
+        )
+        top3_imdb = [str(rec.movie.imdb_id or "") for rec in top3 if rec.movie.imdb_id]
+        gate_status = engine.quality_gate_status()
 
         report = {
             "cutoff_date": cutoff,
@@ -222,8 +256,11 @@ def run_local_backtest(
             "final_ranking": candidate_recall_metrics(
                 final_imdb,
                 holdout,
-                cutoffs=tuple(k for k in (3, 10, 25, 50, 100) if k <= max(3, int(final_limit))),
+                cutoffs=tuple(k for k in (3, 10, 25, 50, 100) if k <= max(10, int(final_limit))),
             ),
+            "top3": candidate_recall_metrics(top3_imdb, holdout, cutoffs=(3,)),
+            "top3_outcomes": visible_outcome_metrics(top3_imdb, holdout, k=3),
+            "top3_gate": gate_status,
             "candidate_generation": engine.candidate_generation_status(),
             "personal_retrieval": engine.personal_candidates.status(),
             "adaptive": engine.adaptive.status(),
