@@ -25,6 +25,7 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
     """
 
     INTENT_GOOD_MATCH_MARGIN = 0.16
+    INTENT_MAX_ABS_SHIFT = 0.10
     STARTABILITY_GENERIC_MAX = 0.07
     STARTABILITY_EVIDENCE_MAX = 0.14
     STARTABILITY_NEAR_TIE_MARGIN = 0.08
@@ -159,6 +160,12 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
             proximity = 1.0 - (gap - full_voice) / max(0.001, margin - full_voice)
         return requested_blend * clamp(proximity)
 
+    def _mix_intent(self, old_final: float, intent_score: float, blend: float) -> float:
+        mixed = clamp((1.0 - blend) * float(old_final) + blend * float(intent_score))
+        max_shift = float(self.INTENT_MAX_ABS_SHIFT)
+        delta = max(-max_shift, min(max_shift, mixed - float(old_final)))
+        return clamp(float(old_final) + delta)
+
     def _startability_blend(self, rec: Recommendation, best_final: float, intent_payload: dict) -> float:
         gap = max(0.0, float(best_final) - float(rec.score.final))
         margin = float(self.STARTABILITY_NEAR_TIE_MARGIN)
@@ -179,7 +186,8 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
         best_base_final = max(float(rec.score.final) for rec in recs)
 
         # Learned short-horizon intent never gets permission to rescue a clearly weaker long-term
-        # match. Its existing sample-size/confidence cap is multiplied by a taste-proximity gate.
+        # match. Its existing sample-size/confidence cap is multiplied by a taste-proximity gate,
+        # and any single intent adjustment is additionally capped to ±0.10 final-score points.
         for rec, intent_payload in zip(recs, payloads):
             if not intent_payload.get("active"):
                 continue
@@ -189,13 +197,13 @@ class FastRecommendationEngineV15(FastRecommendationEngineV14):
             if blend <= 0:
                 continue
             old_final = float(rec.score.final)
-            rec.score.final = clamp((1.0 - blend) * old_final + blend * intent_score)
+            rec.score.final = self._mix_intent(old_final, intent_score, blend)
             reason = str(intent_payload.get("reason") or "")
             rec.score.contributions.insert(
                 0,
                 (
                     "Intenție de vizionare acum",
-                    blend * (intent_score - 0.5) * 100.0,
+                    (rec.score.final - old_final) * 100.0,
                     reason,
                 ),
             )
