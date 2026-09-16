@@ -1,3 +1,21 @@
+CineCalendar 2.7.1 corectează două probleme de logică găsite după auditul 2.7.0: deschiderea Stremio nu este dovadă că filmul chiar a pornit, iar mai multe clickuri pe același film nu trebuie să fie învățate ca mai multe exemple independente.
+
+Butonul principal devine „DESCHIDE ÎN STREMIO”. Un handoff acceptat de Windows/Stremio este salvat ca `stremio_opened`, semnal moderat de intenție. Semnalul puternic este separat și explicit: „A PORNIT FILMUL” salvează `playback_confirmed`. „L-am văzut” rămâne rezultatul final cel mai puternic. Acțiunea veche 2.7.0 `play_opened` este păstrată pentru compatibilitate, dar este retrogradată la nivelul unui simplu handoff Stremio, deoarece nu confirma redarea.
+
+Watch Success v3 tratează interacțiunile ca un funnel. Pentru același film în aceeași zi este învățat numai ultimul rezultat al traseului. Astfel `ales -> trailer -> Stremio -> pornit -> vizionat` nu mai valorează cinci exemple pozitive pentru același film, iar `ales -> m-am răzgândit` se termină corect ca skip contextual.
+
+Startability devine mai conservator. Nu mai are voie să ridice un candidat clar mai slab peste o potrivire personală mult mai bună: este folosit numai pentru departajarea candidaților aflați la maximum 0,08 scor final unul de altul. Fără istoric real de Watch Success are maximum 7% influență; cu semnale reale poate urca până la 14%. Nota personală estimată 1–10 rămâne neschimbată.
+
+Scorurile Watch Success/Startability nu mai sunt prezentate ca „probabilități”. Nu există încă un set suficient de rezultate reale pentru calibrare statistică. Interfața arată o etichetă de ușurință (ridicată/bună/medie/scăzută), iar explicațiile spun explicit că este un semnal de departajare, nu o probabilitate măsurată.
+
+A fost reparat și cazul în care „L-am văzut” din ecranul Watch Success putea lăsa alegerea zilei persistată și afișa din nou același film. Alegerea este acum curățată înainte de revenirea la pagina Azi.
+
+Pentru a putea decide pe date reale ce merită îmbunătățit în continuare, 2.7.1 adaugă un audit local al funnelului: număr de handoff-uri Stremio, porniri confirmate, filme vizionate, skip-uri și rate de conversie observate. Auditul nu trimite date în exterior și nu inventează probabilități; scriptul `scripts/audit_watch_success.py` citește direct baza locală CineCalendar.
+
+Au fost adăugate teste pentru retrogradarea `play_opened`, confirmarea explicită a pornirii, colapsarea funnelului pe film/zi, `chosen -> skip`, protecția Startability împotriva ridicării unui candidat substanțial mai slab și auditul local al conversiilor.
+
+---
+
 CineCalendar 2.7.0 mută obiectivul de la „am recomandat un film bun” la „te-am dus mai aproape de Play”.
 
 Noul Watch Success separă interesul de vizionare. Simplul „Aleg filmul” nu mai este tratat ca dovada principală de succes: are o pondere moderată și expiră mai repede. Deschiderea trailerului este un semnal slab de interes, deschiderea filmului pentru vizionare este un semnal mult mai puternic, iar confirmarea „L-am văzut” este cel mai puternic semnal de succes al traseului de vizionare. Ratingul IMDb ulterior rămâne dovada separată pentru cât de mult ți-a plăcut filmul.
