@@ -1,3 +1,17 @@
+CineCalendar 2.9.0 atacă direct problema de candidate recall: un film foarte bun pentru utilizator nu poate fi recomandat dacă nu ajunge în pool-ul de candidați.
+
+Retrieval-ul personal v2 păstrează ALS-ul global, dar schimbă substanțial lane-ul bazat pe favorite. În loc de doar 12 ancore 9/10-10/10, folosește până la 64 de favorite explicite. Candidații nu mai sunt aleși după o singură asemănare maximă: se folosește un consens între mai multe ancore, astfel încât o singură preferință excentrică să nu domine întreaga listă.
+
+Pentru prima dată, lane-ul de favorite folosește explicit și ratingurile foarte mici ca protecție. Până la 64 de filme notate 1-4 devin ancore negative; un candidat foarte apropiat de aceste filme primește o penalizare conservatoare. Penalizarea este plafonată și nu poate șterge o potrivire susținută puternic de mai multe favorite. ALS continua separat să folosească întregul profil pozitiv și negativ.
+
+Cache-ul zilnic al pool-ului a fost versionat din nou, astfel încât 2.9.0 nu reutilizează ordonări calculate cu retrieval-ul vechi.
+
+A fost adăugat și un backtest temporal real pentru motorul instalat. `scripts/backtest_recommendations.py` face backup SQLite, ascunde partea recentă a ratingurilor, elimină feedbackul/watch-signals care ar produce leakage, apoi măsoară separat candidate recall și ranking-ul final. Sunt raportate recall pentru 8+ și 9+, contaminarea cu 1-4, ratingul mediu al filmelor recuperate, starea retrieval-ului personal și validarea modelului adaptiv. Baza live nu este modificată.
+
+Testele noi verifică explicit consensul între favorite, penalizarea candidaților apropiați de ancore 1-4, metricile de candidate recall și corectitudinea holdout-ului temporal.
+
+---
+
 CineCalendar 2.8.0 mută îmbunătățirea recomandărilor de la reglaje „după impresie” la o poartă locală de calitate măsurată pe istoricul utilizatorului.
 
 Noul Adaptive Personal v2 nu primește automat o pondere mare doar fiindcă poate prezice aproximativ ratingurile. El este antrenat pe partea mai veche a istoricului și verificat pe aproximativ ultimele 20% dintre ratinguri, pe care nu le-a văzut la antrenare. Validarea urmărește simultan calibrarea ratingului (MAE), calitatea ordonării recomandărilor (NDCG@10) și acuratețea ordinii dintre filme cu diferențe clare de rating (pairwise accuracy).
