@@ -5,8 +5,8 @@ def compose_premium_window(window_cls) -> None:
     """Apply the production UI composition exactly once in one canonical order.
 
     Older releases spread monkey-patch installation across app.py, so moving one import could
-    silently change production behaviour. v3.3 centralizes the composition, makes it idempotent,
-    and validates the critical action/exposure surface after installation.
+    silently change production behaviour. v3.3 centralized the composition; v3.5 adds context
+    diagnostics without changing the action/exposure integrity ordering.
     """
     if getattr(window_cls, "_cinecalendar_v33_composed", False):
         return
@@ -16,18 +16,19 @@ def compose_premium_window(window_cls) -> None:
     from .als_ui_patch import install_als_ui_patch
     from .daily_genre_ui_patch import install_daily_genre_ui_patch
     from .romanian_cinema_ui_patch import install_romanian_cinema_ui_patch
+    from .context_ui_v35 import install_context_ui_v35
     from .decision_action_patch import install_decision_action_patch
     from .watch_success_ui_patch import install_watch_success_ui_patch
     from .foundation_v33 import install_foundation_v33
     from . import library_ui
 
-    # Performance/theme/information layers first, then action semantics, then the v3.3 immutable
-    # exposure layer last. This order is part of the production contract and lives in one place.
+    # Information/theme layers first, then action semantics, then immutable exposure handling.
     install_performance_ui_patch(window_cls)
     install_table_theme_patch(window_cls)
     install_als_ui_patch(window_cls)
     install_daily_genre_ui_patch(window_cls)
     install_romanian_cinema_ui_patch(window_cls)
+    install_context_ui_v35(window_cls)
     install_decision_action_patch(window_cls)
     install_watch_success_ui_patch(window_cls)
     install_foundation_v33(window_cls)
