@@ -3,6 +3,7 @@ from pathlib import Path
 
 from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
 from .autoseed import ensure_initial_ratings
+from .availability_guard_v37 import availability_engine_class
 from .calendar_engine_v3 import ContextCalendarEngineV35
 from .context_recommender_v35 import contextual_engine_class
 from .db import Database
@@ -29,7 +30,11 @@ class CineCalendarService:
         engine_cls = self.quality_manager.preferred_engine_class()
         if not issubclass(engine_cls, FastRecommendationEngineV16):
             engine_cls = FastRecommendationEngineV16
-        production_cls = contextual_engine_class(engine_cls)
+
+        # Known future releases are removed without changing the order/scores of eligible titles.
+        # Context 3.5 then wraps that exact engine; it must never collapse V18/V19 back to V16/V17.
+        available_cls = availability_engine_class(engine_cls)
+        production_cls = contextual_engine_class(available_cls)
         self.recommender = production_cls(self.db, self.calendar)
 
         # Preserve the validated long-term adaptive, Watch Success and 3.5 context layers.
