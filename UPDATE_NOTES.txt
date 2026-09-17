@@ -1,26 +1,13 @@
-CineCalendar 3.3.0 finalizează fundația de integritate a fluxului recomandare → acțiune → vizionare → backup/update.
+CineCalendar 3.4.0 mută dezvoltarea de la fundație la calitatea măsurată a recomandărilor.
 
-Identitatea unei recomandări este acum transportată cap-coadă. Fiecare card vizibil primește un `exposure_history_id`; alegerea, skip-ul, trailerul, Stremio, confirmarea de playback și `watched` folosesc explicit acel ID. Dacă același film are două expuneri în aceeași zi, CineCalendar nu mai alege automat ultima expunere. Resolverul legacy returnează o legătură numai când există un singur candidat neambiguu.
+V16 rămâne etalonul de siguranță. Noul V17 nu este activat automat doar pentru că este mai nou: CineCalendar rulează local un backtest temporal A/B pe istoricul propriu de ratinguri și promovează V17 numai dacă obține un câștig măsurabil fără regresie materială la recall-ul filmelor apreciate sau la expunerea filmelor foarte slab notate. Ratingurile personale nu părăsesc calculatorul.
 
-Expunerile noi sunt imuabile. `chosen` și `skip_today` nu mai rescriu rândul recomandării și nu îi schimbă `recommended_at`; toate acțiunile sunt evenimente copil separate. Feedbackul `seen/want_to_watch/not_interested/...` rămâne în tabela de feedback/watchlist și nu mai adnotează root-ul recomandării.
+Evaluatorul 3.4 ascunde cea mai recentă parte a istoricului și reconstruiește recomandările ca și cum acele note nu ar exista. Separă candidate recall de ranking și raportează recall 8+/9+, NDCG, MRR, hit-rate și expunerea ratingurilor 1-4. CLI-ul `scripts/compare_recommendation_quality.py` poate compara V16 cu V17 pe mai multe ferestre temporale.
 
-Watch Success v3.3 învață funnel-uri per expunere, nu per `movie_id + zi`. Auditul general a fost refăcut pe aceeași identitate și raportează separat acțiunile exacte, legacy neambigue, legacy ambigue și orfane. Astfel două recomandări ale aceluiași film în aceeași zi nu mai pot fi contopite într-un singur rezultat artificial.
+V17 introduce un retrieval personal mai larg, dar controlat: filmele notate 8/10 pot deveni ancore pozitive cu greutate mai mică decât 9/10-10/10, în timp ce ancorele negative 1-4 și penalizarea contrastivă sunt păstrate. Scopul este să recupereze mai multe clustere stabile de gust fără să transforme orice film bun într-un favorit.
 
-Migrarea SQLite a fost întărită fără schimbarea schemei v5: pașii cu `ALTER TABLE` sunt idempotent verificați, modificarea și markerul de versiune sunt tranzacționale, o migrare parțială poate fi reluată, se creează snapshot pre-migration pentru baze existente și se rulează `foreign_key_check` + `quick_check`. Dacă migrarea eșuează, snapshotul este restaurat.
+Top 3 V17 are trei roluri numai între finaliști deja competitivi și trecuți prin regulile V16: alegerea principală, o alternativă contextuală și o explorare controlată. Contextul sau diversitatea nu pot salva un film aflat prea mult sub scorul principal, iar pragurile de trust/red-flag V16 nu sunt relaxate.
 
-Updaterul protejează acum și baza de date. Înainte de handoff este creat un snapshot SQLite consistent; dacă noua versiune nu pornește sau nu confirmă health-check-ul, helperul restaurează atât bundle-ul anterior, cât și baza SQLite de dinaintea update-ului, apoi repornește versiunea veche. Snapshotul DB este șters numai după health-check reușit.
+`RecommendationQualityManager` păstrează verdictul local legat de starea curentă a ratingurilor și feedbackului. Dacă V17 nu câștigă testul, dacă datele sunt insuficiente sau dacă evaluarea eșuează, producția rămâne pe V16. Un verdict pozitiv devine activ la următoarea pornire cât timp istoricul evaluat nu s-a schimbat.
 
-Backupul de profil v2 are acum două semantici explicite. `merge` este implicit și nu lasă un backup mai vechi să suprascrie ratinguri, setări sau watchlist mai noi. `restore` face backupul autoritar. Reimportul rămâne idempotent pentru istoricul recomandărilor și trust telemetry, iar catalogul rebuildabil nu este copiat integral.
-
-Erorile de salvare pentru trailer/`watched` nu mai sunt ignorate tăcut în fluxul Watch Success. Dacă persistența eșuează, utilizatorul primește mesaj și starea critică nu este ștearsă ca și cum salvarea ar fi reușit.
-
-Testele 3.3 acoperă două expuneri ale aceluiași film în aceeași zi, imutabilitatea root-ului, audit exposure-level, modelul Watch Success exposure-level, feedback fără mutarea expunerii, reluarea unei migrări v5 parțiale, merge-vs-restore și prezența rollbackului SQLite în helperul Windows.
-
-
-Pornirea este acum single-instance pe Windows prin mutex de sistem. A doua instanță se oprește înainte să deschidă SQLite, watcherul, ALS sau updaterul și încearcă să aducă fereastra existentă în față.
-
-La startup, o bază existentă trece prin SQLite `quick_check` înainte de migrare. CineCalendar păstrează un snapshot `last_good` cunoscut sănătos și îl poate restaura automat dacă fișierul principal este corupt; copia coruptă este păstrată separat pentru diagnostic. Snapshotul last-good nu este recopiat la fiecare pornire, pentru a nu penaliza catalogul mare.
-
-Exportul de profil rulează toate SELECT-urile într-o singură tranzacție de citire WAL, deci backupul reprezintă un singur moment coerent chiar dacă watcherul sau alte thread-uri scriu simultan.
-
-Compoziția UI de producție este centralizată în `ui_composition.py`, idempotentă și verificată după instalare. `app.py` nu mai depinde de o listă dispersată de patch-uri a cărei ordine putea fi schimbată accidental.
+3.4 nu modifică schema bazei de date și nu schimbă fundația de integritate 3.3: exposure IDs, evenimente imuabile, rollback DB, recovery SQLite și backup Merge/Restore rămân neschimbate.
