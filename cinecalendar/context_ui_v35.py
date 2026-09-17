@@ -21,10 +21,16 @@ def install_context_ui_v35(window_cls) -> None:
                 quality = self.s.quality_manager.status()
                 context_status = self.s.recommender.context_status() if hasattr(self.s.recommender, "context_status") else {}
                 preferred = str(quality.get("preferred_engine") or type(self.s.recommender).__name__)
+                baseline = str(quality.get("baseline_engine") or preferred)
                 state = str(quality.get("status") or "în așteptare")
+                strict = quality.get("strict_verdict") or {}
                 comparison = quality.get("comparison") or {}
-                approved = bool((comparison.get("aggregate") or {}).get("approved"))
-                verdict = "V17 aprobat de backtest" if approved else "V16 rămâne etalonul sigur"
+                if bool(strict.get("approved")) and "V18" in preferred:
+                    verdict = "V18 aprobat de protecția strictă 3.6"
+                elif "V17" in preferred and bool((comparison.get("aggregate") or {}).get("approved")):
+                    verdict = "V17 aprobat de backtest"
+                else:
+                    verdict = f"{baseline} rămâne etalonul sigur"
 
                 box = QFrame()
                 box.setObjectName("PremiumCard")
@@ -35,7 +41,7 @@ def install_context_ui_v35(window_cls) -> None:
                 heading.setObjectName("SectionTitle")
                 layout.addWidget(heading)
                 line = QLabel(
-                    f"Verdict local 3.4: {preferred} • stare: {state} • {verdict}. "
+                    f"Motor local: {preferred} • stare: {state} • {verdict}. "
                     f"Context 3.5: {context_status.get('calendar_class', type(self.s.calendar).__name__)} "
                     f"+ gardă de gust {context_status.get('predicted_floor', 6.0):.1f}/10 pentru benzile contextuale."
                 )
