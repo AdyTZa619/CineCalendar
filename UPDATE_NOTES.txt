@@ -1,17 +1,15 @@
-CineCalendar 3.5.0 adaugă Context Intelligence peste fundația 3.3 și evaluarea de calitate 3.4.
+CineCalendar 3.6.0 continuă dezvoltarea numai pe o cale anti-regresie: comportamentul validat din 3.5 rămâne baseline-ul de producție, iar noul V18 este doar challenger până când câștigă strict pe datele locale ale utilizatorului.
 
-Calendarul de producție folosește acum `ContextCalendarEngineV35`. Reperele ortodoxe, perioadele de post, datele istorice/culturale românești și atmosfera sezonieră sunt separate explicit, iar influența înainte/după o dată se estompează gradual în loc să funcționeze ca un comutator binar.
+3.6 adaugă un retrieval local de conținut pentru filme care pot lipsi din mappingul MovieLens. El caută numai semnale repetate din ratingurile explicite: regizori apreciați în cel puțin două filme și combinații țară+gen apreciate în cel puțin trei filme. Ratingurile 1-4 reduc sau elimină aceste semnale. Un singur film apreciat nu este suficient pentru a crea o regulă nouă.
 
-Datele-cheie cerute sunt tratate explicit: 15 ianuarie, 8 martie, 1 mai, 1 iunie, 1 septembrie, 14 septembrie și 1 decembrie. Postul Mare, Postul Nașterii Domnului și Postul Adormirii primesc faze proprii în contextul zilei, fără să transforme orice film religios într-o potrivire directă.
+Retrieval-ul 3.6 nu poate recomanda direct nimic. El doar introduce un număr mic de candidați suplimentari în pool. Scorarea existentă, modelul adaptiv, Watch Success, rolurile Top 3, contextul 3.5 și trust/red-flag gate-urile V16/V17 rămân neschimbate și decid rezultatul final.
 
-`calendar_relevance()` separă legătura directă, istorică, spirituală și atmosferică. Atmosfera este plafonată deliberat: un film doar „de toamnă” sau „de iarnă” nu poate fi prezentat ca film despre un eveniment concret. Explicațiile arată și poziția temporală față de reper: azi, înainte sau după.
+V18 păstrează minimum aproximativ 86% din pool pentru traseul deja validat și limitează lane-ul nou la aproximativ 14%. Dacă retrieval-ul local eșuează din orice motiv, motorul cade direct pe pool-ul existent fără să blocheze recomandările.
 
-3.5 adaugă un vocabular contextual local pentru subiecte precum femei, copii, muncă, educație, literatură, artă, drepturile omului și războaiele mondiale. Acest vocabular este folosit pentru contextul zilei și nu rescrie profilul personal de gust.
+`RecommendationQualityManagerV36` nu compară V18 cu un etalon artificial, ci cu motorul deja aprobat local de 3.4 (V16 sau V17). V18 trebuie să câștige două ferestre temporale distincte, să aibă câștig compozit mediu de minimum 0.012 și să treacă garduri mai stricte pentru recall 8+/9+, NDCG și expunerea filmelor notate 1-4. Dacă oricare gardă eșuează, baseline-ul existent rămâne în producție.
 
-Verdictul V16/V17 din 3.4 rămâne autoritatea pentru motorul de gust. `context_recommender_v35` învelește exact motorul aprobat local și aplică o gardă suplimentară numai benzilor contextuale moi (`related`, `season`, `atmosphere`). Dacă modelul personal are încredere rezonabilă și estimează sub 6.0/10, contextul nu poate salva filmul.
+Verdictul 3.6 este legat de exact aceeași stare a ratingurilor și feedbackului. Orice schimbare invalidează verdictul. Chiar și după un rezultat pozitiv, V18 devine activ doar la o pornire ulterioară, astfel încât motorul nu se schimbă în mijlocul unei sesiuni.
 
-Programul calendaristic continuă să poată afișa legături factuale/directe ca material contextual, dar această excepție nu schimbă Top 3 normal și nu relaxează trust gate-ul V16/V17.
+Taste Hub afișează separat diagnosticul Accuracy 3.6: baseline, challenger, starea evaluării și dacă V18 a trecut sau nu protecția anti-regresie.
 
-Taste Hub afișează acum diagnosticul motorului: verdictul local V16/V17, starea backtestului 3.4, motorul calendaristic 3.5 și pragul gărzii de gust. Cardurile din Program calendar afișează separat „De ce acum”, cu reperul și faza perioadei.
-
-3.5 nu schimbă schema SQLite. Exposure IDs, evenimentele imuabile, recovery DB, rollback updater și backup Merge/Restore din 3.3 rămân neschimbate.
+3.6 nu schimbă schema SQLite și nu modifică fundația 3.3, evaluarea V16/V17 din 3.4 sau Context Intelligence 3.5.
