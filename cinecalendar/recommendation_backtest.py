@@ -9,12 +9,10 @@ import sqlite3
 import tempfile
 import time
 
-from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
-from .calendar_engine_v2 import RichCalendarEngine
 from .collaborative_als import CollaborativeALSProvider
 from .db import Database
+from .production_engine import build_production_recommender, production_stack_status
 from .recommender_v16 import FastRecommendationEngineV16
-from .watch_success_v33 import WatchSuccessIntentLearnerV33
 
 
 @dataclass(frozen=True)
@@ -216,10 +214,9 @@ def _engine_name(engine_cls) -> str:
 
 
 def _build_engine(engine_cls, db: Database):
-    engine = engine_cls(db, RichCalendarEngine())
-    engine.adaptive = AdaptivePreferenceLearnerV2(db)
-    engine.watch_intent = WatchSuccessIntentLearnerV33(db)
-    return engine
+    # Evaluation must exercise the same wrappers, calendar and current learners as the executable.
+    # Otherwise a challenger can be approved in a configuration the user never actually runs.
+    return build_production_recommender(db, engine_cls)
 
 
 def run_local_backtest(
@@ -291,6 +288,7 @@ def run_local_backtest(
 
         return {
             "engine": _engine_name(engine_cls),
+            "production_stack": production_stack_status(engine),
             "cutoff_date": cutoff,
             "source_rating_count": source_rating_count,
             "training_rating_count": source_rating_count - len(holdout),
