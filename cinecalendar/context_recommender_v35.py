@@ -4,9 +4,10 @@ import threading
 
 from .recommender_v16 import FastRecommendationEngineV16
 from .recommender_v17 import FastRecommendationEngineV17
+from .util import clamp
 
 
-CONTEXT_RECOMMENDER_VERSION = "context-ranking-v3.5.1-preserve-approved-engine"
+CONTEXT_RECOMMENDER_VERSION = "context-ranking-v3.8.0-final-period-slot"
 _CONTEXT_CLASS_CACHE: dict[type, type] = {}
 _CONTEXT_CLASS_LOCK = threading.RLock()
 
@@ -14,9 +15,10 @@ _CONTEXT_CLASS_LOCK = threading.RLock()
 class _ContextGuardMixin:
     """Bound calendar/context influence without replacing long-term taste.
 
-    The normal recommendation path already gives calendar a small weight. This layer focuses on
-    the dedicated calendar program, where a contextual/thematic lane is useful but must not rescue
-    a movie that the personal model actively expects the user to dislike.
+    The normal recommendation path remains rating-first. For the visible Top 3, one secondary slot
+    may become period-aware only when a contextual candidate is already close to the best safe
+    personal match. This makes the app feel appropriate to the date without allowing calendar or
+    atmosphere to rescue a film the personal model expects the user to dislike.
     """
 
     CONTEXT_RECOMMENDER_VERSION = CONTEXT_RECOMMENDER_VERSION
@@ -24,12 +26,20 @@ class _ContextGuardMixin:
     CONTEXT_CONFIDENCE_FLOOR = .45
     _SOFT_CONTEXT_LANES = {"related", "season", "atmosphere"}
 
+    PERIOD_SLOT_MAX_VISIBLE = 3
+    PERIOD_POOL_SIZE = 9
+    PERIOD_FINAL_GAP = .085
+    PERIOD_PREDICTED_FLOOR = 6.35
+    PERIOD_PREDICTED_GAP = .80
+    PERIOD_CALENDAR_MIN = .16
+    PERIOD_SEASON_MIN = .68
+
     def _state_token(self) -> tuple:
         return super()._state_token() + (CONTEXT_RECOMMENDER_VERSION,)
 
     def _persistent_key(self, when, mode: str) -> str:
         base = super()._persistent_key(when, mode)
-        return base + ":ctx35"
+        return base + ":ctx38"
 
     @classmethod
     def _context_candidate_allowed(cls, rec, lane: str = "related") -> bool:
@@ -43,6 +53,153 @@ class _ContextGuardMixin:
         if confidence >= cls.CONTEXT_CONFIDENCE_FLOOR and predicted < cls.CONTEXT_PREDICTED_FLOOR:
             return False
         return True
+
+    @staticmethod
+    def _period_red_flag(rec) -> bool:
+        payload = getattr(rec.score, "trust_audit", {}) or {}
+        return bool(payload.get("red_flag")) or str(payload.get("status") or "") == "red_flag"
+
+    @classmethod
+    def _period_signal(cls, rec) -> float:
+        score = rec.score
+        calendar = clamp(float(getattr(score, "calendar", 0.0) or 0.0))
+        season = clamp(float(getattr(score, "season", 0.0) or 0.0))
+        kind = str(getattr(score, "calendar_kind", "") or "").lower()
+        kind_weight = {
+            "directă": 1.0,
+            "directa": 1.0,
+            "istorică": .92,
+            "istorica": .92,
+            "spirituală": .86,
+            "spirituala": .86,
+            "atmosferică": .46,
+            "atmosferica": .46,
+        }.get(kind, .70)
+        seasonal = clamp((season - .30) / .70)
+        return clamp(calendar * kind_weight + .22 * seasonal)
+
+    @classmethod
+    def _period_candidate_allowed(cls, rec, anchor) -> bool:
+        if cls._period_red_flag(rec):
+            return False
+        score = rec.score
+        anchor_score = anchor.score
+        final = float(getattr(score, "final", 0.0) or 0.0)
+        anchor_final = float(getattr(anchor_score, "final", 0.0) or 0.0)
+        if anchor_final - final > cls.PERIOD_FINAL_GAP:
+            return False
+
+        predicted = float(getattr(score, "predicted_rating", 0.0) or 0.0)
+        anchor_predicted = float(getattr(anchor_score, "predicted_rating", 0.0) or 0.0)
+        confidence = float(getattr(score, "confidence", 0.0) or 0.0)
+        if predicted < cls.PERIOD_PREDICTED_FLOOR:
+            return False
+        if anchor_predicted > 0 and anchor_predicted - predicted > cls.PERIOD_PREDICTED_GAP:
+            return False
+        if confidence >= .65 and predicted < 6.4:
+            return False
+
+        calendar = clamp(float(getattr(score, "calendar", 0.0) or 0.0))
+        season = clamp(float(getattr(score, "season", 0.0) or 0.0))
+        return calendar >= cls.PERIOD_CALENDAR_MIN or season >= cls.PERIOD_SEASON_MIN
+
+    @classmethod
+    def _period_aware_select(cls, ordered, requested: int):
+        ordered = list(ordered)
+        requested = max(1, int(requested))
+        if not ordered or requested <= 1:
+            return ordered[:requested]
+
+        anchor = ordered[0]
+        candidates = [
+            rec for rec in ordered[1:]
+            if cls._period_candidate_allowed(rec, anchor)
+        ]
+        if not candidates:
+            return ordered[:requested]
+
+        def value(rec):
+            payload = getattr(rec.score, "trust_audit", {}) or {}
+            trust_raw = payload.get("trust")
+            trust = clamp(float(trust_raw)) if trust_raw is not None else .5
+            predicted = float(getattr(rec.score, "predicted_rating", 0.0) or 0.0)
+            predicted_norm = clamp((predicted - 5.5) / 3.5)
+            return (
+                .44 * cls._period_signal(rec)
+                + .34 * float(getattr(rec.score, "final", 0.0) or 0.0)
+                + .12 * trust
+                + .10 * predicted_norm,
+                float(getattr(rec.score, "final", 0.0) or 0.0),
+                predicted,
+            )
+
+        period_pick = max(candidates, key=value)
+        chosen = [anchor, period_pick]
+        for rec in ordered[1:]:
+            if len(chosen) >= requested:
+                break
+            if rec is period_pick:
+                continue
+            chosen.append(rec)
+
+        reason = str(getattr(period_pick.score, "calendar_reason", "") or "").strip()
+        if not reason:
+            reason = "Se potrivește mai bine cu perioada curentă, rămânând în același culoar de calitate personală."
+        period_pick.score.contributions = [
+            item for item in period_pick.score.contributions
+            if item[0] != "Potrivire cu perioada"
+        ]
+        period_pick.score.contributions.insert(
+            0,
+            (
+                "Potrivire cu perioada",
+                0.0,
+                reason + " Contextul doar departajează finaliști deja competitivi; nu schimbă nota estimată pentru tine.",
+            ),
+        )
+        payload = dict(getattr(period_pick.score, "trust_audit", {}) or {})
+        payload["period_context_slot"] = True
+        payload["period_context_signal"] = round(cls._period_signal(period_pick), 6)
+        payload["top3_role"] = "period_context"
+        period_pick.score.trust_audit = payload
+        return chosen[:requested]
+
+    def _adaptive_rerank(self, recs, count: int):
+        requested = max(1, int(count))
+        if requested > self.PERIOD_SLOT_MAX_VISIBLE or requested <= 1:
+            return super()._adaptive_rerank(recs, requested)
+
+        # Ask the proven downstream engine/trust gate for a small safe finalist pool first. Only
+        # after that may context choose one secondary slot. This cannot reach back into weak/raw
+        # candidates and therefore cannot bypass Adaptive, Watch Success, Startability or V16 trust.
+        pool_size = min(
+            int(getattr(self, "QUALITY_GATE_MAX_VISIBLE", self.PERIOD_POOL_SIZE)),
+            max(self.PERIOD_POOL_SIZE, requested),
+        )
+        ordered = list(super()._adaptive_rerank(recs, pool_size))
+        selected = self._period_aware_select(ordered, requested)
+
+        stats = getattr(self, "_quality_gate_stats", None)
+        if isinstance(stats, dict):
+            trusted_returned = sum(
+                1 for rec in selected
+                if str((getattr(rec.score, "trust_audit", {}) or {}).get("status") or "") == "trusted"
+            )
+            stats["returned"] = len(selected)
+            stats["fallback"] = max(0, len(selected) - trusted_returned)
+            stats["period_context_slot"] = any(
+                bool((getattr(rec.score, "trust_audit", {}) or {}).get("period_context_slot"))
+                for rec in selected
+            )
+
+        role_stats = getattr(self, "_role_stats", None)
+        if isinstance(role_stats, dict):
+            roles = []
+            for rec in selected:
+                payload = getattr(rec.score, "trust_audit", {}) or {}
+                roles.append(str(payload.get("top3_role") or "standard"))
+            self._role_stats = {"enabled": True, "roles": roles}
+        return selected
 
     def _merged_semantic(self, movie):
         merged = super()._merged_semantic(movie)
@@ -86,6 +243,14 @@ class _ContextGuardMixin:
             "predicted_floor": self.CONTEXT_PREDICTED_FLOOR,
             "confidence_floor": self.CONTEXT_CONFIDENCE_FLOOR,
             "soft_lanes": sorted(self._SOFT_CONTEXT_LANES),
+            "period_slot": {
+                "max_visible": self.PERIOD_SLOT_MAX_VISIBLE,
+                "pool_size": self.PERIOD_POOL_SIZE,
+                "final_gap": self.PERIOD_FINAL_GAP,
+                "predicted_floor": self.PERIOD_PREDICTED_FLOOR,
+                "calendar_min": self.PERIOD_CALENDAR_MIN,
+                "season_min": self.PERIOD_SEASON_MIN,
+            },
         }
 
 
@@ -98,14 +263,9 @@ class FastRecommendationEngineV17Context35(_ContextGuardMixin, FastRecommendatio
 
 
 def contextual_engine_class(base_cls):
-    """Add the 3.5 context guard without discarding the exact approved recommendation engine.
-
-    3.5 originally mapped every V17 subclass back to FastRecommendationEngineV17Context35 and
-    every V16 subclass back to FastRecommendationEngineV16Context35. That was safe for 3.5 itself,
-    but later challengers (V18/V19) could be approved and then silently lose their own retrieval
-    behavior in production. Exact V16/V17 keep their stable named classes; newer compatible engines
-    receive a cached dynamic context subclass that preserves their full MRO and behavior.
-    """
+    """Add the context guard without discarding the exact approved recommendation engine."""
+    if str(getattr(base_cls, "CONTEXT_RECOMMENDER_VERSION", "")) == CONTEXT_RECOMMENDER_VERSION:
+        return base_cls
     if base_cls is FastRecommendationEngineV17:
         return FastRecommendationEngineV17Context35
     if base_cls is FastRecommendationEngineV16:
@@ -117,13 +277,13 @@ def contextual_engine_class(base_cls):
         cached = _CONTEXT_CLASS_CACHE.get(base_cls)
         if cached is not None:
             return cached
-        name = f"{base_cls.__name__}Context35"
+        name = f"{base_cls.__name__}Context38"
         cls = type(
             name,
             (_ContextGuardMixin, base_cls),
             {
                 "__module__": __name__,
-                "__doc__": f"Context 3.5 guard preserving {base_cls.__name__} exactly.",
+                "__doc__": f"Context guard preserving {base_cls.__name__} exactly.",
             },
         )
         _CONTEXT_CLASS_CACHE[base_cls] = cls
