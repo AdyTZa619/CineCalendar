@@ -11,6 +11,8 @@ from cinecalendar.adaptive_preferences_v2 import (
 )
 from cinecalendar.db import Database
 from cinecalendar.models import Movie
+from cinecalendar.production_engine import build_production_recommender
+from cinecalendar.recommender_v16 import FastRecommendationEngineV16
 from cinecalendar.service import CineCalendarService
 
 
@@ -67,9 +69,17 @@ def test_v2_uses_large_hash_space_and_safe_metric_fallbacks(tmp_path):
     assert learner._pairwise_accuracy([6.0, 6.0, 7.0], [1.0, 2.0, 3.0]) is None
 
 
-def test_production_service_replaces_legacy_adaptive_model_with_v2():
-    source = inspect.getsource(CineCalendarService.__init__)
-    assert "AdaptivePreferenceLearnerV2" in source
-    assert "self.recommender.adaptive = AdaptivePreferenceLearnerV2(self.db)" in source
-    # Training remains staggered; the larger validation pass must not compete with first paint.
-    assert "start_adaptive_background()" not in source
+def test_production_stack_replaces_legacy_adaptive_model_with_v2(tmp_path):
+    service_source = inspect.getsource(CineCalendarService.__init__)
+    builder_source = inspect.getsource(build_production_recommender)
+
+    assert "build_production_recommender" in service_source
+    assert "AdaptivePreferenceLearnerV2" in builder_source
+    assert "engine.adaptive = AdaptivePreferenceLearnerV2(db)" in builder_source
+
+    db = Database(tmp_path / "production-adaptive.db")
+    engine = build_production_recommender(db, FastRecommendationEngineV16)
+    assert isinstance(engine.adaptive, AdaptivePreferenceLearnerV2)
+
+    # Training remains staggered; the production service must not synchronously force adaptive warmup.
+    assert "start_adaptive_background()" not in service_source
