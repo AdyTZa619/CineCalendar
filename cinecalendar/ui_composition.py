@@ -6,7 +6,7 @@ def compose_premium_window(window_cls) -> None:
 
     Older releases spread monkey-patch installation across app.py, so moving one import could
     silently change production behaviour. v3.3 centralized the composition; v3.5 adds context
-    diagnostics without changing the action/exposure integrity ordering.
+    diagnostics and v3.6 adds read-only accuracy diagnostics without changing action semantics.
     """
     if getattr(window_cls, "_cinecalendar_v33_composed", False):
         return
@@ -17,6 +17,7 @@ def compose_premium_window(window_cls) -> None:
     from .daily_genre_ui_patch import install_daily_genre_ui_patch
     from .romanian_cinema_ui_patch import install_romanian_cinema_ui_patch
     from .context_ui_v35 import install_context_ui_v35
+    from .accuracy_ui_v36 import install_accuracy_ui_v36
     from .decision_action_patch import install_decision_action_patch
     from .watch_success_ui_patch import install_watch_success_ui_patch
     from .foundation_v33 import install_foundation_v33
@@ -29,6 +30,7 @@ def compose_premium_window(window_cls) -> None:
     install_daily_genre_ui_patch(window_cls)
     install_romanian_cinema_ui_patch(window_cls)
     install_context_ui_v35(window_cls)
+    install_accuracy_ui_v36(window_cls)
     install_decision_action_patch(window_cls)
     install_watch_success_ui_patch(window_cls)
     install_foundation_v33(window_cls)
