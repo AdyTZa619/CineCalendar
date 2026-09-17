@@ -7,7 +7,7 @@ from .calendar_engine_v3 import ContextCalendarEngineV35
 from .context_recommender_v35 import contextual_engine_class
 from .db import Database
 from .logging_setup import setup_logging
-from .quality_manager_v34 import RecommendationQualityManager
+from .quality_manager_v36 import RecommendationQualityManagerV36
 from .recommender_v16 import FastRecommendationEngineV16
 from .watch_success_v33 import WatchSuccessIntentLearnerV33
 from .util import AppPaths
@@ -22,22 +22,23 @@ class CineCalendarService:
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = ContextCalendarEngineV35()
 
-        # 3.4 chooses only the measured V16/V17 taste baseline. 3.5 wraps that exact verdict
-        # with bounded context intelligence; context never becomes a replacement taste model.
-        self.quality_manager = RecommendationQualityManager(self.db)
+        # 3.6 keeps the already-approved V16/V17 result as baseline. V18 is used only if a new,
+        # stricter two-fold local backtest proves that the additional metadata retrieval improves
+        # this user's results without material recall, dislike-exposure or NDCG regressions.
+        self.quality_manager = RecommendationQualityManagerV36(self.db)
         engine_cls = self.quality_manager.preferred_engine_class()
         if not issubclass(engine_cls, FastRecommendationEngineV16):
             engine_cls = FastRecommendationEngineV16
         production_cls = contextual_engine_class(engine_cls)
         self.recommender = production_cls(self.db, self.calendar)
 
-        # Keep the validated long-term adaptive and exposure-level Watch Success learners.
+        # Preserve the validated long-term adaptive, Watch Success and 3.5 context layers.
         self.recommender.adaptive = AdaptivePreferenceLearnerV2(self.db)
         self.recommender.watch_intent = WatchSuccessIntentLearnerV33(self.db)
         self.recommender.collaborative.start_background()
 
-        # A fresh rating/feedback state can trigger the local V16 vs V17 backtest in the
-        # background. The result is used on the next start and is then wrapped by 3.5.
+        # Evaluation runs off the recommendation path. A positive 3.6 verdict becomes active only
+        # on a later launch, so a running session never changes its engine underneath the user.
         self.quality_manager.start_background()
 
     def _defaults(self):
