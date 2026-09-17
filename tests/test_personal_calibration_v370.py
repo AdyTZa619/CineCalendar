@@ -7,10 +7,17 @@ from cinecalendar.accuracy_engine_v37 import (
     allowed_local_shares,
     calibrated_accuracy_engine_class,
 )
+from cinecalendar.context_recommender_v35 import (
+    FastRecommendationEngineV16Context35,
+    FastRecommendationEngineV17Context35,
+    _ContextGuardMixin,
+    contextual_engine_class,
+)
 from cinecalendar.db import Database
 from cinecalendar.imdb_import import add_manual_rating
 from cinecalendar.recommender_v16 import FastRecommendationEngineV16
 from cinecalendar.recommender_v17 import FastRecommendationEngineV17
+from cinecalendar.recommender_v18 import FastRecommendationEngineV18
 from cinecalendar.rolling_backtest_v37 import (
     _remove_future,
     rolling_windows,
@@ -61,6 +68,23 @@ def test_v37_challenger_wraps_exact_approved_baseline():
     assert v17.__mro__[2] is FastRecommendationEngineV17
     assert v17.LOCAL_CONTENT_SHARE == 0.20
     assert allowed_local_shares() == (0.08, 0.14, 0.20)
+
+
+def test_context_wrapper_preserves_exact_approved_engine():
+    assert contextual_engine_class(FastRecommendationEngineV16) is FastRecommendationEngineV16Context35
+    assert contextual_engine_class(FastRecommendationEngineV17) is FastRecommendationEngineV17Context35
+
+    wrapped_v18 = contextual_engine_class(FastRecommendationEngineV18)
+    assert wrapped_v18.__mro__[1] is _ContextGuardMixin
+    assert FastRecommendationEngineV18 in wrapped_v18.__mro__
+    assert contextual_engine_class(FastRecommendationEngineV18) is wrapped_v18
+
+    v19 = calibrated_accuracy_engine_class(FastRecommendationEngineV16, 0.14)
+    wrapped_v19 = contextual_engine_class(v19)
+    assert wrapped_v19.__mro__[1] is _ContextGuardMixin
+    assert v19 in wrapped_v19.__mro__
+    assert FastRecommendationEngineV16 in wrapped_v19.__mro__
+    assert FastRecommendationEngineV17 not in wrapped_v19.__mro__
 
 
 def test_v37_candidate_share_is_bounded_and_baseline_dominant():
