@@ -132,7 +132,7 @@ def test_v36_requires_mean_gain_above_strict_threshold():
     assert RecommendationQualityManagerV36._strict_approval(_comparison(mean=0.011))["approved"] is False
 
 
-def test_service_and_ui_wire_v36_without_removing_v35():
+def test_service_moves_to_v37_without_removing_v36_or_v35():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -140,9 +140,12 @@ def test_service_and_ui_wire_v36_without_removing_v35():
     composition = (root / "cinecalendar" / "ui_composition.py").read_text(encoding="utf-8")
     init = (root / "cinecalendar" / "__init__.py").read_text(encoding="utf-8")
 
-    assert "RecommendationQualityManagerV36" in service
+    assert "RecommendationQualityManagerV37" in service
+    assert "RecommendationQualityManagerV36" not in service
+    assert (root / "cinecalendar" / "quality_manager_v36.py").exists()
     assert "ContextCalendarEngineV35" in service
     assert "contextual_engine_class" in service
     assert "install_context_ui_v35" in composition
-    assert "install_accuracy_ui_v36" in composition
-    assert '__version__ = "3.6.0"' in init
+    assert "install_accuracy_ui_v37" in composition
+    assert "install_accuracy_ui_v36" not in composition
+    assert '__version__ = "3.7.0"' in init
