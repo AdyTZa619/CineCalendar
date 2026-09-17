@@ -7,19 +7,25 @@
 - enrichment TMDb opțional și postere asincrone cu cache local.
 
 ## Recomandări
-- motor de producție V16;
+- baseline de gust V16/V17 ales local prin backtest;
 - retrieval ALS + vecini ai favoritelor + content/discovery fallback;
 - profil personal din ratinguri 1–10, semantică și feedback;
 - Adaptive Personal v2 cu validare temporală și influență plafonată;
 - calendar ortodox/secular/istoric/sezonier;
-- Watch Success + Startability + Top-3 trust gate;
-- în 3.3, Watch Success învață și auditează la nivel de expunere concretă, nu `movie_id + zi`.
+- Watch Success + Startability + Top-3 trust/red-flag gate;
+- în 3.3, Watch Success învață și auditează la nivel de expunere concretă, nu `movie_id + zi`;
+- în 3.6, retrieval local suplimentar din semnale repetate de regizor și țară+gen, cu ratingurile 1–4 ca protecție negativă;
+- în 3.7, challengerul este construit peste exact baseline-ul V16/V17 aprobat pentru utilizator, iar procentul lane-ului local este calibrat dintre 8%, 14% și 20%;
+- evaluarea 3.7 folosește ferestre temporale ne-suprapuse și elimină din training atât holdout-ul curent, cât și toate ratingurile ulterioare;
+- Availability Guard 3.7 elimină titlurile cu an sau dată de lansare cunoscută după data recomandării, fără să schimbe ordinea filmelor eligibile;
+- Context Intelligence păstrează acum exact motorul aprobat, inclusiv V18/V19, în loc să îl reducă la o clasă V16/V17.
 
 ## UI și acțiuni
 - Home, recomandări, profil, ratinguri, watchlist, calendar, program lunar, istoric, update și setări;
 - Stremio/Stremio Web, trailer, confirmare explicită playback și watched;
 - fiecare recomandare vizibilă primește un `exposure_history_id` care este transportat până la acțiunea utilizatorului;
-- două expuneri ale aceluiași film în aceeași zi rămân două funnel-uri distincte.
+- două expuneri ale aceluiași film în aceeași zi rămân două funnel-uri distincte;
+- Taste Hub afișează diagnosticul motorului și calibrarea Accuracy 3.7 fără a modifica rezultatele prin UI.
 
 ## Persistență și siguranță
 - SQLite WAL, schema curentă v5, `quick_check` la startup și snapshot automat `last_good` pentru recovery;
