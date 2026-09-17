@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import threading
+
 from .recommender_v16 import FastRecommendationEngineV16
 from .recommender_v17 import FastRecommendationEngineV17
 
 
-CONTEXT_RECOMMENDER_VERSION = "context-ranking-v3.5.0"
+CONTEXT_RECOMMENDER_VERSION = "context-ranking-v3.5.1-preserve-approved-engine"
+_CONTEXT_CLASS_CACHE: dict[type, type] = {}
+_CONTEXT_CLASS_LOCK = threading.RLock()
 
 
 class _ContextGuardMixin:
@@ -94,10 +98,33 @@ class FastRecommendationEngineV17Context35(_ContextGuardMixin, FastRecommendatio
 
 
 def contextual_engine_class(base_cls):
-    """Map the 3.4 quality verdict to its 3.5 context-bounded production class."""
-    if issubclass(base_cls, FastRecommendationEngineV17):
+    """Add the 3.5 context guard without discarding the exact approved recommendation engine.
+
+    3.5 originally mapped every V17 subclass back to FastRecommendationEngineV17Context35 and
+    every V16 subclass back to FastRecommendationEngineV16Context35. That was safe for 3.5 itself,
+    but later challengers (V18/V19) could be approved and then silently lose their own retrieval
+    behavior in production. Exact V16/V17 keep their stable named classes; newer compatible engines
+    receive a cached dynamic context subclass that preserves their full MRO and behavior.
+    """
+    if base_cls is FastRecommendationEngineV17:
         return FastRecommendationEngineV17Context35
-    if issubclass(base_cls, FastRecommendationEngineV16):
+    if base_cls is FastRecommendationEngineV16:
         return FastRecommendationEngineV16Context35
-    # Safety: never accept an unrelated recommender from a corrupted/stale quality verdict.
-    return FastRecommendationEngineV16Context35
+    if not issubclass(base_cls, FastRecommendationEngineV16):
+        return FastRecommendationEngineV16Context35
+
+    with _CONTEXT_CLASS_LOCK:
+        cached = _CONTEXT_CLASS_CACHE.get(base_cls)
+        if cached is not None:
+            return cached
+        name = f"{base_cls.__name__}Context35"
+        cls = type(
+            name,
+            (_ContextGuardMixin, base_cls),
+            {
+                "__module__": __name__,
+                "__doc__": f"Context 3.5 guard preserving {base_cls.__name__} exactly.",
+            },
+        )
+        _CONTEXT_CLASS_CACHE[base_cls] = cls
+        return cls
