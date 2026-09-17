@@ -6,6 +6,7 @@ from pathlib import Path
 import math
 import tempfile
 
+from .availability_guard_v37 import availability_engine_class
 from .db import Database
 from .recommendation_backtest import (
     HoldoutRating,
@@ -99,7 +100,10 @@ def rolling_windows(
             for row in slice_rows
         )
         future_ids = tuple(int(row["rating_id"]) for row in rows[start:])
-        cutoff = min((str(row["date_key"] or "")[:10] for row in slice_rows if str(row["date_key"] or "")), default="")
+        cutoff = min(
+            (str(row["date_key"] or "")[:10] for row in slice_rows if str(row["date_key"] or "")),
+            default="",
+        )
         windows.append(
             TemporalWindowV37(
                 index=fold + 1,
@@ -169,7 +173,10 @@ def run_window_backtest(
         except ValueError:
             eval_date = date.today()
 
-        engine = _build_engine(engine_cls, test_db)
+        # Historical evaluation must not give either side access to films known to release after
+        # the simulated day. Apply the same guard used by 3.7 production to baseline and challenger.
+        evaluated_cls = availability_engine_class(engine_cls)
+        engine = _build_engine(evaluated_cls, test_db)
         _wait_for_als(engine.collaborative, als_timeout)
         candidate_imdb = _candidate_imdb_ids(engine, eval_date, test_db, candidate_limit)
         engine.adaptive.status()
@@ -193,6 +200,8 @@ def run_window_backtest(
         return {
             "backtest_version": BACKTEST_VERSION,
             "engine": str(getattr(engine_cls, "__name__", "engine")),
+            "evaluated_engine": str(getattr(evaluated_cls, "__name__", "engine")),
+            "availability_guard": True,
             "window_index": int(window.index),
             "cutoff_date": window.cutoff_date,
             "training_rating_count": int(window.training_count),
@@ -226,7 +235,11 @@ def run_window_backtest(
 def strict_rolling_verdict(folds: list[dict]) -> dict:
     verdicts = [dict(fold.get("verdict") or {}) for fold in folds]
     if len(verdicts) < 2:
-        return {"approved": False, "reason": "insufficient_nonoverlapping_windows", "fold_count": len(verdicts)}
+        return {
+            "approved": False,
+            "reason": "insufficient_nonoverlapping_windows",
+            "fold_count": len(verdicts),
+        }
 
     deltas = [float(v.get("composite_delta", 0.0) or 0.0) for v in verdicts]
     ndcg = [float(v.get("ndcg25_delta", 0.0) or 0.0) for v in verdicts]
@@ -264,7 +277,10 @@ def strict_rolling_verdict(folds: list[dict]) -> dict:
         "minimum_mean_gain": 0.008,
         "meaningful_improvement": meaningful,
         "guardrails": guards,
-        "selection_score": round(mean_delta + 0.20 * (sum(ndcg) / len(ndcg)) - 0.25 * max(0.0, max(bad)), 8),
+        "selection_score": round(
+            mean_delta + 0.20 * (sum(ndcg) / len(ndcg)) - 0.25 * max(0.0, max(bad)),
+            8,
+        ),
     }
 
 
