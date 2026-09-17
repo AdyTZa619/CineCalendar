@@ -23,7 +23,8 @@ jobs:
           $required = @(
             'cinecalendar\personal_acceptance_v38.py',
             'scripts\personal_acceptance_v38.py',
-            'tests\test_personal_acceptance_v380.py'
+            'tests\test_personal_acceptance_v380.py',
+            'tests\test_personal_acceptance_entrypoint_v380.py'
           )
           foreach ($p in $required) { if (!(Test-Path $p)) { throw "Missing acceptance source: $p" } }
 
@@ -51,6 +52,22 @@ jobs:
           if (!(Test-Path $exe)) { throw 'EXE was not created' }
           $b = [IO.File]::ReadAllBytes($exe)
           if ($b.Length -lt 2 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw 'Not a Windows PE executable' }
+
+      - name: Smoke packaged personal acceptance mode
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = '.'
+          $env:CINECALENDAR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'cinecalendar-personal-audit'
+          $db = Join-Path $env:CINECALENDAR_DATA_DIR 'data\cinecalendar.db'
+          python -c "from cinecalendar.db import Database; from cinecalendar.imdb_import import add_manual_rating; db=Database(r'$db'); add_manual_rating(db,'Acceptance Sentinel',2020,9,imdb_id='tt9900001',genres=['Drama'])"
+          $report = Join-Path $env:CINECALENDAR_DATA_DIR 'logs\acceptance-smoke.json'
+          $args = @('--personal-acceptance','--audit-no-backtest','--audit-als-timeout','0','--audit-output',$report)
+          $p = Start-Process -FilePath '.\dist\CineCalendar\CineCalendar.exe' -ArgumentList $args -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Packaged acceptance mode exited with $($p.ExitCode)" }
+          if (!(Test-Path $report)) { throw 'Packaged acceptance mode did not write its report' }
+          $payload = Get-Content -Raw -LiteralPath $report | ConvertFrom-Json
+          if ($payload.status -eq 'fail') { throw 'Packaged acceptance report returned fail in smoke fixture' }
+          if ($payload.production_stack.version -ne 'production-stack-v3.8.0') { throw 'Packaged audit did not use the 3.8 production stack' }
 
       - name: Smoke launch Premium
         shell: pwsh
