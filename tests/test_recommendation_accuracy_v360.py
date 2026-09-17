@@ -137,6 +137,7 @@ def test_service_moves_to_v37_without_removing_v36_or_v35():
 
     root = Path(__file__).resolve().parents[1]
     service = (root / "cinecalendar" / "service.py").read_text(encoding="utf-8")
+    production = (root / "cinecalendar" / "production_engine.py").read_text(encoding="utf-8")
     composition = (root / "cinecalendar" / "ui_composition.py").read_text(encoding="utf-8")
     init = (root / "cinecalendar" / "__init__.py").read_text(encoding="utf-8")
 
@@ -144,8 +145,10 @@ def test_service_moves_to_v37_without_removing_v36_or_v35():
     assert "RecommendationQualityManagerV36" not in service
     assert (root / "cinecalendar" / "quality_manager_v36.py").exists()
     assert "ContextCalendarEngineV35" in service
-    assert "contextual_engine_class" in service
+    assert "build_production_recommender" in service
+    assert "availability_engine_class" in production
+    assert "contextual_engine_class" in production
     assert "install_context_ui_v35" in composition
     assert "install_accuracy_ui_v37" in composition
     assert "install_accuracy_ui_v36" not in composition
-    assert '__version__ = "3.7.0"' in init
+    assert '__version__ = "3.8.0"' in init

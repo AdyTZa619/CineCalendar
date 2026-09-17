@@ -65,7 +65,9 @@ def test_wait_parent_exit_executes_without_pid_readonly_error():
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
         capture_output=True,
         text=True,
-        timeout=10,
+        # Hosted Windows runners occasionally need >10s just to start/tear down powershell.exe.
+        # The function under test still uses Seconds=0, so this does not weaken updater semantics.
+        timeout=30,
         check=False,
     )
     assert completed.returncode == 0, completed.stderr or completed.stdout

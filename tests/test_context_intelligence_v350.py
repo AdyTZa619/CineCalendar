@@ -14,6 +14,7 @@ from cinecalendar.context_ui_v35 import install_context_ui_v35
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
 from cinecalendar.recommender_v16 import FastRecommendationEngineV16
 from cinecalendar.recommender_v17 import FastRecommendationEngineV17
+from cinecalendar import production_engine as production_engine_module
 from cinecalendar import service as service_module
 from cinecalendar import ui_composition as ui_composition_module
 
@@ -134,12 +135,19 @@ def test_quality_verdict_maps_to_matching_context_bounded_engine():
     assert issubclass(FastRecommendationEngineV17Context35, FastRecommendationEngineV16)
 
 
-def test_production_service_uses_v35_calendar_and_preserves_v16_safety_baseline():
+def test_production_service_uses_v35_calendar_and_canonical_safety_stack():
     source = inspect.getsource(service_module.CineCalendarService.__init__)
+    composition = inspect.getsource(production_engine_module.production_engine_class)
+    builder = inspect.getsource(production_engine_module.build_production_recommender)
+
     assert "ContextCalendarEngineV35" in source
-    assert "contextual_engine_class" in source
+    assert "build_production_recommender" in source
     assert "FastRecommendationEngineV16" in source
     assert "issubclass" in source
+    assert "availability_engine_class" in composition
+    assert "contextual_engine_class" in composition
+    assert "AdaptivePreferenceLearnerV2" in builder
+    assert "WatchSuccessIntentLearnerV33" in builder
 
 
 def test_context_diagnostics_are_in_canonical_ui_composition():
