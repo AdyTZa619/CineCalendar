@@ -6,9 +6,10 @@ from .autoseed import ensure_initial_ratings
 from .calendar_engine_v2 import RichCalendarEngine
 from .db import Database
 from .logging_setup import setup_logging
+from .quality_manager_v34 import RecommendationQualityManager
 from .recommender_v16 import FastRecommendationEngineV16
-from .util import AppPaths
 from .watch_success_v33 import WatchSuccessIntentLearnerV33
+from .util import AppPaths
 
 
 class CineCalendarService:
@@ -19,12 +20,23 @@ class CineCalendarService:
         self._defaults()
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = RichCalendarEngine()
-        self.recommender = FastRecommendationEngineV16(self.db, self.calendar)
+
+        # 3.4 never promotes a newer recommender merely because it exists. A local temporal A/B
+        # backtest on the user's own ratings must approve V17; otherwise V16 remains production.
+        self.quality_manager = RecommendationQualityManager(self.db)
+        engine_cls = self.quality_manager.preferred_engine_class()
+        self.recommender = engine_cls(self.db, self.calendar)
+
         # Production composition uses the validated adaptive V2 learner and the v3.3 exposure-level
         # Watch Success learner. Base classes remain import-compatible for old tests/backups.
         self.recommender.adaptive = AdaptivePreferenceLearnerV2(self.db)
         self.recommender.watch_intent = WatchSuccessIntentLearnerV33(self.db)
         self.recommender.collaborative.start_background()
+
+        # Run challenger evaluation after startup, off the UI/recommendation path. A successful
+        # verdict is persisted and becomes active on the next application start while the same
+        # rating/feedback state remains current.
+        self.quality_manager.start_background()
 
     def _defaults(self):
         # Genre choice is contextual/day-specific; no hidden global Romance veto.
