@@ -10,6 +10,7 @@ from cinecalendar.recommender_v12 import FastRecommendationEngineV12
 from cinecalendar.models import Movie
 from cinecalendar import app as app_module
 from cinecalendar import service as service_module
+from cinecalendar import ui_composition as ui_composition_module
 
 
 def _movie(genres):
@@ -33,8 +34,10 @@ def test_service_forces_legacy_romance_setting_off():
 
 
 def test_premium_startup_installs_daily_genre_ui_patch():
-    source = inspect.getsource(app_module.main)
-    assert "install_daily_genre_ui_patch(CalendarPremiumWindow)" in source
+    app_source = inspect.getsource(app_module.main)
+    assert "compose_premium_window(CalendarPremiumWindow)" in app_source
+    composition_source = inspect.getsource(ui_composition_module.compose_premium_window)
+    assert "install_daily_genre_ui_patch(window_cls)" in composition_source
     service_source = inspect.getsource(service_module.CineCalendarService.__init__)
     # V16 inherits V12/V13 daily-genre/adaptive behavior, V14 intent, V15 Watch Success/
     # Startability, then adds the final trust gate. The daily genre patch must remain installed.

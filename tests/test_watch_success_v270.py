@@ -124,10 +124,11 @@ def test_official_stremio_routes_and_trailer_search_are_deterministic():
 
 def test_ui_records_handoff_separately_from_confirmed_playback_and_clears_watched_choice():
     source = inspect.getsource(install_watch_success_ui_patch)
-    assert 'record_watch_event(self.db, int(movie.id), "stremio_opened")' in source
-    assert 'record_watch_event(self.db, int(movie.id), "playback_confirmed")' in source
+    assert 'record_watch_event(self.db, int(movie.id), "stremio_opened", exposure_id)' in source
+    assert 'record_watch_event(self.db, int(movie.id), "playback_confirmed", exposure_id)' in source
+    assert 'record_watch_event(self.db, int(movie.id), "watched", exposure_id)' in source
     assert 'clear_today_choice(self.db, int(movie.id))' in source
-    assert 'record_watch_event(self.db, int(movie.id), "play_opened")' not in source
+    assert 'record_watch_event(self.db, int(movie.id), "play_opened"' not in source
 
 
 class _NeutralIntent:
