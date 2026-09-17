@@ -25,6 +25,13 @@ class CineCalendarService:
         # backtest on the user's own ratings must approve V17; otherwise V16 remains production.
         self.quality_manager = RecommendationQualityManager(self.db)
         engine_cls = self.quality_manager.preferred_engine_class()
+
+        # V16 is the hard production compatibility/safety baseline. A future quality manager is
+        # not allowed to inject an unrelated engine class even if its cached verdict is malformed.
+        # V17 deliberately subclasses V16, preserving the Top-3 trust gate and all established
+        # daily-genre/adaptive/Watch-Success behavior while changing only measured quality layers.
+        if not issubclass(engine_cls, FastRecommendationEngineV16):
+            engine_cls = FastRecommendationEngineV16
         self.recommender = engine_cls(self.db, self.calendar)
 
         # Production composition uses the validated adaptive V2 learner and the v3.3 exposure-level
