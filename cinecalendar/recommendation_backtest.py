@@ -4,14 +4,17 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 import json
+import math
 import sqlite3
 import tempfile
 import time
 
 from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
+from .calendar_engine_v2 import RichCalendarEngine
 from .collaborative_als import CollaborativeALSProvider
 from .db import Database
 from .recommender_v16 import FastRecommendationEngineV16
+from .watch_success_v33 import WatchSuccessIntentLearnerV33
 
 
 @dataclass(frozen=True)
@@ -29,11 +32,7 @@ def temporal_holdout(
     min_holdout: int = 60,
     max_holdout: int = 500,
 ) -> list[HoldoutRating]:
-    """Return the newest part of the rating history, preserving chronology.
-
-    Rows without a usable IMDb id are ignored because retrieval recall cannot be measured for them.
-    The holdout is deterministic and never mutates the source database.
-    """
+    """Return the newest part of the rating history, preserving chronology."""
     with db.connect() as con:
         rows = con.execute(
             """SELECT m.id AS movie_id,m.imdb_id,r.rating,
@@ -71,11 +70,7 @@ def candidate_recall_metrics(
     *,
     cutoffs: tuple[int, ...] = (50, 100, 250, 500, 1000),
 ) -> dict:
-    """Measure whether retrieval can surface films the user later rated highly.
-
-    This deliberately separates retrieval from final ranking. If a hidden 9/10 film is absent from
-    the candidate pool, no downstream model can recover it.
-    """
+    """Measure whether retrieval can surface films the user later rated highly."""
     ranked = [str(x) for x in ranked_imdb_ids if str(x)]
     rating_by_id = {row.imdb_id: int(row.rating) for row in holdout}
     liked = {iid for iid, rating in rating_by_id.items() if rating >= 8}
@@ -107,12 +102,58 @@ def candidate_recall_metrics(
     return out
 
 
-def visible_outcome_metrics(ranked_imdb_ids: list[str], holdout: list[HoldoutRating], *, k: int = 3) -> dict:
-    """Describe known historical outcomes for the small visible recommendation set.
+def _gain(rating: int) -> float:
+    return max(0.0, float(rating) - 5.0)
 
-    A single temporal split cannot guarantee that all Top-3 suggestions occur in the hidden future,
-    so unmatched titles are reported explicitly rather than silently counted as failures.
-    """
+
+def ranking_quality_metrics(
+    ranked_imdb_ids: list[str],
+    holdout: list[HoldoutRating],
+    *,
+    cutoffs: tuple[int, ...] = (3, 10, 25, 50, 100),
+) -> dict:
+    """Rank-aware metrics for hidden future ratings: NDCG, recall, MRR and dislike exposure."""
+    ranked = [str(x) for x in ranked_imdb_ids if str(x)]
+    ratings = {row.imdb_id: int(row.rating) for row in holdout}
+    liked = {iid for iid, value in ratings.items() if value >= 8}
+    loved = {iid for iid, value in ratings.items() if value >= 9}
+    disliked = {iid for iid, value in ratings.items() if value <= 4}
+    ideal_gains = sorted((_gain(value) for value in ratings.values()), reverse=True)
+
+    out: dict[str, object] = {
+        "ranked_count": len(ranked),
+        "holdout": len(holdout),
+        "liked_8_plus": len(liked),
+        "loved_9_plus": len(loved),
+        "disliked_4_minus": len(disliked),
+    }
+    first_liked = next((idx for idx, iid in enumerate(ranked, start=1) if iid in liked), None)
+    first_loved = next((idx for idx, iid in enumerate(ranked, start=1) if iid in loved), None)
+    out["mrr_8_plus"] = round(1.0 / first_liked, 6) if first_liked else 0.0
+    out["mrr_9_plus"] = round(1.0 / first_loved, 6) if first_loved else 0.0
+
+    for raw_k in cutoffs:
+        k = max(1, int(raw_k))
+        top = ranked[:k]
+        dcg = 0.0
+        for rank, iid in enumerate(top, start=1):
+            rel = _gain(ratings.get(iid, 0))
+            if rel > 0:
+                dcg += (2.0 ** rel - 1.0) / math.log2(rank + 1.0)
+        ideal = 0.0
+        for rank, rel in enumerate(ideal_gains[:k], start=1):
+            if rel > 0:
+                ideal += (2.0 ** rel - 1.0) / math.log2(rank + 1.0)
+        out[f"ndcg_at_{k}"] = round(dcg / ideal, 6) if ideal > 0 else 0.0
+        out[f"recall_8_plus_at_{k}"] = round(_at_k(ranked, liked, k), 6)
+        out[f"recall_9_plus_at_{k}"] = round(_at_k(ranked, loved, k), 6)
+        out[f"dislike_recall_at_{k}"] = round(_at_k(ranked, disliked, k), 6)
+        out[f"hit_8_plus_at_{k}"] = bool(liked.intersection(top))
+        out[f"hit_9_plus_at_{k}"] = bool(loved.intersection(top))
+    return out
+
+
+def visible_outcome_metrics(ranked_imdb_ids: list[str], holdout: list[HoldoutRating], *, k: int = 3) -> dict:
     ranked = [str(x) for x in ranked_imdb_ids if str(x)][: max(1, int(k))]
     rating_by_id = {row.imdb_id: int(row.rating) for row in holdout}
     matched = [(iid, rating_by_id[iid]) for iid in ranked if iid in rating_by_id]
@@ -170,6 +211,17 @@ def _wait_for_als(provider: CollaborativeALSProvider, timeout: float) -> None:
     raise TimeoutError("ALS did not become ready before the backtest timeout")
 
 
+def _engine_name(engine_cls) -> str:
+    return str(getattr(engine_cls, "__name__", "engine"))
+
+
+def _build_engine(engine_cls, db: Database):
+    engine = engine_cls(db, RichCalendarEngine())
+    engine.adaptive = AdaptivePreferenceLearnerV2(db)
+    engine.watch_intent = WatchSuccessIntentLearnerV33(db)
+    return engine
+
+
 def run_local_backtest(
     db_path: str | Path,
     *,
@@ -177,13 +229,9 @@ def run_local_backtest(
     candidate_limit: int = 1800,
     final_limit: int = 100,
     als_timeout: float = 180.0,
+    engine_cls=FastRecommendationEngineV16,
 ) -> dict:
-    """Backtest current retrieval/ranking against hidden recent ratings on a DB copy.
-
-    The live CineCalendar database is never modified. The latest fraction of ratings is removed
-    from a temporary SQLite backup, future feedback/watch actions are pruned, and the current engine
-    is asked to retrieve/rank those titles as if they were unseen.
-    """
+    """Backtest one engine against hidden recent ratings on a transactionally copied DB."""
     source_path = Path(db_path).expanduser().resolve()
     if not source_path.is_file():
         raise FileNotFoundError(source_path)
@@ -204,12 +252,9 @@ def run_local_backtest(
         except ValueError:
             eval_date = date.today()
 
-        engine = FastRecommendationEngineV16(test_db)
-        # Match production exactly: service.py replaces V13's compatibility learner with V2.
-        engine.adaptive = AdaptivePreferenceLearnerV2(test_db)
+        engine = _build_engine(engine_cls, test_db)
         _wait_for_als(engine.collaborative, als_timeout)
 
-        # Candidate recall: inspect the exact pre-hydration pool used by the production engine.
         candidate_rowids = engine._balanced_candidate_ids(eval_date, max(100, int(candidate_limit)))
         candidate_imdb: list[str] = []
         with test_db.connect() as con:
@@ -226,8 +271,6 @@ def run_local_backtest(
                 candidate_imdb.extend(by_id.get(int(mid), "") for mid in chunk)
         candidate_imdb = [iid for iid in candidate_imdb if iid]
 
-        # Force the adaptive model to finish for an audit run; unlike Home, this is explicitly an
-        # offline diagnostic and should measure the mature engine rather than first-paint fallback.
         engine.adaptive.status()
         final = engine.recommend(
             when=eval_date,
@@ -237,8 +280,6 @@ def run_local_backtest(
         )
         final_imdb = [str(rec.movie.imdb_id or "") for rec in final if rec.movie.imdb_id]
 
-        # Run the actual Home-sized decision separately so V16's trust gate is exercised. The broad
-        # ranking above intentionally bypasses it in order to retain 25/50/100 ranking diagnostics.
         top3 = engine.recommend(
             when=eval_date,
             count=3,
@@ -248,7 +289,8 @@ def run_local_backtest(
         top3_imdb = [str(rec.movie.imdb_id or "") for rec in top3 if rec.movie.imdb_id]
         gate_status = engine.quality_gate_status()
 
-        report = {
+        return {
+            "engine": _engine_name(engine_cls),
             "cutoff_date": cutoff,
             "source_rating_count": source_rating_count,
             "training_rating_count": source_rating_count - len(holdout),
@@ -256,19 +298,166 @@ def run_local_backtest(
             "candidate_limit": int(candidate_limit),
             "final_limit": int(final_limit),
             "candidate_recall": candidate_recall_metrics(candidate_imdb, holdout),
+            "candidate_quality": ranking_quality_metrics(
+                candidate_imdb,
+                holdout,
+                cutoffs=tuple(k for k in (50, 100, 250, 500, 1000) if k <= max(100, int(candidate_limit))),
+            ),
             "final_ranking": candidate_recall_metrics(
                 final_imdb,
                 holdout,
                 cutoffs=tuple(k for k in (3, 10, 25, 50, 100) if k <= max(10, int(final_limit))),
             ),
+            "final_quality": ranking_quality_metrics(
+                final_imdb,
+                holdout,
+                cutoffs=tuple(k for k in (3, 10, 25, 50, 100) if k <= max(10, int(final_limit))),
+            ),
             "top3": candidate_recall_metrics(top3_imdb, holdout, cutoffs=(3,)),
+            "top3_quality": ranking_quality_metrics(top3_imdb, holdout, cutoffs=(3,)),
             "top3_outcomes": visible_outcome_metrics(top3_imdb, holdout, k=3),
             "top3_gate": gate_status,
+            "top3_roles": engine.role_status() if hasattr(engine, "role_status") else {"enabled": False, "roles": []},
             "candidate_generation": engine.candidate_generation_status(),
             "personal_retrieval": engine.personal_candidates.status(),
             "adaptive": engine.adaptive.status(),
         }
-        return report
+
+
+def _metric(payload: dict, path: tuple[str, ...], default: float = 0.0) -> float:
+    current = payload
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return float(default)
+        current = current[key]
+    if current is None:
+        return float(default)
+    try:
+        return float(current)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def quality_composite(report: dict) -> float:
+    c8 = _metric(report, ("candidate_recall", "recall_8_plus_at_500"))
+    c9 = _metric(report, ("candidate_recall", "recall_9_plus_at_500"))
+    ndcg25 = _metric(report, ("final_quality", "ndcg_at_25"))
+    r8_25 = _metric(report, ("final_quality", "recall_8_plus_at_25"))
+    r9_25 = _metric(report, ("final_quality", "recall_9_plus_at_25"))
+    mrr8 = _metric(report, ("final_quality", "mrr_8_plus"))
+    bad25 = _metric(report, ("final_quality", "dislike_recall_at_25"))
+    return round(
+        0.25 * c8
+        + 0.15 * c9
+        + 0.22 * ndcg25
+        + 0.14 * r8_25
+        + 0.10 * r9_25
+        + 0.09 * mrr8
+        - 0.05 * bad25,
+        8,
+    )
+
+
+def quality_verdict(baseline: dict, challenger: dict, *, min_gain: float = 0.01) -> dict:
+    base_score = quality_composite(baseline)
+    challenger_score = quality_composite(challenger)
+    delta = challenger_score - base_score
+
+    cand8_delta = _metric(challenger, ("candidate_recall", "recall_8_plus_at_500")) - _metric(
+        baseline, ("candidate_recall", "recall_8_plus_at_500")
+    )
+    cand9_delta = _metric(challenger, ("candidate_recall", "recall_9_plus_at_500")) - _metric(
+        baseline, ("candidate_recall", "recall_9_plus_at_500")
+    )
+    bad100_delta = _metric(challenger, ("final_quality", "dislike_recall_at_100")) - _metric(
+        baseline, ("final_quality", "dislike_recall_at_100")
+    )
+    ndcg25_delta = _metric(challenger, ("final_quality", "ndcg_at_25")) - _metric(
+        baseline, ("final_quality", "ndcg_at_25")
+    )
+
+    guardrails = {
+        "candidate_8_plus_no_material_regression": cand8_delta >= -0.03,
+        "candidate_9_plus_no_material_regression": cand9_delta >= -0.04,
+        "dislike_exposure_no_material_regression": bad100_delta <= 0.03,
+    }
+    approved = all(guardrails.values()) and delta >= float(min_gain)
+    return {
+        "approved": bool(approved),
+        "baseline_engine": str(baseline.get("engine") or "baseline"),
+        "challenger_engine": str(challenger.get("engine") or "challenger"),
+        "baseline_composite": base_score,
+        "challenger_composite": challenger_score,
+        "composite_delta": round(delta, 8),
+        "candidate_8_plus_delta": round(cand8_delta, 8),
+        "candidate_9_plus_delta": round(cand9_delta, 8),
+        "final_dislike_delta": round(bad100_delta, 8),
+        "ndcg25_delta": round(ndcg25_delta, 8),
+        "minimum_required_gain": float(min_gain),
+        "guardrails": guardrails,
+    }
+
+
+def compare_quality_engines(
+    db_path: str | Path,
+    *,
+    fractions: tuple[float, ...] = (0.20,),
+    candidate_limit: int = 1800,
+    final_limit: int = 100,
+    als_timeout: float = 180.0,
+    baseline_cls=FastRecommendationEngineV16,
+    challenger_cls=None,
+) -> dict:
+    if challenger_cls is None:
+        from .recommender_v17 import FastRecommendationEngineV17
+        challenger_cls = FastRecommendationEngineV17
+
+    folds = []
+    for fraction in fractions:
+        baseline = run_local_backtest(
+            db_path,
+            fraction=float(fraction),
+            candidate_limit=candidate_limit,
+            final_limit=final_limit,
+            als_timeout=als_timeout,
+            engine_cls=baseline_cls,
+        )
+        challenger = run_local_backtest(
+            db_path,
+            fraction=float(fraction),
+            candidate_limit=candidate_limit,
+            final_limit=final_limit,
+            als_timeout=als_timeout,
+            engine_cls=challenger_cls,
+        )
+        verdict = quality_verdict(baseline, challenger)
+        folds.append({"fraction": float(fraction), "baseline": baseline, "challenger": challenger, "verdict": verdict})
+
+    deltas = [float(fold["verdict"]["composite_delta"]) for fold in folds]
+    guardrails_ok = all(all(fold["verdict"]["guardrails"].values()) for fold in folds)
+    positive = sum(1 for value in deltas if value > 0)
+    mean_delta = sum(deltas) / len(deltas) if deltas else -1.0
+    required_mean = 0.01 if len(folds) <= 1 else 0.008
+    approved = bool(
+        folds
+        and guardrails_ok
+        and mean_delta >= required_mean
+        and positive >= max(1, math.ceil(len(folds) / 2))
+    )
+    return {
+        "baseline_engine": _engine_name(baseline_cls),
+        "challenger_engine": _engine_name(challenger_cls),
+        "fractions": [float(x) for x in fractions],
+        "folds": folds,
+        "aggregate": {
+            "approved": approved,
+            "guardrails_ok": guardrails_ok,
+            "positive_folds": positive,
+            "fold_count": len(folds),
+            "mean_composite_delta": round(mean_delta, 8),
+            "minimum_mean_gain": required_mean,
+        },
+    }
 
 
 def report_json(report: dict) -> str:
