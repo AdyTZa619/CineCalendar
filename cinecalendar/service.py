@@ -3,7 +3,8 @@ from pathlib import Path
 
 from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
 from .autoseed import ensure_initial_ratings
-from .calendar_engine_v2 import RichCalendarEngine
+from .calendar_engine_v3 import ContextCalendarEngineV35
+from .context_recommender_v35 import contextual_engine_class
 from .db import Database
 from .logging_setup import setup_logging
 from .quality_manager_v34 import RecommendationQualityManager
@@ -19,30 +20,24 @@ class CineCalendarService:
         self.db = Database(self.paths.data / "cinecalendar.db")
         self._defaults()
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
-        self.calendar = RichCalendarEngine()
+        self.calendar = ContextCalendarEngineV35()
 
-        # 3.4 never promotes a newer recommender merely because it exists. A local temporal A/B
-        # backtest on the user's own ratings must approve V17; otherwise V16 remains production.
+        # 3.4 chooses only the measured V16/V17 taste baseline. 3.5 wraps that exact verdict
+        # with bounded context intelligence; context never becomes a replacement taste model.
         self.quality_manager = RecommendationQualityManager(self.db)
         engine_cls = self.quality_manager.preferred_engine_class()
-
-        # V16 is the hard production compatibility/safety baseline. A future quality manager is
-        # not allowed to inject an unrelated engine class even if its cached verdict is malformed.
-        # V17 deliberately subclasses V16, preserving the Top-3 trust gate and all established
-        # daily-genre/adaptive/Watch-Success behavior while changing only measured quality layers.
         if not issubclass(engine_cls, FastRecommendationEngineV16):
             engine_cls = FastRecommendationEngineV16
-        self.recommender = engine_cls(self.db, self.calendar)
+        production_cls = contextual_engine_class(engine_cls)
+        self.recommender = production_cls(self.db, self.calendar)
 
-        # Production composition uses the validated adaptive V2 learner and the v3.3 exposure-level
-        # Watch Success learner. Base classes remain import-compatible for old tests/backups.
+        # Keep the validated long-term adaptive and exposure-level Watch Success learners.
         self.recommender.adaptive = AdaptivePreferenceLearnerV2(self.db)
         self.recommender.watch_intent = WatchSuccessIntentLearnerV33(self.db)
         self.recommender.collaborative.start_background()
 
-        # Run challenger evaluation after startup, off the UI/recommendation path. A successful
-        # verdict is persisted and becomes active on the next application start while the same
-        # rating/feedback state remains current.
+        # A fresh rating/feedback state can trigger the local V16 vs V17 backtest in the
+        # background. The result is used on the next start and is then wrapped by 3.5.
         self.quality_manager.start_background()
 
     def _defaults(self):
