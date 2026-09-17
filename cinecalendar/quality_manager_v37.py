@@ -5,6 +5,8 @@ import time
 
 from .accuracy_engine_v37 import allowed_local_shares, calibrated_accuracy_engine_class
 from .quality_manager_v36 import RecommendationQualityManagerV36
+from .recommender_v16 import FastRecommendationEngineV16
+from .recommender_v17 import FastRecommendationEngineV17
 from .rolling_backtest_v37 import compare_on_windows, rolling_windows, run_window_backtest
 from .util import utcnow_iso
 
@@ -16,10 +18,9 @@ QUALITY_SETTING = "recommendation_quality_v37"
 class RecommendationQualityManagerV37:
     """Choose a local-retrieval share only after non-overlapping temporal wins for this user.
 
-    Until 3.7 has a valid verdict, the exact 3.6 production decision stays active. Once the rolling
-    evaluation finishes, the reference baseline is the already-proven 3.4 V16/V17 engine, and the
-    challenger differs from it only by the local-content retrieval lane. This prevents an unapproved
-    V17 behavior from piggybacking on a V16 user's local-retrieval test.
+    A changed production stack invalidates the old measurement through the nested V3.4 state token,
+    but the last completed 3.7 engine remains the runtime fallback while recalibration is running.
+    This avoids a temporary downgrade merely because the evaluator itself was corrected.
     """
 
     MIN_RATINGS = 170
@@ -53,6 +54,43 @@ class RecommendationQualityManagerV37:
     def _store(self, payload: dict) -> None:
         self.db.set_setting(QUALITY_SETTING, payload)
 
+    @staticmethod
+    def _baseline_class_from_name(name: str):
+        text = str(name or "")
+        return FastRecommendationEngineV17 if "V17" in text else FastRecommendationEngineV16
+
+    @classmethod
+    def _engine_from_snapshot(cls, snapshot: dict):
+        if not isinstance(snapshot, dict) or not snapshot:
+            return None
+        baseline_cls = cls._baseline_class_from_name(str(snapshot.get("baseline_engine") or ""))
+        if bool(snapshot.get("approved")) and snapshot.get("selected_share") is not None:
+            try:
+                share = float(snapshot.get("selected_share"))
+            except (TypeError, ValueError):
+                share = .14
+            return calibrated_accuracy_engine_class(baseline_cls, share)
+        return baseline_cls
+
+    @classmethod
+    def _fallback_snapshot(cls, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            return {}
+        stored = payload.get("fallback_snapshot")
+        if isinstance(stored, dict) and stored:
+            return dict(stored)
+        if (
+            str(payload.get("manager_version") or "") == QUALITY_MANAGER_VERSION
+            and str(payload.get("status") or "") == "completed"
+        ):
+            verdict = payload.get("selected_verdict") or {}
+            return {
+                "baseline_engine": str(payload.get("baseline_engine") or "FastRecommendationEngineV16"),
+                "approved": bool(verdict.get("approved")),
+                "selected_share": payload.get("selected_share"),
+            }
+        return {}
+
     def preferred_engine_class(self):
         payload = self.cached_report()
         token = self.state_token()
@@ -65,19 +103,27 @@ class RecommendationQualityManagerV37:
             if bool(verdict.get("approved")):
                 share = float(payload.get("selected_share", 0.14) or 0.14)
                 return calibrated_accuracy_engine_class(self.canonical_baseline_class(), share)
-            # A completed 3.7 rejection deliberately returns to the proven 3.4 baseline. The old
-            # 3.6 V18 used overlapping windows and could include V17 even for a V16 baseline.
             return self.canonical_baseline_class()
-        # No new verdict yet: never disrupt a currently validated 3.6 installation.
+
+        # A stack-version change intentionally invalidates the measurement, not the last validated
+        # runtime choice. Preserve that exact old choice while the new backtest runs in background.
+        fallback = self._engine_from_snapshot(self._fallback_snapshot(payload))
+        if fallback is not None:
+            return fallback
         return self.legacy_manager.preferred_engine_class()
 
     def status(self) -> dict:
         payload = self.cached_report()
+        fallback = self._fallback_snapshot(payload)
         payload["current_state_token"] = self.state_token()
         payload["preferred_engine"] = self.preferred_engine_class().__name__
         payload["baseline_engine"] = self.canonical_baseline_class().__name__
         payload["legacy_36_engine"] = self.legacy_manager.preferred_engine_class().__name__
         payload["background_running"] = bool(self._thread and self._thread.is_alive())
+        payload["fallback_snapshot"] = fallback
+        payload["using_previous_validated_engine"] = bool(
+            fallback and str(payload.get("state_token") or "") != self.state_token()
+        )
         payload["legacy_v36"] = self.legacy_manager.status()
         return payload
 
@@ -113,6 +159,15 @@ class RecommendationQualityManagerV37:
         als_timeout: float = 180.0,
     ) -> bool:
         count = self.rating_count()
+        current = self.cached_report()
+        fallback_snapshot = self._fallback_snapshot(current)
+        fallback_engine = self._engine_from_snapshot(fallback_snapshot)
+        fallback_name = (
+            fallback_engine.__name__
+            if fallback_engine is not None
+            else self.legacy_manager.preferred_engine_class().__name__
+        )
+
         if count < self.MIN_RATINGS:
             self._store(
                 {
@@ -121,13 +176,13 @@ class RecommendationQualityManagerV37:
                     "status": "insufficient_ratings",
                     "rating_count": count,
                     "minimum_ratings": self.MIN_RATINGS,
-                    "preferred_engine": self.legacy_manager.preferred_engine_class().__name__,
+                    "preferred_engine": fallback_name,
+                    "fallback_snapshot": fallback_snapshot,
                     "updated_at": utcnow_iso(),
                 }
             )
             return False
 
-        current = self.cached_report()
         if (
             str(current.get("manager_version") or "") == QUALITY_MANAGER_VERSION
             and str(current.get("state_token") or "") == self.state_token()
@@ -149,7 +204,8 @@ class RecommendationQualityManagerV37:
                             "state_token": self.state_token(),
                             "status": "waiting_for_v34",
                             "rating_count": self.rating_count(),
-                            "preferred_engine": self.legacy_manager.preferred_engine_class().__name__,
+                            "preferred_engine": fallback_name,
+                            "fallback_snapshot": fallback_snapshot,
                             "updated_at": utcnow_iso(),
                         }
                     )
@@ -167,7 +223,8 @@ class RecommendationQualityManagerV37:
                             "status": "insufficient_temporal_windows",
                             "rating_count": self.rating_count(),
                             "window_count": len(windows),
-                            "preferred_engine": self.legacy_manager.preferred_engine_class().__name__,
+                            "preferred_engine": fallback_name,
+                            "fallback_snapshot": fallback_snapshot,
                             "updated_at": utcnow_iso(),
                         }
                     )
@@ -182,7 +239,8 @@ class RecommendationQualityManagerV37:
                         "baseline_engine": baseline_cls.__name__,
                         "shares": list(allowed_local_shares()),
                         "window_count": len(windows),
-                        "preferred_engine": self.legacy_manager.preferred_engine_class().__name__,
+                        "preferred_engine": fallback_name,
+                        "fallback_snapshot": fallback_snapshot,
                         "started_at": utcnow_iso(),
                     }
                 )
@@ -231,7 +289,6 @@ class RecommendationQualityManagerV37:
                         ):
                             selected = item
 
-                    # Never publish a verdict for a profile that changed during the experiment.
                     if self.v34_manager.state_token() != rating_token or self.state_token() != token:
                         return
 
@@ -279,7 +336,8 @@ class RecommendationQualityManagerV37:
                             "status": "error",
                             "rating_count": self.rating_count(),
                             "baseline_engine": baseline_cls.__name__,
-                            "preferred_engine": self.legacy_manager.preferred_engine_class().__name__,
+                            "preferred_engine": fallback_name,
+                            "fallback_snapshot": fallback_snapshot,
                             "error": str(exc),
                             "completed_at": utcnow_iso(),
                         }
