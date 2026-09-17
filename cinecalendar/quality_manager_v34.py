@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 
+from .production_engine import PRODUCTION_STACK_VERSION
 from .recommendation_backtest import compare_quality_engines
 from .recommender_v16 import FastRecommendationEngineV16
 from .recommender_v17 import FastRecommendationEngineV17
@@ -17,8 +18,8 @@ class RecommendationQualityManager:
     """Locally decide whether V17 has earned promotion over V16 for this user.
 
     No personal ratings leave the machine. The manager fingerprints the current local rating/
-    feedback state, reuses a cached verdict while that state is unchanged, and otherwise runs a
-    temporal A/B backtest in a daemon thread after startup. V16 remains the production fallback.
+    feedback state and the canonical production-stack version. A stack change therefore forces a
+    fresh local comparison instead of silently reusing a verdict measured under different wrappers.
     """
 
     MIN_RATINGS = 80
@@ -39,6 +40,7 @@ class RecommendationQualityManager:
         return "|".join(
             [
                 QUALITY_MANAGER_VERSION,
+                PRODUCTION_STACK_VERSION,
                 str(int(ratings[0] or 0)),
                 str(ratings[1] or ""),
                 str(ratings[2] or ""),
@@ -70,6 +72,7 @@ class RecommendationQualityManager:
     def status(self) -> dict:
         payload = self.cached_report()
         payload["current_state_token"] = self.state_token()
+        payload["production_stack_version"] = PRODUCTION_STACK_VERSION
         payload["preferred_engine"] = self.preferred_engine_class().__name__
         payload["background_running"] = bool(self._thread and self._thread.is_alive())
         return payload
@@ -99,6 +102,7 @@ class RecommendationQualityManager:
                 {
                     "manager_version": QUALITY_MANAGER_VERSION,
                     "state_token": token,
+                    "production_stack_version": PRODUCTION_STACK_VERSION,
                     "status": "insufficient_ratings",
                     "rating_count": count,
                     "minimum_ratings": self.MIN_RATINGS,
@@ -122,6 +126,7 @@ class RecommendationQualityManager:
                     {
                         "manager_version": QUALITY_MANAGER_VERSION,
                         "state_token": token,
+                        "production_stack_version": PRODUCTION_STACK_VERSION,
                         "status": "running",
                         "rating_count": count,
                         "started_at": utcnow_iso(),
@@ -142,6 +147,7 @@ class RecommendationQualityManager:
                         {
                             "manager_version": QUALITY_MANAGER_VERSION,
                             "state_token": token,
+                            "production_stack_version": PRODUCTION_STACK_VERSION,
                             "status": "completed",
                             "rating_count": count,
                             "preferred_engine": preferred,
@@ -154,6 +160,7 @@ class RecommendationQualityManager:
                         {
                             "manager_version": QUALITY_MANAGER_VERSION,
                             "state_token": token,
+                            "production_stack_version": PRODUCTION_STACK_VERSION,
                             "status": "error",
                             "rating_count": count,
                             "preferred_engine": FastRecommendationEngineV16.__name__,
