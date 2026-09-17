@@ -5,7 +5,7 @@ from datetime import date
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
 
-UI_CONTEXT_VERSION = "context-ui-v3.5.0"
+UI_CONTEXT_VERSION = "context-ui-v3.5.1"
 
 
 def install_context_ui_v35(window_cls) -> None:
@@ -23,14 +23,6 @@ def install_context_ui_v35(window_cls) -> None:
                 preferred = str(quality.get("preferred_engine") or type(self.s.recommender).__name__)
                 baseline = str(quality.get("baseline_engine") or preferred)
                 state = str(quality.get("status") or "în așteptare")
-                strict = quality.get("strict_verdict") or {}
-                comparison = quality.get("comparison") or {}
-                if bool(strict.get("approved")) and "V18" in preferred:
-                    verdict = "V18 aprobat de protecția strictă 3.6"
-                elif "V17" in preferred and bool((comparison.get("aggregate") or {}).get("approved")):
-                    verdict = "V17 aprobat de backtest"
-                else:
-                    verdict = f"{baseline} rămâne etalonul sigur"
 
                 box = QFrame()
                 box.setObjectName("PremiumCard")
@@ -41,7 +33,7 @@ def install_context_ui_v35(window_cls) -> None:
                 heading.setObjectName("SectionTitle")
                 layout.addWidget(heading)
                 line = QLabel(
-                    f"Motor local: {preferred} • stare: {state} • {verdict}. "
+                    f"Motor local selectat: {preferred} • baseline validat: {baseline} • stare: {state}. "
                     f"Context 3.5: {context_status.get('calendar_class', type(self.s.calendar).__name__)} "
                     f"+ gardă de gust {context_status.get('predicted_floor', 6.0):.1f}/10 pentru benzile contextuale."
                 )
