@@ -7,7 +7,7 @@ from .calendar_engine_v3 import ContextCalendarEngineV35
 from .context_recommender_v35 import contextual_engine_class
 from .db import Database
 from .logging_setup import setup_logging
-from .quality_manager_v36 import RecommendationQualityManagerV36
+from .quality_manager_v37 import RecommendationQualityManagerV37
 from .recommender_v16 import FastRecommendationEngineV16
 from .watch_success_v33 import WatchSuccessIntentLearnerV33
 from .util import AppPaths
@@ -22,10 +22,10 @@ class CineCalendarService:
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = ContextCalendarEngineV35()
 
-        # 3.6 keeps the already-approved V16/V17 result as baseline. V18 is used only if a new,
-        # stricter two-fold local backtest proves that the additional metadata retrieval improves
-        # this user's results without material recall, dislike-exposure or NDCG regressions.
-        self.quality_manager = RecommendationQualityManagerV36(self.db)
+        # 3.7 keeps the current 3.6 production decision until a stricter personal rolling backtest
+        # finishes. The challenger then differs from the proven V16/V17 baseline only by the local
+        # retrieval lane, whose share is calibrated on this user's own non-overlapping time windows.
+        self.quality_manager = RecommendationQualityManagerV37(self.db)
         engine_cls = self.quality_manager.preferred_engine_class()
         if not issubclass(engine_cls, FastRecommendationEngineV16):
             engine_cls = FastRecommendationEngineV16
@@ -37,8 +37,8 @@ class CineCalendarService:
         self.recommender.watch_intent = WatchSuccessIntentLearnerV33(self.db)
         self.recommender.collaborative.start_background()
 
-        # Evaluation runs off the recommendation path. A positive 3.6 verdict becomes active only
-        # on a later launch, so a running session never changes its engine underneath the user.
+        # Evaluation stays off the recommendation path. A new 3.7 decision becomes active only on
+        # a later launch, so a running session never changes its engine underneath the user.
         self.quality_manager.start_background()
 
     def _defaults(self):
