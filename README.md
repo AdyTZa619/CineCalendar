@@ -13,17 +13,23 @@ Datele sunt păstrate în `CineCalendarData` lângă bundle. Update-ul nu șterg
 
 ## Motorul curent
 
-Serviciul de producție folosește `FastRecommendationEngineV16`, compus cu:
+CineCalendar nu presupune că motorul cu numărul cel mai mare este automat mai bun. V16/V17 formează baseline-ul de gust măsurat local, iar versiunile ulterioare pot intra în producție numai dacă propriul istoric al utilizatorului dovedește îmbunătățirea.
+
+În 3.7, serviciul compune motorul selectat local cu:
 
 - retrieval personal ALS + vecini ai favoritelor + discovery;
 - profil personal pe termen lung din ratingurile 1–10;
 - Adaptive Personal v2 cu validare temporală și influență plafonată;
-- calendar ortodox/secular/sezonier ca semnal contextual;
-- Watch Success v3.3 pe funnel-uri de **expunere**, nu pe `film + zi`;
+- Watch Success v3.3 la nivel de expunere concretă;
 - Startability ca departajare limitată între candidați deja competitivi;
-- Top-3 trust gate V16 pentru setul mic de decizie.
+- Top-3 trust/red-flag gate;
+- Context Intelligence 3.5 ca strat bounded peste motorul aprobat;
+- Availability Guard 3.7, care elimină filmele cu dată/an de lansare cunoscut în viitor fără să reordoneze filmele eligibile;
+- calibrare 3.7 a lane-ului local de conținut la 8%, 14% sau 20%, numai dacă acesta bate baseline-ul pe ferestre temporale independente.
 
-Nota „pentru tine”, încrederea, Startability și trust gate sunt semnale distincte.
+Evaluarea 3.7 folosește ferestre de holdout ne-suprapuse. Pentru o fereastră istorică, ratingurile din acea fereastră și toate ratingurile ulterioare sunt eliminate din copia de training, iar baseline-ul și challengerul sunt evaluate cu aceeași regulă de disponibilitate a filmelor. Dacă niciun procent nu trece toate gardurile de recall 8+/9+, NDCG, expunere a filmelor slab notate și scor compozit, baseline-ul validat rămâne activ.
+
+Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3
 
@@ -82,7 +88,7 @@ Pentru audit local:
 python scripts/audit_watch_success.py "C:\cale\CineCalendarData\data\cinecalendar.db"
 ```
 
-Pragurile V16 nu sunt auto-reglate din câteva clickuri. Recalibrarea trebuie făcută numai după suficiente rezultate reale și legături exacte.
+Pragurile de recomandare nu sunt auto-reglate din câteva clickuri. Calibrarea motorului se face numai cu suficient istoric și cu backtesturi temporale locale.
 
 ## Limitări
 
