@@ -167,7 +167,48 @@ jobs:
             throw "Stable release $tag already exists. Bump CineCalendar __version__; same-version replacement is forbidden."
           }
 
-          gh release create $tag $zipName --target $current --title "CineCalendar $version Premium" --notes $notes --repo '${{ github.repository }}'
+          gh release create $tag --target $current --title "CineCalendar $version Premium" --notes $notes --repo '${{ github.repository }}'
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create Stable release $tag." }
+
+          $uploaded = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            gh release upload $tag $zipName --clobber --repo '${{ github.repository }}'
+            if ($LASTEXITCODE -eq 0) { $uploaded = $true; break }
+            Write-Warning "Release asset upload attempt $attempt failed; retrying."
+            Start-Sleep -Seconds (5 * $attempt)
+          }
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP "cinecalendar-release-verify-$version"
+          New-Item -ItemType Directory -Force -Path $verifyDir | Out-Null
+          $downloaded = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Remove-Item -LiteralPath (Join-Path $verifyDir $zipName) -Force -ErrorAction SilentlyContinue
+            gh release download $tag --pattern $zipName --dir $verifyDir --repo '${{ github.repository }}'
+            if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $verifyDir $zipName))) { $downloaded = $true; break }
+            Write-Warning "Release verification download attempt $attempt failed; retrying."
+            Start-Sleep -Seconds (5 * $attempt)
+          }
+          if (-not $uploaded -and -not $downloaded) {
+            gh release delete $tag --yes --cleanup-tag --repo '${{ github.repository }}'
+            throw "Failed to upload Stable asset $zipName after retries."
+          }
+          if (-not $downloaded) {
+            gh release delete $tag --yes --cleanup-tag --repo '${{ github.repository }}'
+            throw "Stable asset $zipName is not downloadable after publication."
+          }
+          $remoteSha = (Get-FileHash (Join-Path $verifyDir $zipName) -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($remoteSha -ne $sha) {
+            gh release delete $tag --yes --cleanup-tag --repo '${{ github.repository }}'
+            throw "Published ZIP SHA mismatch: expected $sha, got $remoteSha."
+          }
+
+          $releaseJson = gh release view $tag --json tagName,isDraft,isPrerelease,assets --repo '${{ github.repository }}'
+          if ($LASTEXITCODE -ne 0) { throw "Unable to verify Stable release $tag." }
+          $release = $releaseJson | ConvertFrom-Json
+          $asset = @($release.assets | Where-Object { $_.name -eq $zipName })
+          if ($release.isDraft -or $release.isPrerelease -or $asset.Count -ne 1) {
+            throw "Stable release verification failed for $tag / $zipName."
+          }
 
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/$zipName"
           $manifest = [ordered]@{
