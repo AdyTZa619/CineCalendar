@@ -16,9 +16,9 @@ class _ContextGuardMixin:
     """Bound calendar/context influence without replacing long-term taste.
 
     The normal recommendation path remains rating-first. For the visible Top 3, one secondary slot
-    may become period-aware only when a contextual candidate is already close to the best safe
-    personal match. This makes the app feel appropriate to the date without allowing calendar or
-    atmosphere to rescue a film the personal model expects the user to dislike.
+    may become period-aware only when that title is already present in the exact Top 3 selected by
+    the validated engine. Context may reorder slots 2-3, but it cannot change the Top-3 membership,
+    replace the primary choice or rescue a weaker title from outside the validated result set.
     """
 
     CONTEXT_RECOMMENDER_VERSION = CONTEXT_RECOMMENDER_VERSION
@@ -27,7 +27,7 @@ class _ContextGuardMixin:
     _SOFT_CONTEXT_LANES = {"related", "season", "atmosphere"}
 
     PERIOD_SLOT_MAX_VISIBLE = 3
-    PERIOD_POOL_SIZE = 9
+    PERIOD_POOL_SIZE = 3
     PERIOD_FINAL_GAP = .085
     PERIOD_PREDICTED_FLOOR = 6.35
     PERIOD_PREDICTED_GAP = .80
@@ -112,7 +112,7 @@ class _ContextGuardMixin:
 
         anchor = ordered[0]
         candidates = [
-            rec for rec in ordered[1:]
+            rec for rec in ordered[1:requested]
             if cls._period_candidate_allowed(rec, anchor)
         ]
         if not candidates:
@@ -135,7 +135,7 @@ class _ContextGuardMixin:
 
         period_pick = max(candidates, key=value)
         chosen = [anchor, period_pick]
-        for rec in ordered[1:]:
+        for rec in ordered[1:requested]:
             if len(chosen) >= requested:
                 break
             if rec is period_pick:
@@ -154,7 +154,7 @@ class _ContextGuardMixin:
             (
                 "Potrivire cu perioada",
                 0.0,
-                reason + " Contextul doar departajează finaliști deja competitivi; nu schimbă nota estimată pentru tine.",
+                reason + " Contextul doar ordonează finaliștii Top 3 deja validați; nu schimbă nota estimată pentru tine.",
             ),
         )
         payload = dict(getattr(period_pick.score, "trust_audit", {}) or {})
@@ -166,27 +166,15 @@ class _ContextGuardMixin:
 
     def _adaptive_rerank(self, recs, count: int):
         requested = max(1, int(count))
+        # First obtain the exact same result set the already-validated downstream engine would
+        # return for this request. This preserves candidate membership and the primary choice.
+        selected = list(super()._adaptive_rerank(recs, requested))
         if requested > self.PERIOD_SLOT_MAX_VISIBLE or requested <= 1:
-            return super()._adaptive_rerank(recs, requested)
-
-        # Ask the proven downstream engine/trust gate for a small safe finalist pool first. Only
-        # after that may context choose one secondary slot. This cannot reach back into weak/raw
-        # candidates and therefore cannot bypass Adaptive, Watch Success, Startability or V16 trust.
-        pool_size = min(
-            int(getattr(self, "QUALITY_GATE_MAX_VISIBLE", self.PERIOD_POOL_SIZE)),
-            max(self.PERIOD_POOL_SIZE, requested),
-        )
-        ordered = list(super()._adaptive_rerank(recs, pool_size))
-        selected = self._period_aware_select(ordered, requested)
+            return selected
+        selected = self._period_aware_select(selected, requested)
 
         stats = getattr(self, "_quality_gate_stats", None)
         if isinstance(stats, dict):
-            trusted_returned = sum(
-                1 for rec in selected
-                if str((getattr(rec.score, "trust_audit", {}) or {}).get("status") or "") == "trusted"
-            )
-            stats["returned"] = len(selected)
-            stats["fallback"] = max(0, len(selected) - trusted_returned)
             stats["period_context_slot"] = any(
                 bool((getattr(rec.score, "trust_audit", {}) or {}).get("period_context_slot"))
                 for rec in selected
@@ -250,6 +238,8 @@ class _ContextGuardMixin:
                 "predicted_floor": self.PERIOD_PREDICTED_FLOOR,
                 "calendar_min": self.PERIOD_CALENDAR_MIN,
                 "season_min": self.PERIOD_SEASON_MIN,
+                "membership_preserved": True,
+                "primary_preserved": True,
             },
         }
 
