@@ -1,16 +1,13 @@
 from __future__ import annotations
 from pathlib import Path
 
-from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
 from .autoseed import ensure_initial_ratings
-from .availability_guard_v37 import availability_engine_class
 from .calendar_engine_v3 import ContextCalendarEngineV35
-from .context_recommender_v35 import contextual_engine_class
 from .db import Database
 from .logging_setup import setup_logging
+from .production_engine import build_production_recommender, production_stack_status
 from .quality_manager_v37 import RecommendationQualityManagerV37
 from .recommender_v16 import FastRecommendationEngineV16
-from .watch_success_v33 import WatchSuccessIntentLearnerV33
 from .util import AppPaths
 
 
@@ -23,23 +20,15 @@ class CineCalendarService:
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = ContextCalendarEngineV35()
 
-        # 3.7 keeps the current 3.6 production decision until a stricter personal rolling backtest
-        # finishes. The challenger then differs from the proven V16/V17 baseline only by the local
-        # retrieval lane, whose share is calibrated on this user's own non-overlapping time windows.
+        # 3.7 keeps the current validated engine until a stricter personal rolling backtest has a
+        # verdict. 3.8 centralizes every wrapper/learner so production and evaluation cannot drift.
         self.quality_manager = RecommendationQualityManagerV37(self.db)
         engine_cls = self.quality_manager.preferred_engine_class()
-        if not issubclass(engine_cls, FastRecommendationEngineV16):
+        if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
             engine_cls = FastRecommendationEngineV16
 
-        # Known future releases are removed without changing the order/scores of eligible titles.
-        # Context 3.5 then wraps that exact engine; it must never collapse V18/V19 back to V16/V17.
-        available_cls = availability_engine_class(engine_cls)
-        production_cls = contextual_engine_class(available_cls)
-        self.recommender = production_cls(self.db, self.calendar)
-
-        # Preserve the validated long-term adaptive, Watch Success and 3.5 context layers.
-        self.recommender.adaptive = AdaptivePreferenceLearnerV2(self.db)
-        self.recommender.watch_intent = WatchSuccessIntentLearnerV33(self.db)
+        self.recommender = build_production_recommender(self.db, engine_cls, self.calendar)
+        self.production_stack = production_stack_status(self.recommender)
         self.recommender.collaborative.start_background()
 
         # Evaluation stays off the recommendation path. A new 3.7 decision becomes active only on
