@@ -14,10 +14,13 @@ from cinecalendar.context_recommender_v35 import (
 from cinecalendar.db import Database
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
 from cinecalendar.production_engine import (
+    PRODUCTION_STACK_VERSION,
     build_production_recommender,
     production_engine_class,
     production_stack_status,
 )
+from cinecalendar.quality_manager_v37 import QUALITY_MANAGER_VERSION, RecommendationQualityManagerV37
+from cinecalendar.recommendation_backtest import _build_engine
 from cinecalendar.recommender_v16 import FastRecommendationEngineV16
 from cinecalendar.recommender_v17 import FastRecommendationEngineV17
 from cinecalendar.service import CineCalendarService
@@ -82,11 +85,25 @@ def test_builder_installs_exact_current_calendar_and_learners(tmp_path):
     assert isinstance(engine.calendar, ContextCalendarEngineV35)
     assert isinstance(engine.adaptive, AdaptivePreferenceLearnerV2)
     assert isinstance(engine.watch_intent, WatchSuccessIntentLearnerV33)
+    assert status["version"] == PRODUCTION_STACK_VERSION
     assert status["availability_guard"] is True
     assert status["context_guard"] is True
     assert status["calendar_class"] == "ContextCalendarEngineV35"
     assert status["adaptive_class"] == "AdaptivePreferenceLearnerV2"
     assert status["watch_intent_class"] == "WatchSuccessIntentLearnerV33"
+
+
+def test_backtest_builder_exercises_the_same_production_stack(tmp_path):
+    db = Database(tmp_path / "backtest-stack.db")
+    engine = _build_engine(FastRecommendationEngineV16, db)
+    status = production_stack_status(engine)
+
+    assert status["version"] == PRODUCTION_STACK_VERSION
+    assert status["availability_guard"] is True
+    assert status["context_guard"] is True
+    assert isinstance(engine.calendar, ContextCalendarEngineV35)
+    assert isinstance(engine.adaptive, AdaptivePreferenceLearnerV2)
+    assert isinstance(engine.watch_intent, WatchSuccessIntentLearnerV33)
 
 
 def test_service_uses_single_canonical_builder_not_ad_hoc_wrapper_chain():
@@ -95,6 +112,44 @@ def test_service_uses_single_canonical_builder_not_ad_hoc_wrapper_chain():
     assert "production_stack_status" in source
     assert "availability_engine_class(" not in source
     assert "contextual_engine_class(" not in source
+
+
+def test_last_validated_v19_is_preserved_while_new_stack_recalibrates(tmp_path):
+    db = Database(tmp_path / "fallback-approved.db")
+    db.set_setting(
+        "recommendation_quality_v37",
+        {
+            "manager_version": QUALITY_MANAGER_VERSION,
+            "state_token": "old-stack-token",
+            "status": "completed",
+            "baseline_engine": "FastRecommendationEngineV17",
+            "selected_share": .20,
+            "selected_verdict": {"approved": True},
+        },
+    )
+    manager = RecommendationQualityManagerV37(db)
+    cls = manager.preferred_engine_class()
+
+    assert LocalContentAccuracyMixinV37 in cls.__mro__
+    assert FastRecommendationEngineV17 in cls.__mro__
+    assert getattr(cls, "LOCAL_CONTENT_SHARE", None) == .20
+
+
+def test_last_validated_baseline_is_preserved_after_old_v37_rejection(tmp_path):
+    db = Database(tmp_path / "fallback-baseline.db")
+    db.set_setting(
+        "recommendation_quality_v37",
+        {
+            "manager_version": QUALITY_MANAGER_VERSION,
+            "state_token": "old-stack-token",
+            "status": "completed",
+            "baseline_engine": "FastRecommendationEngineV17",
+            "selected_share": None,
+            "selected_verdict": {"approved": False},
+        },
+    )
+    manager = RecommendationQualityManagerV37(db)
+    assert manager.preferred_engine_class() is FastRecommendationEngineV17
 
 
 def test_period_slot_promotes_only_a_close_good_contextual_finalist():
@@ -114,6 +169,7 @@ def test_period_slot_promotes_only_a_close_good_contextual_finalist():
     )
 
     assert [rec.movie.id for rec in selected] == [1, 3, 2]
+    assert selected[0] is anchor
     assert selected[1].score.trust_audit["period_context_slot"] is True
     assert selected[1].score.trust_audit["top3_role"] == "period_context"
     assert selected[1].score.predicted_rating == 7.8
