@@ -40,6 +40,12 @@ class CineCalendarService:
         self.db.set_setting("exclude_romance", False)
         if self.db.get_setting("auto_watch_enabled", None) is None:
             self.db.set_setting("auto_watch_enabled", True)
+        if self.db.get_setting("imdb_public_sync_enabled", None) is None:
+            self.db.set_setting("imdb_public_sync_enabled", True)
+        if self.db.get_setting("imdb_public_ratings_url", None) is None:
+            self.db.set_setting("imdb_public_ratings_url", "https://www.imdb.com/user/p.666yozwb6likjcvvjlu2hwmtli/ratings/")
+        if self.db.get_setting("imdb_public_sync_baseline", None) is None:
+            self.db.set_setting("imdb_public_sync_baseline", "2026-09-05")
         if self.db.get_setting("ratings_folder", None) is None:
             self.db.set_setting("ratings_folder", str(Path.home() / "Downloads"))
         if self.db.get_setting("theme", None) is None:
