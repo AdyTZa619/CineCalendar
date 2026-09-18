@@ -25,6 +25,7 @@ from .imdb_import import import_imdb_csv, add_manual_rating
 from .imdb_sync import sync_public_ratings
 from .profile import build_profile, get_profile, top_profile_features
 from .recommendation import Recommendation
+from .romanian_films import romanian_chapters, romanian_films
 from .tmdb import TmdbProvider, enrich_library
 from .util import json_loads
 from .watcher import RatingsFolderWatcher
@@ -111,7 +112,7 @@ class ScoreDialog(QDialog):
 class CineCalendarWindow(QMainWindow):
     NAV = [
         ("today", "Azi"), ("calendar", "Calendar"), ("month", "Programul lunii"),
-        ("profile", "Profilul meu"), ("ratings", "Ratinguri IMDb"), ("watchlist", "Watchlist"),
+        ("romanian", "Filme românești"), ("profile", "Profilul meu"), ("ratings", "Ratinguri IMDb"), ("watchlist", "Watchlist"),
         ("history", "Istoric recomandări"), ("settings", "Setări")
     ]
 
@@ -431,6 +432,47 @@ class CineCalendarWindow(QMainWindow):
                 build_profile(self.db); r=results[0]; self.set_status(f"Export IMDb nou importat: {len(r.new_ratings)} ratinguri noi, {len(r.changed_ratings)} modificate.")
                 if self.current_page=="ratings": self.show_page("ratings")
         except Exception as exc: self.s.log.exception("ratings watcher failed"); self.set_status("Monitorizarea IMDb a întâmpinat o eroare.")
+
+    def page_romanian(self):
+        page,content=self.page_shell(
+            "Filme românești",
+            "Lista de văzut în cronologia perioadei acțiunii — nu după anul producției",
+        )
+        entries=romanian_films()
+        chapters=romanian_chapters()
+
+        summary=self.card(); sl=QVBoxLayout(summary)
+        sh=QLabel(f"{len(entries)} titluri rămase de văzut • 12 capitole cronologice"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
+        sd=QLabel("Ordinea și datele sunt cele din lista ta revizuită. «NECONFIRMAT» rămâne neconfirmat; aplicația nu inventează o datare."); sd.setObjectName("Muted"); sd.setWordWrap(True); sl.addWidget(sd)
+        content.addWidget(summary)
+
+        for chapter in chapters:
+            chapter_entries=[x for x in entries if x.chapter==chapter["id"]]
+            title=QLabel(f'{chapter["id"]}. {chapter["title"]} — {len(chapter_entries)} titluri')
+            title.setObjectName("CardTitle"); content.addWidget(title)
+
+            table=QTableWidget(len(chapter_entries),5)
+            table.setHorizontalHeaderLabels(["Film","Perioada acțiunii","Lună / anotimp","Context","Certitudine / sursă"])
+            table.setAlternatingRowColors(True); table.setEditTriggers(QTableWidget.NoEditTriggers)
+            table.setSelectionBehavior(QTableWidget.SelectRows); table.verticalHeader().setVisible(False)
+            table.setWordWrap(True)
+            header=table.horizontalHeader()
+            header.setSectionResizeMode(0,QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(1,QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(2,QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(3,QHeaderView.Stretch)
+            header.setSectionResizeMode(4,QHeaderView.Stretch)
+            for i,item in enumerate(chapter_entries):
+                vals=(item.film,item.period,item.season,item.context,item.certainty_source)
+                for j,val in enumerate(vals):
+                    cell=QTableWidgetItem(val)
+                    cell.setToolTip(val)
+                    table.setItem(i,j,cell)
+                table.resizeRowToContents(i)
+            table.setMinimumHeight(min(620, 60 + sum(max(34, table.rowHeight(i)) for i in range(len(chapter_entries)))))
+            content.addWidget(table)
+        content.addStretch(1)
+        return page
 
     def page_watchlist(self):
         page,content=self.page_shell("Watchlist","Filmele marcate «Vreau să văd»")
