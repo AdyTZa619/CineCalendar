@@ -369,6 +369,10 @@ class CineCalendarWindow(QMainWindow):
         if not self.db.get_setting("imdb_public_sync_enabled", True):
             return
         if self.worker and self.worker.isRunning():
+            # Startup catalog work can overlap the first IMDb check. Retry shortly instead of
+            # silently postponing synchronization for the full 30-minute timer interval.
+            if silent:
+                QTimer.singleShot(60000, lambda: self.sync_imdb_public(silent=True))
             return
         url = str(self.db.get_setting("imdb_public_ratings_url", "") or "").strip()
         if not url:
