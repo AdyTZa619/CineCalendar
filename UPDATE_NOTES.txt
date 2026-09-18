@@ -1,7 +1,18 @@
-CineCalendar 3.9.1 adaugă ordonarea implicită a recomandărilor vizibile după perioada în care se desfășoară acțiunea filmului, nu după anul lansării.
+CineCalendar 3.9.2 adaugă, ca primă etapă, o secțiune separată „Filme românești” construită după lista ta revizuită de 233 de titluri.
 
-Ordinea cronologică urmărește perioadele narative de la Antichitate și Evul Mediu până la războaiele mondiale, perioada comunistă, anii 1990, anii 2000, prezent și viitor. Când metadatele nu oferă suficiente indicii despre perioada acțiunii, filmul rămâne într-o ordine stabilă și anul lansării nu este folosit ca substitut fals pentru anul poveștii.
+Secțiunea păstrează modelul documentului: cele 12 capitole cronologice și coloanele Film, Perioada acțiunii, Lună/anotimp, Context și Certitudine/sursă. Ordinea este cea a perioadei acțiunii din lista ta, nu anul producției.
 
-Selecția și scorurile motorului de recomandare rămân neschimbate: ordonarea cronologică se aplică numai după ce motorul a ales recomandările finale.
+Au fost adăugate trei filtre:
+- De văzut — implicit;
+- Văzute;
+- Toate.
 
-3.9.1 include în continuare sincronizarea automată IMDb și repararea TLS/updaterului introduse în 3.9.0.
+Starea VĂZUT este legată automat de ratingurile tale IMDb. După o sincronizare IMDb reușită, dacă un titlu din această listă este identificat în ratingurile tale, el dispare automat din „De văzut” și rămâne accesibil în „Văzute” și „Toate”, împreună cu nota ta.
+
+Potrivirea este conservatoare: folosește titlul/titlul original și, unde lista conține anul producției, cere și anul corect pentru a evita eliminarea unui remake sau a unui film cu același nume.
+
+Secțiunea nouă este separată de pagina existentă „Cinema românesc”, care continuă să ofere recomandări românești personalizate.
+
+3.9.2 elimină și modificarea greșită introdusă temporar în 3.9.1 care reordona recomandările generale după perioada acțiunii. Motorul și ordinea recomandărilor generale revin la comportamentul anterior.
+
+Aceasta este intenționat doar etapa bazată pe lista ta. Extinderea la catalogul complet de filme românești se face după ce verifici această versiune.
