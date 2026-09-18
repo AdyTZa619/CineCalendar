@@ -68,7 +68,7 @@ def infer_story_period(rec: Recommendation) -> StoryPeriod | None:
     # distinctive eras first. This is deliberately metadata-only: no network call on ranking.
     matches = []
     for rank, default_year, label, terms in _PERIODS:
-        hits = sum(1 for term in terms if term in text)
+        hits = sum(1 for term in terms if re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text))
         if hits:
             matches.append((hits, rank, default_year, label))
     if matches:
