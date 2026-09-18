@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QSizePolicy, QGridLayout, QGroupBox, QTextBrowser, QSpacerItem
 )
 
+from . import __version__
 from .backup import export_profile, import_profile
 from .catalog import bootstrap_official_imdb_catalog, import_imdb_datasets
 from .feedback import apply_feedback
