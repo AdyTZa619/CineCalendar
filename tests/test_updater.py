@@ -8,6 +8,7 @@ import pytest
 from cinecalendar.updater import (
     POST_UPDATE_MODE,
     _safe_extract_zip,
+    _repair_frozen_ca_bundle,
     health_matches,
     is_newer_version,
     parse_manifest,
@@ -95,3 +96,26 @@ def test_safe_extract_rejects_zip_slip(tmp_path):
         z.writestr("_internal/runtime.dll", b"runtime")
     with pytest.raises(RuntimeError):
         _safe_extract_zip(archive, tmp_path / "stage")
+
+
+def test_frozen_updater_removes_stale_ca_environment(monkeypatch, tmp_path):
+    import cinecalendar.updater as updater
+    missing = tmp_path / "old-build" / "_internal" / "certifi" / "cacert.pem"
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(missing))
+    monkeypatch.setenv("CURL_CA_BUNDLE", str(missing))
+    monkeypatch.setenv("SSL_CERT_FILE", str(missing))
+    _repair_frozen_ca_bundle()
+    assert "REQUESTS_CA_BUNDLE" not in updater.os.environ
+    assert "CURL_CA_BUNDLE" not in updater.os.environ
+    assert "SSL_CERT_FILE" not in updater.os.environ
+
+
+def test_frozen_updater_keeps_valid_ca_environment(monkeypatch, tmp_path):
+    import cinecalendar.updater as updater
+    ca = tmp_path / "cacert.pem"
+    ca.write_text("test", encoding="utf-8")
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(ca))
+    _repair_frozen_ca_bundle()
+    assert updater.os.environ["REQUESTS_CA_BUNDLE"] == str(ca)
