@@ -31,7 +31,7 @@ from .util import json_loads
 from .watcher import RatingsFolderWatcher
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = __version__
 
 DARK = {
     "bg": "#0B0F14", "surface": "#121821", "card": "#171F2A", "card2": "#1C2633",
