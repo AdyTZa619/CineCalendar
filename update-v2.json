@@ -1,9 +1,9 @@
 {
-  "version": "3.9.0",
-  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.0/CineCalendar-3.9.0-Premium-Windows-x64.zip",
-  "sha256": "062be5226d0479f8ca359be9406d0ce0a82dd712b6f9e858722979e1d7c96fed",
-  "notes": "CineCalendar 3.9.0 adaugă sincronizarea automată, incrementală și fail-safe a ratingurilor din profilul public IMDb configurat. Exportul CSV din 05.09.2026 rămâne baza istorică; ratingurile noi sunt adăugate după IMDb title ID, iar ratingurile modificate sunt actualizate fără duplicate.\r\n\r\nSincronizarea rulează după pornire și periodic, poate fi pornită și manual, iar răspunsurile IMDb invalide, erorile de rețea sau importurile parțiale nu modifică baza locală. O sincronizare reușită fără modificări este înregistrată corect.\r\n\r\n3.9.0 repară și updaterul portabil Windows pentru buildurile care păstrează căi TLS/CA vechi către certifi. Căile invalide sunt eliminate înaintea cererilor HTTPS, astfel încât updaterul să poată folosi certificatele valide disponibile în buildul curent.\r\n\r\nBuildul păstrează motorul de recomandare existent; acest release nu introduce încă ordonarea implicită după perioada desfășurării acțiunii.",
-  "publishedAt": "2026-09-18T20:31:51.5151529Z",
+  "version": "3.9.1",
+  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.1/CineCalendar-3.9.1-Premium-Windows-x64.zip",
+  "sha256": "2eccb1cfba9e13c15e2b972a6493b8ed0d5dc95175e216d7844efbcb2a1b58eb",
+  "notes": "CineCalendar 3.9.1 adaugă ordonarea implicită a recomandărilor vizibile după perioada în care se desfășoară acțiunea filmului, nu după anul lansării.\r\n\r\nOrdinea cronologică urmărește perioadele narative de la Antichitate și Evul Mediu până la războaiele mondiale, perioada comunistă, anii 1990, anii 2000, prezent și viitor. Când metadatele nu oferă suficiente indicii despre perioada acțiunii, filmul rămâne într-o ordine stabilă și anul lansării nu este folosit ca substitut fals pentru anul poveștii.\r\n\r\nSelecția și scorurile motorului de recomandare rămân neschimbate: ordonarea cronologică se aplică numai după ce motorul a ales recomandările finale.\r\n\r\n3.9.1 include în continuare sincronizarea automată IMDb și repararea TLS/updaterului introduse în 3.9.0.",
+  "publishedAt": "2026-09-18T21:31:01.3233925Z",
   "channel": "stable",
   "package": "onedir-zip"
 }
