@@ -17,6 +17,21 @@ import zipfile
 import requests
 
 
+def _repair_frozen_ca_bundle() -> None:
+    """Repair stale REQUESTS_CA_BUNDLE/SSL_CERT_FILE paths left by older portable builds."""
+    if not getattr(sys, "frozen", False):
+        return
+    for key in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"):
+        value = os.environ.get(key)
+        if value and not Path(value).is_file():
+            os.environ.pop(key, None)
+
+
+def _request_kwargs() -> dict:
+    _repair_frozen_ca_bundle()
+    return {}
+
+
 # v2 manifest is ZIP/folder aware. The legacy update.json remains a bridge manifest
 # so CineCalendar 2.1 can safely migrate from the old single-EXE updater.
 MANIFEST_URL = (
@@ -91,6 +106,7 @@ def parse_manifest(payload: dict) -> UpdateInfo:
 def check_for_update(current_version: str, timeout: int = 12) -> UpdateInfo | None:
     response = requests.get(
         MANIFEST_URL,
+        **_request_kwargs(),
         timeout=(5, timeout),
         headers={"User-Agent": f"CineCalendar/{current_version}", "Cache-Control": "no-cache"},
     )
@@ -131,7 +147,7 @@ def _download_to(url: str, destination: Path, progress: Callable[[str], None] | 
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(destination.suffix + ".download")
     tmp.unlink(missing_ok=True)
-    with requests.get(url, stream=True, timeout=(10, 240), headers={"User-Agent": "CineCalendar-Updater/2.2"}) as r:
+    with requests.get(url, stream=True, **_request_kwargs(), timeout=(10, 240), headers={"User-Agent": "CineCalendar-Updater/2.2"}) as r:
         r.raise_for_status()
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
