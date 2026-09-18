@@ -4,7 +4,6 @@ from datetime import date
 import math
 
 from .models import Recommendation
-from .story_period import order_recommendations_by_story_period
 from .recommender_v12 import FastRecommendationEngineV12
 from .recommender_v15 import FastRecommendationEngineV15
 from .trust_audit import ensure_trust_audit_schema, record_trust_snapshot
@@ -353,9 +352,6 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
             runtime_min=runtime_min,
         )
         selected = self._adaptive_rerank(list(base), requested)
-        # Selection remains quality/trust driven; only the final visible presentation is
-        # chronological by the period in which the story takes place.
-        selected = order_recommendations_by_story_period(selected)
         self._annotate_final_als(selected)
         if record and selected:
             self._record_selected(selected, when, slot, len(base))
