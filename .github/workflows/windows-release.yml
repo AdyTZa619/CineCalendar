@@ -139,6 +139,7 @@ jobs:
           retention-days: 30
 
       - name: Publish Stable bundle and updater manifest
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
