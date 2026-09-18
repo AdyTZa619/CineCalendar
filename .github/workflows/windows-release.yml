@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: ["main"]
   push:
-    branches: ["main"]
+    branches: ["main", "feature/imdb-auto-sync"]
     paths-ignore:
       - "update-v2.json"
       - "collaborative-model.json"
@@ -139,7 +139,7 @@ jobs:
           retention-days: 30
 
       - name: Publish Stable bundle and updater manifest
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
