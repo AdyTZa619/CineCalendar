@@ -1,7 +1,7 @@
-CineCalendar 3.9.0 adaugă sincronizarea automată, incrementală și fail-safe a ratingurilor din profilul public IMDb configurat. Exportul CSV din 05.09.2026 rămâne baza istorică; ratingurile noi sunt adăugate după IMDb title ID, iar ratingurile modificate sunt actualizate fără duplicate.
+CineCalendar 3.9.1 adaugă ordonarea implicită a recomandărilor vizibile după perioada în care se desfășoară acțiunea filmului, nu după anul lansării.
 
-Sincronizarea rulează după pornire și periodic, poate fi pornită și manual, iar răspunsurile IMDb invalide, erorile de rețea sau importurile parțiale nu modifică baza locală. O sincronizare reușită fără modificări este înregistrată corect.
+Ordinea cronologică urmărește perioadele narative de la Antichitate și Evul Mediu până la războaiele mondiale, perioada comunistă, anii 1990, anii 2000, prezent și viitor. Când metadatele nu oferă suficiente indicii despre perioada acțiunii, filmul rămâne într-o ordine stabilă și anul lansării nu este folosit ca substitut fals pentru anul poveștii.
 
-3.9.0 repară și updaterul portabil Windows pentru buildurile care păstrează căi TLS/CA vechi către certifi. Căile invalide sunt eliminate înaintea cererilor HTTPS, astfel încât updaterul să poată folosi certificatele valide disponibile în buildul curent.
+Selecția și scorurile motorului de recomandare rămân neschimbate: ordonarea cronologică se aplică numai după ce motorul a ales recomandările finale.
 
-Buildul păstrează motorul de recomandare existent; acest release nu introduce încă ordonarea implicită după perioada desfășurării acțiunii.
+3.9.1 include în continuare sincronizarea automată IMDb și repararea TLS/updaterului introduse în 3.9.0.
