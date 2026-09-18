@@ -106,6 +106,7 @@ def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int 
     after = None
     out: list[RemoteRating] = []
     seen: set[str] = set()
+    exhausted = False
     for _ in range(max_pages):
         response = client.post(
             GRAPHQL_URL,
@@ -136,10 +137,13 @@ def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int 
                 out.append(rr)
         page = conn.get("pageInfo") or {}
         if not page.get("hasNextPage"):
+            exhausted = True
             break
         after = page.get("endCursor")
         if not after:
             raise RuntimeError("IMDb a indicat o pagină următoare fără cursor.")
+    if not exhausted and max_pages > 0:
+        raise RuntimeError("IMDb are mai multe pagini decât limita de siguranță; sincronizarea a fost anulată pentru a evita un import parțial.")
     return out
 
 
@@ -195,14 +199,26 @@ def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | 
     result = SyncResult(fetched=len(items))
     cutoff = date.fromisoformat(baseline_date) if baseline_date else None
     for item in items:
-        if cutoff and item.date_rated:
-            try:
-                if date.fromisoformat(item.date_rated) <= cutoff:
-                    result.stopped_at_baseline = True
+        if cutoff:
+            if not item.date_rated:
+                # Fail closed for undated remote rows. The CSV baseline is authoritative and an
+                # undated historical row must never be mistaken for a newly rated title.
+                with db.connect() as con:
+                    existing = con.execute("SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
+                if existing is None:
                     continue
-            except ValueError:
-                pass
+            else:
+                try:
+                    if date.fromisoformat(item.date_rated) <= cutoff:
+                        result.stopped_at_baseline = True
+                        continue
+                except ValueError:
+                    # Invalid dates are treated like missing dates: never create an unknown movie.
+                    with db.connect() as con:
+                        existing = con.execute("SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
+                    if existing is None:
+                        continue
         _upsert(db, item, result)
-    if result.changed:
-        db.set_setting("imdb_public_sync_last_success", utcnow_iso())
+    # A successful no-change check is still a successful synchronization.
+    db.set_setting("imdb_public_sync_last_success", utcnow_iso())
     return result
