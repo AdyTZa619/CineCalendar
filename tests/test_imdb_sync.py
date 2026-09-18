@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from cinecalendar.db import Database
+from cinecalendar.imdb_sync import fetch_public_ratings, sync_public_ratings, user_id_from_profile_url
+
+
+URL = "https://www.imdb.com/user/p.666yozwb6likjcvvjlu2hwmtli/ratings/"
+
+
+class Response:
+    def __init__(self, payload):
+        self.payload = payload
+    def raise_for_status(self):
+        return None
+    def json(self):
+        return self.payload
+
+
+class Session:
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.calls = []
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return Response(self.payloads.pop(0))
+
+
+def payload(items, next_cursor=None):
+    return {"data": {"userRatings": {
+        "edges": [{"node": {
+            "rating": rating, "date": rated,
+            "title": {"id": iid, "titleText": {"text": title}, "originalTitleText": {"text": title},
+                      "releaseYear": {"year": year}, "titleType": {"text": "Movie"}}
+        }} for iid, title, rating, rated, year in items],
+        "pageInfo": {"hasNextPage": bool(next_cursor), "endCursor": next_cursor},
+    }}}
+
+
+def test_profile_url_is_strict():
+    assert user_id_from_profile_url(URL) == "p.666yozwb6likjcvvjlu2hwmtli"
+    with pytest.raises(ValueError):
+        user_id_from_profile_url("https://example.com/user/p.bad/ratings/")
+
+
+def test_fetch_paginates_and_deduplicates():
+    s = Session([
+        payload([("tt1", "A", 8, "2026-09-10", 2020)], "next"),
+        payload([("tt1", "A", 8, "2026-09-10", 2020), ("tt2", "B", 7, "2026-09-11", 2021)]),
+    ])
+    rows = fetch_public_ratings(URL, session=s)
+    assert [r.imdb_id for r in rows] == ["tt1", "tt2"]
+    assert len(s.calls) == 2
+
+
+def test_sync_only_after_csv_baseline_and_is_idempotent(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    s = Session([payload([
+        ("tt1000001", "Old", 6, "2026-09-05", 2020),
+        ("tt1000002", "New", 9, "2026-09-06", 2021),
+    ])])
+    r = sync_public_ratings(db, URL, session=s)
+    assert r.new_ratings == [("New", 9)]
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 1
+
+    s2 = Session([payload([("tt1000002", "New", 9, "2026-09-06", 2021)])])
+    r2 = sync_public_ratings(db, URL, session=s2)
+    assert not r2.new_ratings
+    assert r2.unchanged == 1
+
+
+def test_sync_updates_changed_rating_without_duplicate(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    sync_public_ratings(db, URL, session=Session([payload([
+        ("tt1000003", "Changed", 7, "2026-09-07", 2022),
+    ])]))
+    r = sync_public_ratings(db, URL, session=Session([payload([
+        ("tt1000003", "Changed", 8, "2026-09-08", 2022),
+    ])]))
+    assert r.changed_ratings == [("Changed", 7, 8)]
+    with db.connect() as con:
+        row = con.execute("SELECT rating,date_rated FROM ratings").fetchone()
+        assert tuple(row) == (8, "2026-09-08")
+
+
+def test_graphql_errors_never_touch_database(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    with pytest.raises(RuntimeError):
+        sync_public_ratings(db, URL, session=Session([{"errors": [{"message": "private"}]}]))
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 0
