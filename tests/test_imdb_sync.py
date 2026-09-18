@@ -48,11 +48,11 @@ def test_profile_url_is_strict():
 
 def test_fetch_paginates_and_deduplicates():
     s = Session([
-        payload([("tt1", "A", 8, "2026-09-10", 2020)], "next"),
-        payload([("tt1", "A", 8, "2026-09-10", 2020), ("tt2", "B", 7, "2026-09-11", 2021)]),
+        payload([("tt1000001", "A", 8, "2026-09-10", 2020)], "next"),
+        payload([("tt1000001", "A", 8, "2026-09-10", 2020), ("tt1000002", "B", 7, "2026-09-11", 2021)]),
     ])
     rows = fetch_public_ratings(URL, session=s)
-    assert [r.imdb_id for r in rows] == ["tt1", "tt2"]
+    assert [r.imdb_id for r in rows] == ["tt1000001", "tt1000002"]
     assert len(s.calls) == 2
 
 
