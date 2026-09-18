@@ -22,6 +22,7 @@ from .backup import export_profile, import_profile
 from .catalog import bootstrap_official_imdb_catalog, import_imdb_datasets
 from .feedback import apply_feedback
 from .imdb_import import import_imdb_csv, add_manual_rating
+from .imdb_sync import sync_public_ratings
 from .profile import build_profile, get_profile, top_profile_features
 from .recommendation import Recommendation
 from .tmdb import TmdbProvider, enrich_library
@@ -127,6 +128,10 @@ class CineCalendarWindow(QMainWindow):
         self._build_shell(); self.apply_theme(); self.show_page("today")
         self.watch_timer = QTimer(self); self.watch_timer.timeout.connect(self.scan_ratings_folder); self.watch_timer.start(15000)
         QTimer.singleShot(1200, self.auto_catalog_if_needed)
+        self.imdb_sync_timer = QTimer(self)
+        self.imdb_sync_timer.timeout.connect(lambda: self.sync_imdb_public(silent=True))
+        self.imdb_sync_timer.start(30 * 60 * 1000)
+        QTimer.singleShot(2500, lambda: self.sync_imdb_public(silent=True))
 
     def _set_icon(self):
         try:
@@ -329,10 +334,12 @@ class CineCalendarWindow(QMainWindow):
         content.addStretch(1); return page
 
     def page_ratings(self):
-        page,content=self.page_shell("Ratinguri IMDb","Import, rating instant și detectarea automată a exporturilor",[("Import IMDb ratings.csv",self.import_ratings,True),("Adaugă rating",self.manual_rating,False)])
+        page,content=self.page_shell("Ratinguri IMDb","Sincronizare automată din profilul public IMDb + fallback CSV",[("Sincronizează IMDb acum",lambda:self.sync_imdb_public(silent=False),True),("Import IMDb ratings.csv",self.import_ratings,False),("Adaugă rating",self.manual_rating,False)])
         total,rated,cand=self.catalog_count(); box=self.card(); l=QVBoxLayout(box)
         h=QLabel(f"{rated:,} ratinguri   •   {total:,} titluri în baza locală   •   {cand:,} candidați nevăzuți"); h.setObjectName("CardTitle"); l.addWidget(h)
-        auto=QCheckBox("Detectează automat un export IMDb nou în folderul urmărit"); auto.setChecked(bool(self.db.get_setting("auto_watch_enabled",False))); auto.toggled.connect(lambda v:self.db.set_setting("auto_watch_enabled",bool(v))); l.addWidget(auto)
+        pub=QCheckBox("Sincronizează automat ratingurile noi din profilul public IMDb"); pub.setChecked(bool(self.db.get_setting("imdb_public_sync_enabled",True))); pub.toggled.connect(lambda v:self.db.set_setting("imdb_public_sync_enabled",bool(v))); l.addWidget(pub)
+        profile=QLabel("Profil IMDb: "+str(self.db.get_setting("imdb_public_ratings_url",""))); profile.setObjectName("Muted"); profile.setWordWrap(True); l.addWidget(profile)
+        auto=QCheckBox("Detectează automat și un export IMDb nou în folderul urmărit"); auto.setChecked(bool(self.db.get_setting("auto_watch_enabled",False))); auto.toggled.connect(lambda v:self.db.set_setting("auto_watch_enabled",bool(v))); l.addWidget(auto)
         folder=QLabel("Folder urmărit: "+str(self.db.get_setting("ratings_folder",str(Path.home()/"Downloads")))); folder.setObjectName("Muted"); l.addWidget(folder)
         scan=QPushButton("Scanează acum"); scan.clicked.connect(self.scan_ratings_folder); l.addWidget(scan,alignment=Qt.AlignLeft); content.addWidget(box)
         table=QTableWidget(0,4); table.setHorizontalHeaderLabels(["Data","Titlu","Rating","Sursă"]); table.setAlternatingRowColors(True); table.setEditTriggers(QTableWidget.NoEditTriggers); table.verticalHeader().setVisible(False)
@@ -357,6 +364,55 @@ class CineCalendarWindow(QMainWindow):
                 if details: msg += "\n\n"+"\n".join(details)
             QMessageBox.information(self,"IMDb",msg); self.set_status("Profil actualizat."); self.show_page("ratings"); QTimer.singleShot(400,self.auto_catalog_if_needed)
         except Exception as exc: QMessageBox.critical(self,"Import IMDb",str(exc))
+
+    def sync_imdb_public(self, silent: bool = True):
+        if not self.db.get_setting("imdb_public_sync_enabled", True):
+            return
+        if self.worker and self.worker.isRunning():
+            # Startup catalog work can overlap the first IMDb check. Retry shortly instead of
+            # silently postponing synchronization for the full 30-minute timer interval.
+            if silent:
+                QTimer.singleShot(60000, lambda: self.sync_imdb_public(silent=True))
+            return
+        url = str(self.db.get_setting("imdb_public_ratings_url", "") or "").strip()
+        if not url:
+            return
+        self.set_status("Verific ratingurile noi de pe IMDb…", True)
+        def fn(progress):
+            result = sync_public_ratings(
+                self.db,
+                url,
+                baseline_date=str(self.db.get_setting("imdb_public_sync_baseline", "2026-09-05") or "") or None,
+            )
+            if result.changed:
+                build_profile(self.db)
+            return result
+        self.worker = WorkerThread(fn, self)
+        def done(r):
+            self.set_status(
+                f"IMDb sincronizat: {len(r.new_ratings)} noi, {len(r.changed_ratings)} modificate.",
+                False,
+            )
+            if not silent:
+                QMessageBox.information(
+                    self,
+                    "IMDb",
+                    f"Sincronizare finalizată.\nNoi: {len(r.new_ratings)}\nModificate: {len(r.changed_ratings)}\nVerificate: {r.fetched}",
+                )
+            if self.current_page == "ratings":
+                self.show_page("ratings")
+        def fail(error):
+            self.s.log.warning("IMDb public sync failed: %s", error)
+            self.set_status("IMDb nu a putut fi sincronizat acum; datele locale au rămas neschimbate.", False)
+            if not silent:
+                QMessageBox.warning(
+                    self,
+                    "IMDb",
+                    "Sincronizarea nu a modificat baza locală. IMDb nu a putut fi citit acum.\n\n" + str(error),
+                )
+        self.worker.success.connect(done)
+        self.worker.failure.connect(fail)
+        self.worker.start()
 
     def manual_rating(self):
         d=ManualRatingDialog(self)
