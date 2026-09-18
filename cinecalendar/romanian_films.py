@@ -58,9 +58,6 @@ def _title_aliases(label: str) -> set[str]:
             add(group)
 
     # Slash-separated aliases, e.g. Momentul adevărului / Dreptatea.
-    for value in list(aliases):
-        # normalized text has no slash, so split the original forms as well.
-        pass
     base = _GROUP_RE.sub(" ", label)
     for part in re.split(r"\s*/\s*", base):
         add(part)
