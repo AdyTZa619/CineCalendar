@@ -113,7 +113,7 @@ class ScoreDialog(QDialog):
 class CineCalendarWindow(QMainWindow):
     NAV = [
         ("today", "Azi"), ("calendar", "Calendar"), ("month", "Programul lunii"),
-        ("romanian", "Filme românești"), ("profile", "Profilul meu"), ("ratings", "Ratinguri IMDb"), ("watchlist", "Watchlist"),
+        ("romanian_list", "Filme românești"), ("profile", "Profilul meu"), ("ratings", "Ratinguri IMDb"), ("watchlist", "Watchlist"),
         ("history", "Istoric recomandări"), ("settings", "Setări")
     ]
 
@@ -401,7 +401,7 @@ class CineCalendarWindow(QMainWindow):
                     "IMDb",
                     f"Sincronizare finalizată.\nNoi: {len(r.new_ratings)}\nModificate: {len(r.changed_ratings)}\nVerificate: {r.fetched}",
                 )
-            if self.current_page in {"ratings", "romanian"}:
+            if self.current_page in {"ratings", "romanian_list"}:
                 self.show_page(self.current_page)
         def fail(error):
             self.s.log.warning("IMDb public sync failed: %s", error)
@@ -431,10 +431,10 @@ class CineCalendarWindow(QMainWindow):
             w=RatingsFolderWatcher(self.db,self.db.get_setting("ratings_folder",str(Path.home()/"Downloads"))); results=w.scan()
             if results:
                 build_profile(self.db); r=results[0]; self.set_status(f"Export IMDb nou importat: {len(r.new_ratings)} ratinguri noi, {len(r.changed_ratings)} modificate.")
-                if self.current_page in {"ratings","romanian"}: self.show_page(self.current_page)
+                if self.current_page in {"ratings","romanian_list"}: self.show_page(self.current_page)
         except Exception as exc: self.s.log.exception("ratings watcher failed"); self.set_status("Monitorizarea IMDb a întâmpinat o eroare.")
 
-    def page_romanian(self):
+    def page_romanian_list(self):
         mode=str(self.db.get_setting("romanian_list_filter","unwatched") or "unwatched")
         all_entries=romanian_films(self.db)
         watched_count=sum(1 for x in all_entries if x.watched)
@@ -471,7 +471,7 @@ class CineCalendarWindow(QMainWindow):
         def change_filter(_index):
             value=str(combo.currentData() or "unwatched")
             self.db.set_setting("romanian_list_filter",value)
-            self.show_page("romanian")
+            self.show_page("romanian_list")
         combo.currentIndexChanged.connect(change_filter)
         content.addWidget(summary)
 
