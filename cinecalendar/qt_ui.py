@@ -381,10 +381,13 @@ class CineCalendarWindow(QMainWindow):
             return
         self.set_status("Verific ratingurile noi de pe IMDb…", True)
         def fn(progress):
+            # The public profile is the source of truth for watched/rated state.
+            # Import the full history, not only ratings newer than the old CSV baseline.
+            # Upsert-by-IMDb-id keeps this idempotent and also picks up changed old ratings.
             result = sync_public_ratings(
                 self.db,
                 url,
-                baseline_date=str(self.db.get_setting("imdb_public_sync_baseline", "2026-09-05") or "") or None,
+                baseline_date=None,
             )
             if result.changed:
                 build_profile(self.db)
