@@ -368,12 +368,24 @@ class CineCalendarWindow(QMainWindow):
         h=QLabel(f"{rated:,} ratinguri   •   {total:,} titluri în baza locală   •   {cand:,} candidați nevăzuți"); h.setObjectName("CardTitle"); l.addWidget(h)
         pub=QCheckBox("Sincronizează automat ratingurile noi din profilul public IMDb"); pub.setChecked(bool(self.db.get_setting("imdb_public_sync_enabled",True))); pub.toggled.connect(lambda v:self.db.set_setting("imdb_public_sync_enabled",bool(v))); l.addWidget(pub)
         profile=QLabel("Profil IMDb: "+str(self.db.get_setting("imdb_public_ratings_url",""))); profile.setObjectName("Muted"); profile.setWordWrap(True); l.addWidget(profile)
+        last_ok=str(self.db.get_setting("imdb_public_sync_last_success","") or "")
+        last_error=str(self.db.get_setting("imdb_public_sync_last_error","") or "")
+        sync_state=QLabel(
+            ("Ultima sincronizare publică reușită: "+last_ok[:19].replace("T"," "))
+            if last_ok else "Profilul public IMDb nu a fost încă sincronizat cu succes."
+        )
+        sync_state.setObjectName("Muted"); sync_state.setWordWrap(True); l.addWidget(sync_state)
+        if last_error:
+            sync_error=QLabel("Ultima eroare IMDb: "+last_error)
+            sync_error.setObjectName("Muted"); sync_error.setWordWrap(True); l.addWidget(sync_error)
         auto=QCheckBox("Detectează automat și un export IMDb nou în folderul urmărit"); auto.setChecked(bool(self.db.get_setting("auto_watch_enabled",False))); auto.toggled.connect(lambda v:self.db.set_setting("auto_watch_enabled",bool(v))); l.addWidget(auto)
         folder=QLabel("Folder urmărit: "+str(self.db.get_setting("ratings_folder",str(Path.home()/"Downloads")))); folder.setObjectName("Muted"); l.addWidget(folder)
         scan=QPushButton("Scanează acum"); scan.clicked.connect(self.scan_ratings_folder); l.addWidget(scan,alignment=Qt.AlignLeft); content.addWidget(box)
         table=QTableWidget(0,4); table.setHorizontalHeaderLabels(["Data","Titlu","Rating","Sursă"]); table.setAlternatingRowColors(True); table.setEditTriggers(QTableWidget.NoEditTriggers); table.verticalHeader().setVisible(False)
         table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeToContents); table.horizontalHeader().setSectionResizeMode(1,QHeaderView.Stretch); table.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeToContents); table.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeToContents)
         with self.db.connect() as con: rows=con.execute("SELECT r.date_rated,m.title,r.rating,r.source FROM ratings r JOIN movies m ON m.id=r.movie_id ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC LIMIT 500").fetchall()
+        shown=QLabel(f"Afișez ultimele {len(rows):,} din {rated:,} ratinguri salvate local.")
+        shown.setObjectName("Muted"); content.addWidget(shown)
         table.setRowCount(len(rows))
         for i,r in enumerate(rows):
             for j,v in enumerate((r["date_rated"] or "",r["title"],r["rating"],r["source"])): table.setItem(i,j,QTableWidgetItem(str(v)))
