@@ -38,3 +38,11 @@ def test_same_title_wrong_year_does_not_remove_from_to_watch(tmp_path):
 
     item = next(x for x in romanian_films(db) if x.film == "Mircea (1989)")
     assert item.watched is False
+
+
+def test_production_sidebar_exposes_curated_romanian_list():
+    from cinecalendar.qt_ui_v2 import DecisionWindow
+
+    keys = [key for key, _label in DecisionWindow.NAV]
+    assert "romanian_list" in keys
+    assert callable(getattr(DecisionWindow, "page_romanian_list", None))
