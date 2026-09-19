@@ -12,9 +12,21 @@ from .db import Database
 from .util import identity_key, json_dumps, normalize_text, utcnow_iso
 
 
-GRAPHQL_URL = "https://caching.graphql.imdb.com/"
+GRAPHQL_URLS = (
+    "https://caching.graphql.imdb.com/",
+    "https://api.graphql.imdb.com/",
+)
+GRAPHQL_URL = GRAPHQL_URLS[0]
 DEFAULT_PROFILE_URL = "https://www.imdb.com/user/p.666yozwb6likjcvvjlu2hwmtli/ratings/"
-_USER_RE = re.compile(r"^p\.[A-Za-z0-9_-]+$")
+_PROFILE_RE = re.compile(r"^(?:p\\.[A-Za-z0-9_-]+|ur\\d+)$")
+
+_RESOLVE_PROFILE_QUERY = """
+query CineCalendarResolveProfile($profileId: ID) {
+  userProfile(input: { profileId: $profileId }) {
+    userId
+  }
+}
+"""
 
 _QUERY = """
 query CineCalendarUserRatings($userId: ID!, $first: Int!, $after: String) {
@@ -62,13 +74,95 @@ class SyncResult:
 
 
 def user_id_from_profile_url(url: str) -> str:
+    """Return the id embedded in an IMDb profile URL.
+
+    Modern public profile URLs use a p.* profile id. userRatings does not
+    accept that id directly: it expects the internal ur... user id.
+    fetch_public_ratings resolves the profile id before requesting ratings.
+    """
     parsed = urlparse((url or "").strip())
     if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() not in {"imdb.com", "www.imdb.com"}:
         raise ValueError("URL IMDb invalid.")
     parts = [p for p in parsed.path.split("/") if p]
-    if len(parts) < 2 or parts[0] != "user" or not _USER_RE.fullmatch(parts[1]):
+    if len(parts) < 2 or parts[0] != "user" or not _PROFILE_RE.fullmatch(parts[1]):
         raise ValueError("URL-ul trebuie să fie pagina publică IMDb /user/p.../ratings/.")
     return parts[1]
+
+
+def _headers() -> dict[str, str]:
+    return {
+        "User-Agent": "CineCalendar/3.9 (personal IMDb ratings sync)",
+        "Content-Type": "application/json",
+        "Accept": "application/graphql+json, application/json",
+        "Origin": "https://www.imdb.com",
+        "Referer": "https://www.imdb.com/",
+        "x-imdb-client-name": "imdb-web-next",
+        "x-imdb-user-language": "en-US",
+        "x-imdb-user-country": "RO",
+    }
+
+
+def _graphql_post(
+    client: requests.Session,
+    query: str,
+    variables: dict[str, Any],
+    *,
+    timeout: int,
+) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for endpoint in GRAPHQL_URLS:
+        try:
+            response = client.post(
+                endpoint,
+                json={"query": query, "variables": variables},
+                headers=_headers(),
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            continue
+        if payload.get("errors"):
+            message = "; ".join(
+                str(x.get("message", "IMDb GraphQL error"))
+                for x in payload["errors"][:3]
+            )
+            raise RuntimeError(message)
+        if not isinstance(payload.get("data"), dict):
+            last_error = RuntimeError("IMDb GraphQL nu a returnat câmpul data.")
+            continue
+        return payload
+    if last_error is not None:
+        raise RuntimeError(f"IMDb GraphQL indisponibil: {last_error}") from last_error
+    raise RuntimeError("IMDb GraphQL indisponibil.")
+
+
+def resolve_public_user_id(
+    profile_id: str,
+    *,
+    timeout: int = 15,
+    session: requests.Session | None = None,
+) -> str:
+    """Resolve a modern public p.* profile id to the internal ur... ratings id."""
+    if re.fullmatch(r"ur\\d+", profile_id or ""):
+        return profile_id
+    if not re.fullmatch(r"p\\.[A-Za-z0-9_-]+", profile_id or ""):
+        raise ValueError("ID-ul profilului IMDb este invalid.")
+    client = session or requests.Session()
+    payload = _graphql_post(
+        client,
+        _RESOLVE_PROFILE_QUERY,
+        {"profileId": profile_id},
+        timeout=timeout,
+    )
+    profile = (payload.get("data") or {}).get("userProfile")
+    user_id = str((profile or {}).get("userId") or "").strip()
+    if not re.fullmatch(r"ur\\d+", user_id):
+        raise RuntimeError(
+            "IMDb nu a putut transforma ID-ul public al profilului în ID-ul intern de ratinguri."
+        )
+    return user_id
 
 
 def _as_text(value: Any) -> str:
@@ -84,10 +178,9 @@ def _parse_node(node: dict[str, Any]) -> RemoteRating:
     rating_obj = node.get("userRating") or {}
     rating_value = rating_obj.get("value")
     if rating_value is None:
-        # Backward compatibility with the older public schema used by CineCalendar 3.9.0.
         rating_value = node.get("rating")
     rating = int(rating_value)
-    if not re.fullmatch(r"tt\d+", imdb_id) or not name or not 1 <= rating <= 10:
+    if not re.fullmatch(r"tt\\d+", imdb_id) or not name or not 1 <= rating <= 10:
         raise ValueError("IMDb a returnat un rating incomplet sau invalid.")
     original = _as_text(title.get("originalTitleText")) or name
     year_obj = title.get("releaseYear") or {}
@@ -103,45 +196,54 @@ def _parse_node(node: dict[str, Any]) -> RemoteRating:
     return RemoteRating(imdb_id, name, rating, rated, original, year, title_type)
 
 
-def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int = 40,
-                         session: requests.Session | None = None) -> list[RemoteRating]:
-    user_id = user_id_from_profile_url(profile_url)
+def fetch_public_ratings(
+    profile_url: str,
+    *,
+    timeout: int = 15,
+    max_pages: int = 40,
+    session: requests.Session | None = None,
+) -> list[RemoteRating]:
+    profile_id = user_id_from_profile_url(profile_url)
     client = session or requests.Session()
+    user_id = resolve_public_user_id(profile_id, timeout=timeout, session=client)
+
     after = None
     out: list[RemoteRating] = []
     seen: set[str] = set()
     exhausted = False
+    malformed_total = 0
+
     for _ in range(max_pages):
-        response = client.post(
-            GRAPHQL_URL,
-            json={"query": _QUERY, "variables": {"userId": user_id, "first": 250, "after": after}},
-            headers={
-                "User-Agent": "CineCalendar/3.9 (personal IMDb ratings sync)",
-                "Content-Type": "application/json",
-                "Accept": "application/graphql+json, application/json",
-                "Origin": "https://www.imdb.com",
-                "Referer": "https://www.imdb.com/",
-                "x-imdb-client-name": "imdb-web-next",
-                "x-imdb-user-language": "en-US",
-            },
+        payload = _graphql_post(
+            client,
+            _QUERY,
+            {"userId": user_id, "first": 250, "after": after},
             timeout=timeout,
         )
-        response.raise_for_status()
-        payload = response.json()
-        if payload.get("errors"):
-            message = "; ".join(str(x.get("message", "IMDb GraphQL error")) for x in payload["errors"][:3])
-            raise RuntimeError(message)
         conn = (payload.get("data") or {}).get("userRatings")
         if not isinstance(conn, dict):
             raise RuntimeError("IMDb nu a returnat lista publică de ratinguri.")
         edges = conn.get("edges")
         if not isinstance(edges, list):
             raise RuntimeError("Răspuns IMDb incompatibil: lipsesc ratingurile.")
+
+        parsed_page = 0
         for edge in edges:
-            rr = _parse_node((edge or {}).get("node") or {})
+            try:
+                rr = _parse_node((edge or {}).get("node") or {})
+            except (TypeError, ValueError):
+                malformed_total += 1
+                continue
+            parsed_page += 1
             if rr.imdb_id not in seen:
                 seen.add(rr.imdb_id)
                 out.append(rr)
+
+        if edges and parsed_page == 0:
+            raise RuntimeError(
+                "IMDb a returnat o pagină de ratinguri, dar niciun element nu are schema așteptată."
+            )
+
         page = conn.get("pageInfo") or {}
         if not page.get("hasNextPage"):
             exhausted = True
@@ -149,8 +251,14 @@ def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int 
         after = page.get("endCursor")
         if not after:
             raise RuntimeError("IMDb a indicat o pagină următoare fără cursor.")
+
     if not exhausted and max_pages > 0:
-        raise RuntimeError("IMDb are mai multe pagini decât limita de siguranță; sincronizarea a fost anulată pentru a evita un import parțial.")
+        raise RuntimeError(
+            "IMDb are mai multe pagini decât limita de siguranță; sincronizarea a fost anulată "
+            "pentru a evita un import parțial."
+        )
+    if not out and malformed_total:
+        raise RuntimeError("IMDb nu a returnat niciun rating valid.")
     return out
 
 
