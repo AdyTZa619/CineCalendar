@@ -71,12 +71,22 @@ def install_romanian_list_ui_patch(window_cls) -> None:
     def _poster_failed(self, item):
         if not item.local_movie_id or not item.poster_url:
             return
-        failed = getattr(self, "_romanian_broken_poster_urls", set())
         failure_key = (int(item.local_movie_id), str(item.poster_url))
-        if failure_key in failed:
-            return
+        failed = getattr(self, "_romanian_broken_poster_urls", set())
+        first_failure = failure_key not in failed
         failed.add(failure_key)
         self._romanian_broken_poster_urls = failed
+
+        # Persist the broken URL so the next metadata pass skips it and can try
+        # IMDb Search/Wikidata/Wikimedia instead of restoring the same failure.
+        stored = self.db.get_setting("romanian_broken_poster_urls", [])
+        if not isinstance(stored, list):
+            stored = []
+        url = str(item.poster_url)
+        if url not in stored:
+            stored.append(url)
+            self.db.set_setting("romanian_broken_poster_urls", stored[-250:])
+
         try:
             with self.db.tx() as con:
                 con.execute(
@@ -84,6 +94,9 @@ def install_romanian_list_ui_patch(window_cls) -> None:
                     (int(item.local_movie_id), item.poster_url),
                 )
         except Exception:
+            return
+
+        if not first_failure:
             return
         self._romanian_prepare_signature = None
         self.set_status("Un poster nu s-a încărcat; caut automat o sursă alternativă.", False)
