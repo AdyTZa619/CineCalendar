@@ -744,6 +744,8 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
             for row in rows:
                 iid = (row.get("imdb") or {}).get("value", "").strip()
                 image = (row.get("image") or {}).get("value", "").strip()
+                if image and "Special:FilePath/" in image and "?" not in image:
+                    image += "?width=342"
                 if iid and image and iid not in wikidata_found:
                     wikidata_found[iid] = image
         except (requests.RequestException, ValueError, TypeError):
