@@ -1,19 +1,18 @@
-CineCalendar 3.9.5 rafinează secțiunea cronologică de filme românești și repară sincronizarea publică IMDb pentru schema curentă.
-
-Interfață:
-- secțiunea se numește acum „Filme RO • Cronologie” în sidebar;
-- pagina se numește „Cronologia filmului românesc”;
-- pagina separată de recomandări românești se numește clar „Recomandări românești”;
-- progres vizual văzute / total;
-- căutare după titlu, perioadă sau context;
-- card „Următorul cronologic” pentru primul film nevăzut din ordine;
-- rândurile vizuale cu postere și filtrele De văzut / Văzute / Toate rămân active.
+CineCalendar 3.9.6 repară sincronizarea completă a ratingurilor IMDb și completează automat posterele lipsă din „Filme RO • Cronologie”.
 
 IMDb:
-- query-ul public a fost actualizat la schema curentă RatingsResult.userRating { value date };
-- parserul păstrează compatibilitate cu forma veche rating/date;
-- o eroare de sincronizare în fundal nu mai lasă aplicația cu un mesaj alarmant permanent;
-- datele locale rămân active și intacte dacă IMDb nu răspunde;
-- la sincronizarea manuală se afișează motivul prietenos și detaliul tehnic exact.
+- profilul public este sincronizat acum pe întreg istoricul, nu doar pentru ratingurile adăugate după vechiul CSV din 05.09.2026;
+- ratingurile vechi de pe profil pot marca acum automat filmele din cronologie ca VĂZUTE și afișează nota ta;
+- sincronizarea rămâne idempotentă după IMDb ID și preia și modificările făcute ulterior unui rating vechi;
+- limita de paginare a fost mărită pentru profile cu multe ratinguri;
+- cererile folosesc schema și headerele web IMDb curente, cu compatibilitate pentru forma veche;
+- ratingurile neschimbate nu mai sunt rescrise inutil la fiecare sincronizare completă.
 
-Lista de 233 de titluri și cronologia din documentul tău rămân neschimbate.
+Postere:
+- posterele lipsă sunt căutate automat în fundal la deschiderea cronologiei, fără niciun buton sau pas manual;
+- pentru filmele identificate sigur prin IMDb ID, aplicația încearcă mai întâi imaginea principală IMDb;
+- dacă IMDb nu furnizează imagine, încearcă automat Wikidata și apoi Wikipedia/Wikimedia;
+- URL-urile găsite sunt salvate local, deci nu sunt căutate din nou la fiecare pornire;
+- un poster cu URL stricat sau un fișier cache corupt este eliminat automat și se caută o sursă alternativă.
+
+Lista de 233 de titluri, ordinea cronologică a acțiunii și filtrele De văzut / Văzute / Toate rămân neschimbate.
