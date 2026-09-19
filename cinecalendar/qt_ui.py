@@ -366,7 +366,7 @@ class CineCalendarWindow(QMainWindow):
         page,content=self.page_shell("Ratinguri IMDb","Sincronizare automată din profilul public IMDb + fallback CSV",[("Sincronizează IMDb acum",lambda:self.sync_imdb_public(silent=False),True),("Import IMDb ratings.csv",self.import_ratings,False),("Adaugă rating",self.manual_rating,False)])
         total,rated,cand=self.catalog_count(); box=self.card(); l=QVBoxLayout(box)
         h=QLabel(f"{rated:,} ratinguri   •   {total:,} titluri în baza locală   •   {cand:,} candidați nevăzuți"); h.setObjectName("CardTitle"); l.addWidget(h)
-        pub=QCheckBox("Sincronizează automat ratingurile noi din profilul public IMDb"); pub.setChecked(bool(self.db.get_setting("imdb_public_sync_enabled",True))); pub.toggled.connect(lambda v:self.db.set_setting("imdb_public_sync_enabled",bool(v))); l.addWidget(pub)
+        pub=QCheckBox("Sincronizează automat profilul public IMDb"); pub.setChecked(bool(self.db.get_setting("imdb_public_sync_enabled",True))); pub.toggled.connect(lambda v:self.db.set_setting("imdb_public_sync_enabled",bool(v))); l.addWidget(pub)
         profile=QLabel("Profil IMDb: "+str(self.db.get_setting("imdb_public_ratings_url",""))); profile.setObjectName("Muted"); profile.setWordWrap(True); l.addWidget(profile)
         last_ok=str(self.db.get_setting("imdb_public_sync_last_success","") or "")
         last_error=str(self.db.get_setting("imdb_public_sync_last_error","") or "")
@@ -407,7 +407,9 @@ class CineCalendarWindow(QMainWindow):
         except Exception as exc: QMessageBox.critical(self,"Import IMDb",str(exc))
 
     def sync_imdb_public(self, silent: bool = True):
-        if not self.db.get_setting("imdb_public_sync_enabled", True):
+        # The checkbox controls background syncing only. A manual click must
+        # always be allowed to run a one-off synchronization.
+        if silent and not self.db.get_setting("imdb_public_sync_enabled", True):
             return
         if self.worker and self.worker.isRunning():
             # Startup catalog work can overlap the first IMDb check. Retry shortly instead of
