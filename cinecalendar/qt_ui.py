@@ -391,11 +391,14 @@ class CineCalendarWindow(QMainWindow):
             return result
         self.worker = WorkerThread(fn, self)
         def done(r):
-            self.set_status(
-                f"IMDb sincronizat: {len(r.new_ratings)} noi, {len(r.changed_ratings)} modificate.",
-                False,
-            )
-            if not silent:
+            self.db.set_setting("imdb_public_sync_last_error", "")
+            if silent:
+                self.set_status("Pregătit • IMDb sincronizat în fundal.", False)
+            else:
+                self.set_status(
+                    f"IMDb sincronizat: {len(r.new_ratings)} noi, {len(r.changed_ratings)} modificate.",
+                    False,
+                )
                 QMessageBox.information(
                     self,
                     "IMDb",
@@ -404,13 +407,31 @@ class CineCalendarWindow(QMainWindow):
             if self.current_page in {"ratings", "romanian_list"}:
                 self.show_page(self.current_page)
         def fail(error):
-            self.s.log.warning("IMDb public sync failed: %s", error)
-            self.set_status("IMDb nu a putut fi sincronizat acum; datele locale au rămas neschimbate.", False)
-            if not silent:
+            raw = str(error or "eroare necunoscută").strip().replace("\n", " ")
+            lower = raw.lower()
+            if "403" in lower or "forbidden" in lower:
+                friendly = "IMDb a refuzat accesul automat (HTTP 403)."
+            elif "certificate" in lower or "cacert" in lower or "ssl" in lower:
+                friendly = "Conexiunea securizată către IMDb a eșuat (TLS/certificat)."
+            elif "timed out" in lower or "timeout" in lower:
+                friendly = "IMDb nu a răspuns în timpul limită."
+            elif "graphql" in lower or "userRatings" in raw or "ratinguri" in lower:
+                friendly = "Interfața publică IMDb folosită pentru sincronizare nu a răspuns în formatul așteptat."
+            else:
+                friendly = "IMDb nu a putut fi citit automat acum."
+            detail = raw[:240]
+            self.db.set_setting("imdb_public_sync_last_error", detail)
+            self.s.log.warning("IMDb public sync failed: %s", raw)
+            if silent:
+                # Startup sync is best-effort. Do not leave the whole application looking broken:
+                # all imported/local ratings remain authoritative and usable.
+                self.set_status("Pregătit • sincronizarea IMDb este temporar indisponibilă; folosesc datele locale.", False)
+            else:
+                self.set_status("Sincronizarea IMDb a eșuat; datele locale sunt intacte.", False)
                 QMessageBox.warning(
                     self,
                     "IMDb",
-                    "Sincronizarea nu a modificat baza locală. IMDb nu a putut fi citit acum.\n\n" + str(error),
+                    friendly + "\n\nDatele locale nu au fost modificate.\n\nDetaliu tehnic: " + detail,
                 )
         self.worker.success.connect(done)
         self.worker.failure.connect(fail)
