@@ -18,7 +18,7 @@ GRAPHQL_URLS = (
 )
 GRAPHQL_URL = GRAPHQL_URLS[0]
 DEFAULT_PROFILE_URL = "https://www.imdb.com/user/p.666yozwb6likjcvvjlu2hwmtli/ratings/"
-_PROFILE_RE = re.compile(r"^(?:p\\.[A-Za-z0-9_-]+|ur\\d+)$")
+_PROFILE_RE = re.compile(r"^(?:p\.[A-Za-z0-9_-]+|ur\d+)$")
 
 _RESOLVE_PROFILE_QUERY = """
 query CineCalendarResolveProfile($profileId: ID) {
@@ -155,9 +155,9 @@ def resolve_public_user_id(
     session: requests.Session | None = None,
 ) -> str:
     """Resolve a modern public p.* profile id to the internal ur... ratings id."""
-    if re.fullmatch(r"ur\\d+", profile_id or ""):
+    if re.fullmatch(r"ur\d+", profile_id or ""):
         return profile_id
-    if not re.fullmatch(r"p\\.[A-Za-z0-9_-]+", profile_id or ""):
+    if not re.fullmatch(r"p\.[A-Za-z0-9_-]+", profile_id or ""):
         raise ValueError("ID-ul profilului IMDb este invalid.")
     client = session or requests.Session()
     errors: list[str] = []
@@ -175,7 +175,7 @@ def resolve_public_user_id(
             continue
         profile = (payload.get("data") or {}).get("userProfile")
         user_id = str((profile or {}).get("userId") or "").strip()
-        if re.fullmatch(r"ur\\d+", user_id):
+        if re.fullmatch(r"ur\d+", user_id):
             return user_id
     detail = " | ".join(errors[-2:])[:300]
     raise RuntimeError(
@@ -199,7 +199,7 @@ def _parse_node(node: dict[str, Any]) -> RemoteRating:
     if rating_value is None:
         rating_value = node.get("rating")
     rating = int(rating_value)
-    if not re.fullmatch(r"tt\\d+", imdb_id) or not name or not 1 <= rating <= 10:
+    if not re.fullmatch(r"tt\d+", imdb_id) or not name or not 1 <= rating <= 10:
         raise ValueError("IMDb a returnat un rating incomplet sau invalid.")
     original = _as_text(title.get("originalTitleText")) or name
     year_obj = title.get("releaseYear") or {}
