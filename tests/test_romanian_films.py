@@ -59,7 +59,7 @@ def test_premium_composition_installs_cinematic_romanian_list():
     assert "QScrollArea" in patch
     assert "poster_label" in patch
     assert "QTableWidget" not in patch
-    assert "COLECȚIA TA ROMÂNEASCĂ" in patch
+    assert "FILME ROMÂNEȘTI • CRONOLOGIA ACȚIUNII" in patch
 
 
 def test_unwatched_local_match_exposes_poster_metadata(tmp_path):
@@ -87,3 +87,40 @@ def test_unwatched_local_match_exposes_poster_metadata(tmp_path):
     assert item.local_movie_id is not None
     assert item.poster_url == "https://example.invalid/mircea.jpg"
     assert item.imdb_rating == 7.4
+
+
+def test_sidebar_names_romanian_section_as_chronology():
+    from cinecalendar.qt_ui_v2 import DecisionWindow
+
+    labels = dict(DecisionWindow.NAV)
+    assert labels["romanian_list"] == "Filme RO • Cronologie"
+
+
+def test_cinematic_romanian_page_has_search_progress_and_next_up():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    patch = (root / "cinecalendar" / "romanian_list_ui_patch.py").read_text(encoding="utf-8")
+    assert "Cronologia filmului românesc" in patch
+    assert "QProgressBar" in patch
+    assert "romanian_list_search" in patch
+    assert "URMĂTORUL CRONOLOGIC" in patch
+    assert "Caută titlu, perioadă sau context" in patch
+
+
+def test_silent_imdb_sync_failure_keeps_local_fallback_visible():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    ui = (root / "cinecalendar" / "qt_ui.py").read_text(encoding="utf-8")
+    assert "sincronizarea IMDb este temporar indisponibilă; folosesc datele locale" in ui
+    assert "imdb_public_sync_last_error" in ui
+    assert "Detaliu tehnic:" in ui
+
+
+def test_existing_romanian_page_is_clearly_named_recommendations():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    patch = (root / "cinecalendar" / "romanian_cinema_ui_patch.py").read_text(encoding="utf-8")
+    assert '("romanian", "Recomandări românești")' in patch

@@ -32,7 +32,7 @@ class Session:
 def payload(items, next_cursor=None):
     return {"data": {"userRatings": {
         "edges": [{"node": {
-            "rating": rating, "date": rated,
+            "userRating": {"value": rating, "date": rated},
             "title": {"id": iid, "titleText": {"text": title}, "originalTitleText": {"text": title},
                       "releaseYear": {"year": year}, "titleType": {"text": "Movie"}}
         }} for iid, title, rating, rated, year in items],
@@ -93,3 +93,24 @@ def test_graphql_errors_never_touch_database(tmp_path: Path):
         sync_public_ratings(db, URL, session=Session([{"errors": [{"message": "private"}]}]))
     with db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 0
+
+
+def test_legacy_rating_shape_is_still_accepted():
+    legacy = {"data": {"userRatings": {
+        "edges": [{"node": {
+            "rating": 8,
+            "date": "2026-09-12",
+            "title": {
+                "id": "tt1000099",
+                "titleText": {"text": "Legacy"},
+                "originalTitleText": {"text": "Legacy"},
+                "releaseYear": {"year": 2024},
+                "titleType": {"text": "Movie"},
+            },
+        }}],
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+    }}}
+    rows = fetch_public_ratings(URL, session=Session([legacy]))
+    assert len(rows) == 1
+    assert rows[0].rating == 8
+    assert rows[0].date_rated == "2026-09-12"

@@ -22,7 +22,7 @@ class DecisionWindow(CineCalendarWindow):
     NAV = [
         ("today", "Ce văd acum?"),
         ("recommendations", "Recomandări"),
-        ("romanian_list", "Filme românești"),
+        ("romanian_list", "Filme RO • Cronologie"),
         ("profile", "Profilul meu"),
         ("ratings", "Ratinguri IMDb"),
         ("watchlist", "Watchlist"),

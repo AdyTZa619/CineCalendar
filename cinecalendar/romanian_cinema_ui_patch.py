@@ -16,12 +16,12 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
     nav = list(window_cls.NAV)
     if not any(key == "romanian" for key, _label in nav):
         position = next((i + 1 for i, (key, _label) in enumerate(nav) if key == "recommendations"), 2)
-        nav.insert(position, ("romanian", "Cinema românesc"))
+        nav.insert(position, ("romanian", "Recomandări românești"))
         window_cls.NAV = nav
 
     def page_romanian(self):
         page, content = self.page_shell(
-            "Cinema românesc",
+            "Recomandări românești",
             "Selecție personalizată din filme cu limba originală română. Nu trebuie să setezi nimic.",
             [("Recalculează", lambda: self.show_page("romanian"), True)],
         )
