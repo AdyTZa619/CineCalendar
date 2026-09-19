@@ -16,6 +16,7 @@ def compose_premium_window(window_cls) -> None:
     from .als_ui_patch import install_als_ui_patch
     from .daily_genre_ui_patch import install_daily_genre_ui_patch
     from .romanian_cinema_ui_patch import install_romanian_cinema_ui_patch
+    from .romanian_list_ui_patch import install_romanian_list_ui_patch
     from .context_ui_v35 import install_context_ui_v35
     from .accuracy_ui_v37 import install_accuracy_ui_v37
     from .decision_action_patch import install_decision_action_patch
@@ -29,6 +30,7 @@ def compose_premium_window(window_cls) -> None:
     install_als_ui_patch(window_cls)
     install_daily_genre_ui_patch(window_cls)
     install_romanian_cinema_ui_patch(window_cls)
+    install_romanian_list_ui_patch(window_cls)
     install_context_ui_v35(window_cls)
     install_accuracy_ui_v37(window_cls)
     install_decision_action_patch(window_cls)
