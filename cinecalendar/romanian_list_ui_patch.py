@@ -101,7 +101,7 @@ def install_romanian_list_ui_patch(window_cls) -> None:
 
         self.set_status("Verific automat legăturile IMDb și posterele filmelor românești…", True)
         worker = WorkerThread(
-            lambda progress: prepare_romanian_library(self.db, progress=progress),
+            lambda progress: prepare_romanian_library(self.db, progress=progress, force=force),
             self,
         )
         self.romanian_assets_worker = worker
