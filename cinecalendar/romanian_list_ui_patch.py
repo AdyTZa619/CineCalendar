@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
@@ -58,6 +58,26 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         ).casefold()
         tokens = [x for x in query.casefold().split() if x]
         return all(token in haystack for token in tokens)
+
+    def _poster_failed(self, item):
+        if not item.local_movie_id or not item.poster_url:
+            return
+        failed_ids = getattr(self, "_romanian_broken_poster_ids", set())
+        if int(item.local_movie_id) in failed_ids:
+            return
+        failed_ids.add(int(item.local_movie_id))
+        self._romanian_broken_poster_ids = failed_ids
+        try:
+            with self.db.tx() as con:
+                con.execute(
+                    "UPDATE movies SET poster_url=NULL WHERE id=? AND poster_url=?",
+                    (int(item.local_movie_id), item.poster_url),
+                )
+        except Exception:
+            return
+        self._romanian_assets_attempted_session = False
+        self.set_status("Un poster nu s-a încărcat; caut automat o sursă alternativă.", False)
+        QTimer.singleShot(350, lambda: _auto_fill_posters(self))
 
     def _auto_fill_posters(self):
         worker = getattr(self, "romanian_assets_worker", None)
@@ -220,7 +240,12 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             poster.setAlignment(Qt.AlignCenter)
             poster.setObjectName("Muted")
         if item.poster_url and hasattr(self, "load_poster_async"):
-            self.load_poster_async(poster, item.poster_url, item.imdb_id or str(item.local_movie_id or item.film))
+            self.load_poster_async(
+                poster,
+                item.poster_url,
+                item.imdb_id or str(item.local_movie_id or item.film),
+                lambda _message, x=item: _poster_failed(self, x),
+            )
         else:
             placeholder = display_title(item.film)
             if len(placeholder) > 42:
@@ -462,7 +487,6 @@ def install_romanian_list_ui_patch(window_cls) -> None:
 
         # Poster metadata is completed in the background on every first visit,
         # regardless of the current filter/search result.
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(0, lambda: _auto_fill_posters(self))
 
         next_item = next((x for x in unwatched if _matches_search(x, query)), None)
