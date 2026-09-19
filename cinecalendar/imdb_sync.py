@@ -28,6 +28,14 @@ query CineCalendarResolveProfile($profileId: ID) {
 }
 """
 
+_RESOLVE_PROFILE_QUERY_LEGACY = """
+query CineCalendarResolveProfileLegacy($profileId: ID) {
+  userProfile(input: { userId: $profileId }) {
+    userId
+  }
+}
+"""
+
 _QUERY = """
 query CineCalendarUserRatings($userId: ID!, $first: Int!, $after: String) {
   userRatings(userId: $userId, first: $first, after: $after) {
@@ -108,9 +116,10 @@ def _graphql_post(
     variables: dict[str, Any],
     *,
     timeout: int,
+    endpoints: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     last_error: Exception | None = None
-    for endpoint in GRAPHQL_URLS:
+    for endpoint in (endpoints or GRAPHQL_URLS):
         try:
             response = client.post(
                 endpoint,
@@ -128,7 +137,8 @@ def _graphql_post(
                 str(x.get("message", "IMDb GraphQL error"))
                 for x in payload["errors"][:3]
             )
-            raise RuntimeError(message)
+            last_error = RuntimeError(message)
+            continue
         if not isinstance(payload.get("data"), dict):
             last_error = RuntimeError("IMDb GraphQL nu a returnat câmpul data.")
             continue
@@ -150,19 +160,28 @@ def resolve_public_user_id(
     if not re.fullmatch(r"p\\.[A-Za-z0-9_-]+", profile_id or ""):
         raise ValueError("ID-ul profilului IMDb este invalid.")
     client = session or requests.Session()
-    payload = _graphql_post(
-        client,
-        _RESOLVE_PROFILE_QUERY,
-        {"profileId": profile_id},
-        timeout=timeout,
+    errors: list[str] = []
+    for query in (_RESOLVE_PROFILE_QUERY, _RESOLVE_PROFILE_QUERY_LEGACY):
+        try:
+            payload = _graphql_post(
+                client,
+                query,
+                {"profileId": profile_id},
+                timeout=timeout,
+                endpoints=("https://api.graphql.imdb.com/", "https://caching.graphql.imdb.com/"),
+            )
+        except RuntimeError as exc:
+            errors.append(str(exc))
+            continue
+        profile = (payload.get("data") or {}).get("userProfile")
+        user_id = str((profile or {}).get("userId") or "").strip()
+        if re.fullmatch(r"ur\\d+", user_id):
+            return user_id
+    detail = " | ".join(errors[-2:])[:300]
+    raise RuntimeError(
+        "IMDb nu a putut transforma ID-ul public al profilului în ID-ul intern de ratinguri."
+        + (f" Detaliu: {detail}" if detail else "")
     )
-    profile = (payload.get("data") or {}).get("userProfile")
-    user_id = str((profile or {}).get("userId") or "").strip()
-    if not re.fullmatch(r"ur\\d+", user_id):
-        raise RuntimeError(
-            "IMDb nu a putut transforma ID-ul public al profilului în ID-ul intern de ratinguri."
-        )
-    return user_id
 
 
 def _as_text(value: Any) -> str:
