@@ -103,8 +103,8 @@ def install_performance_ui_patch(window_cls) -> None:
                 f"{len(result.changed_ratings)} modificate.",
                 False,
             )
-            if self.current_page == "ratings":
-                self.show_page("ratings")
+            if self.current_page in {"ratings", "romanian_list"}:
+                self.show_page(self.current_page)
 
         def failure(message):
             self.ratings_watch_worker = None
