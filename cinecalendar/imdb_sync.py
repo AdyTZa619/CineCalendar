@@ -21,8 +21,7 @@ query CineCalendarUserRatings($userId: ID!, $first: Int!, $after: String) {
   userRatings(userId: $userId, first: $first, after: $after) {
     edges {
       node {
-        rating
-        date
+        userRating { value date }
         title {
           id
           titleText { text }
@@ -82,7 +81,12 @@ def _parse_node(node: dict[str, Any]) -> RemoteRating:
     title = node.get("title") or {}
     imdb_id = str(title.get("id") or "").strip()
     name = _as_text(title.get("titleText"))
-    rating = int(node.get("rating"))
+    rating_obj = node.get("userRating") or {}
+    rating_value = rating_obj.get("value")
+    if rating_value is None:
+        # Backward compatibility with the older public schema used by CineCalendar 3.9.0.
+        rating_value = node.get("rating")
+    rating = int(rating_value)
     if not re.fullmatch(r"tt\d+", imdb_id) or not name or not 1 <= rating <= 10:
         raise ValueError("IMDb a returnat un rating incomplet sau invalid.")
     original = _as_text(title.get("originalTitleText")) or name
@@ -93,7 +97,7 @@ def _parse_node(node: dict[str, Any]) -> RemoteRating:
         year = None
     type_obj = title.get("titleType") or {}
     title_type = _as_text(type_obj.get("text")) or _as_text(type_obj.get("id")) or "Movie"
-    rated = str(node.get("date") or "").strip() or None
+    rated = str(rating_obj.get("date") or node.get("date") or "").strip() or None
     if rated:
         rated = rated[:10]
     return RemoteRating(imdb_id, name, rating, rated, original, year, title_type)
