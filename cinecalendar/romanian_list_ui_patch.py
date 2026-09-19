@@ -206,7 +206,7 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         rail.setWidgetResizable(False)
         rail.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         rail.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        rail.setFixedHeight(425)
+        rail.setFixedHeight(500)
 
         strip = QWidget()
         row = QHBoxLayout(strip)
@@ -216,7 +216,7 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             row.addWidget(_poster_card(self, item), 0, Qt.AlignTop)
         row.addStretch(1)
         strip.setMinimumWidth(max(1, len(items)) * 210 + 24)
-        strip.setMinimumHeight(392)
+        strip.setMinimumHeight(470)
         rail.setWidget(strip)
         outer.addWidget(rail)
         return block
