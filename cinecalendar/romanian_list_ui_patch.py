@@ -310,7 +310,12 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             poster.setAlignment(Qt.AlignCenter)
             poster.setObjectName("Muted")
         if item.poster_url and hasattr(self, "load_poster_async"):
-            self.load_poster_async(poster, item.poster_url, item.imdb_id or str(item.local_movie_id or item.film))
+            self.load_poster_async(
+                poster,
+                item.poster_url,
+                item.imdb_id or str(item.local_movie_id or item.film),
+                lambda _message, x=item: _poster_failed(self, x),
+            )
         else:
             poster.setText("CINECALENDAR\n\n" + _short(display_title(item.film), 34))
             poster.setWordWrap(True)
