@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import threading
 import webbrowser
 from datetime import date, datetime
 from pathlib import Path
@@ -283,8 +284,17 @@ class CineCalendarWindow(QMainWindow):
     def load_poster_async(self,label:QLabel,url:str,key:str,on_failure=None):
         cache=self.s.paths.cache/"posters"; cache.mkdir(parents=True,exist_ok=True)
         path=cache/(hashlib.sha256((key+url).encode()).hexdigest()+".jpg")
+        semaphore=getattr(self,"_poster_download_semaphore",None)
+        if semaphore is None:
+            semaphore=threading.BoundedSemaphore(6)
+            self._poster_download_semaphore=semaphore
+
         def fn(progress):
-            if not path.exists():
+            if path.exists():
+                return str(path)
+            with semaphore:
+                if path.exists():
+                    return str(path)
                 r=requests.get(
                     url,
                     timeout=15,
@@ -299,23 +309,30 @@ class CineCalendarWindow(QMainWindow):
                     raise ValueError(f"URL-ul posterului nu a returnat o imagine ({content_type}).")
                 if len(r.content) < 512:
                     raise ValueError("Imaginea posterului este goală sau prea mică.")
-                tmp=path.with_suffix(path.suffix+".part")
-                tmp.write_bytes(r.content)
-                tmp.replace(path)
+                tmp=Path(str(path)+f".{threading.get_ident()}.part")
+                try:
+                    tmp.write_bytes(r.content)
+                    tmp.replace(path)
+                finally:
+                    tmp.unlink(missing_ok=True)
             return str(path)
+
         w=WorkerThread(fn,self); self.poster_threads.append(w)
         def done(p):
             pm=QPixmap(p)
             if not pm.isNull():
-                label.setPixmap(pm.scaled(label.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)); label.setText("")
+                try:
+                    label.setPixmap(pm.scaled(label.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation))
+                    label.setText("")
+                except RuntimeError:
+                    # Page was rebuilt while this asynchronous poster was loading.
+                    pass
             else:
                 try: Path(p).unlink(missing_ok=True)
                 except Exception: pass
                 if callable(on_failure): on_failure("Imagine invalidă sau coruptă.")
             if w in self.poster_threads:self.poster_threads.remove(w)
         def failed(message):
-            try: path.unlink(missing_ok=True)
-            except Exception: pass
             if w in self.poster_threads:self.poster_threads.remove(w)
             if callable(on_failure): on_failure(str(message))
         w.success.connect(done); w.failure.connect(failed); w.finished.connect(w.deleteLater); w.start()
