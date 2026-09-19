@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QSizePolicy, QVBoxLayout, QWidget, QLineEdit, QProgressBar,
 )
 
 from .romanian_films import display_title, romanian_chapters, romanian_films
@@ -30,6 +30,28 @@ def install_romanian_list_ui_patch(window_cls) -> None:
     def _set_filter(self, value: str):
         self.db.set_setting("romanian_list_filter", value)
         self.show_page("romanian_list")
+
+    def _set_search(self, field: QLineEdit):
+        self.db.set_setting("romanian_list_search", field.text().strip())
+        self.show_page("romanian_list")
+
+    def _clear_search(self):
+        self.db.set_setting("romanian_list_search", "")
+        self.show_page("romanian_list")
+
+    def _matches_search(item, query: str) -> bool:
+        if not query:
+            return True
+        haystack = " ".join(
+            (
+                display_title(item.film),
+                item.period or "",
+                item.season or "",
+                item.context or "",
+            )
+        ).casefold()
+        tokens = [x for x in query.casefold().split() if x]
+        return all(token in haystack for token in tokens)
 
     def _detail_dialog(self, item):
         dialog = QDialog(self)
@@ -185,6 +207,83 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         layout.addLayout(row)
         return card
 
+    def _next_up_hero(self, item):
+        box = QFrame()
+        box.setObjectName("DetailHero")
+        main = QHBoxLayout(box)
+        main.setContentsMargins(22, 20, 22, 20)
+        main.setSpacing(22)
+
+        if hasattr(self, "poster_label"):
+            poster = self.poster_label(150, 220)
+        else:
+            poster = QLabel()
+            poster.setFixedSize(150, 220)
+            poster.setAlignment(Qt.AlignCenter)
+            poster.setObjectName("Muted")
+        if item.poster_url and hasattr(self, "load_poster_async"):
+            self.load_poster_async(poster, item.poster_url, item.imdb_id or str(item.local_movie_id or item.film))
+        else:
+            poster.setText("CINECALENDAR\n\n" + _short(display_title(item.film), 34))
+            poster.setWordWrap(True)
+        main.addWidget(poster, 0, Qt.AlignTop)
+
+        right = QVBoxLayout()
+        right.setSpacing(9)
+        kicker = QLabel("URMĂTORUL CRONOLOGIC")
+        kicker.setObjectName("Kicker")
+        right.addWidget(kicker)
+
+        title = QLabel(display_title(item.film))
+        title.setObjectName("HeroTitle")
+        title.setWordWrap(True)
+        right.addWidget(title)
+
+        period = QLabel(item.period or "Perioadă neconfirmată")
+        period.setObjectName("BodyStrong")
+        period.setWordWrap(True)
+        right.addWidget(period)
+
+        if item.context:
+            context = QLabel(_short(item.context, 240))
+            context.setObjectName("Muted")
+            context.setWordWrap(True)
+            right.addWidget(context)
+
+        chips = QHBoxLayout()
+        state = QLabel("DE VĂZUT")
+        state.setObjectName("Pill")
+        chips.addWidget(state)
+        if item.imdb_rating is not None:
+            score = QLabel(f"IMDb {item.imdb_rating:.1f}")
+            score.setObjectName("Pill")
+            chips.addWidget(score)
+        if item.season and "neconfirm" not in item.season.lower():
+            season = QLabel(_short(item.season, 30))
+            season.setObjectName("Pill")
+            chips.addWidget(season)
+        chips.addStretch(1)
+        right.addLayout(chips)
+
+        actions = QHBoxLayout()
+        details = QPushButton("Vezi detalii")
+        details.setProperty("accent", True)
+        details.clicked.connect(lambda _checked=False, x=item: _detail_dialog(self, x))
+        actions.addWidget(details)
+        if item.imdb_id:
+            imdb = QPushButton("IMDb")
+            imdb.clicked.connect(
+                lambda _checked=False, iid=item.imdb_id:
+                QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))
+            )
+            actions.addWidget(imdb)
+        actions.addStretch(1)
+        right.addLayout(actions)
+        right.addStretch(1)
+
+        main.addLayout(right, 1)
+        return box
+
     def _chapter_row(self, chapter, items):
         block = QWidget()
         outer = QVBoxLayout(block)
@@ -230,10 +329,13 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         watched = [x for x in all_entries if x.watched]
         unwatched = [x for x in all_entries if not x.watched]
         entries = watched if mode == "watched" else (all_entries if mode == "all" else unwatched)
+        query = str(self.db.get_setting("romanian_list_search", "") or "").strip()
+        if query:
+            entries = [x for x in entries if _matches_search(x, query)]
 
         page, content = self.page_shell(
-            "Filme românești",
-            "O bibliotecă vizuală, organizată după perioada în care se petrece povestea.",
+            "Cronologia filmului românesc",
+            "Filmele sunt așezate după perioada acțiunii, nu după anul lansării.",
             [("Sincronizează IMDb", lambda: self.sync_imdb_public(silent=False), False)],
         )
 
@@ -243,7 +345,7 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         hl.setContentsMargins(24, 22, 24, 22)
         hl.setSpacing(12)
 
-        kicker = QLabel("COLECȚIA TA ROMÂNEASCĂ")
+        kicker = QLabel("FILME ROMÂNEȘTI • CRONOLOGIA ACȚIUNII")
         kicker.setObjectName("Kicker")
         hl.addWidget(kicker)
         headline = QLabel("De la epoci istorice la România de azi")
@@ -251,9 +353,8 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         headline.setWordWrap(True)
         hl.addWidget(headline)
         intro = QLabel(
-            "Cele 233 de titluri din lista ta sunt prezentate ca o colecție de streaming: "
-            "postere, rânduri pe epoci și stare văzut/nevăzut. Documentul rămâne doar sursa datelor, "
-            "nu aspectul interfeței."
+            "Parcurgi cinematografia românească în ordinea lumii în care se petrece povestea. "
+            "Lista ta rămâne sursa cronologiei, iar ratingurile IMDb separă automat ce ai văzut de ce urmează."
         )
         intro.setObjectName("Muted")
         intro.setWordWrap(True)
@@ -266,13 +367,39 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         stats.addStretch(1)
         hl.addLayout(stats)
 
+        progress = QProgressBar()
+        progress.setRange(0, max(1, len(all_entries)))
+        progress.setValue(len(watched))
+        progress.setFormat(f"{len(watched)} / {len(all_entries)} văzute • %p%")
+        progress.setTextVisible(True)
+        hl.addWidget(progress)
+
         filters = QHBoxLayout()
         filters.addWidget(_filter_button(self, "De văzut", "unwatched", mode, len(unwatched)))
         filters.addWidget(_filter_button(self, "Văzute", "watched", mode, len(watched)))
         filters.addWidget(_filter_button(self, "Toate", "all", mode, len(all_entries)))
         filters.addStretch(1)
         hl.addLayout(filters)
+
+        search_row = QHBoxLayout()
+        search = QLineEdit()
+        search.setPlaceholderText("Caută titlu, perioadă sau context…")
+        search.setText(query)
+        search.returnPressed.connect(lambda: _set_search(self, search))
+        search_row.addWidget(search, 1)
+        search_button = QPushButton("Caută")
+        search_button.clicked.connect(lambda _checked=False: _set_search(self, search))
+        search_row.addWidget(search_button)
+        if query:
+            clear = QPushButton("Șterge căutarea")
+            clear.clicked.connect(lambda _checked=False: _clear_search(self))
+            search_row.addWidget(clear)
+        hl.addLayout(search_row)
         content.addWidget(hero)
+
+        next_item = next((x for x in unwatched if _matches_search(x, query)), None)
+        if next_item and mode != "watched":
+            content.addWidget(_next_up_hero(self, next_item))
 
         if not entries:
             empty = QFrame()
@@ -281,7 +408,7 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             et = QLabel("Niciun film în această categorie")
             et.setObjectName("SectionTitle")
             el.addWidget(et)
-            ex = QLabel("Schimbă filtrul sau sincronizează IMDb.")
+            ex = QLabel("Schimbă filtrul, șterge căutarea sau sincronizează IMDb.")
             ex.setObjectName("Muted")
             el.addWidget(ex)
             content.addWidget(empty)
