@@ -1,18 +1,13 @@
-CineCalendar 3.9.2 adaugă, ca primă etapă, o secțiune separată „Filme românești” construită după lista ta revizuită de 233 de titluri.
+CineCalendar 3.9.3 repară afișarea secțiunii „Filme românești” în interfața Premium/Decision Engine.
 
-Secțiunea păstrează modelul documentului: cele 12 capitole cronologice și coloanele Film, Perioada acțiunii, Lună/anotimp, Context și Certitudine/sursă. Ordinea este cea a perioadei acțiunii din lista ta, nu anul producției.
+3.9.2 conținea deja lista ta de 233 de titluri și logica VĂZUT/DE VĂZUT, dar meniul de producție folosea propria listă NAV și nu expunea pagina. 3.9.3 adaugă explicit „Filme românești” în sidebar-ul folosit efectiv de aplicația Premium.
 
-Au fost adăugate trei filtre:
-- De văzut — implicit;
-- Văzute;
-- Toate.
+Secțiunea rămâne construită strict după lista ta revizuită:
+- 233 de titluri;
+- 12 capitole cronologice;
+- coloane: Stare, Film, Perioada acțiunii, Lună/anotimp, Context, Certitudine/sursă;
+- filtre: De văzut, Văzute, Toate.
 
-Starea VĂZUT este legată automat de ratingurile tale IMDb. După o sincronizare IMDb reușită, dacă un titlu din această listă este identificat în ratingurile tale, el dispare automat din „De văzut” și rămâne accesibil în „Văzute” și „Toate”, împreună cu nota ta.
+Când un titlu din listă apare în ratingurile tale IMDb, este marcat automat VĂZUT și dispare din filtrul implicit „De văzut”. Lista se reafișează și după sincronizarea publică IMDb sau după importul automat al unui export IMDb.
 
-Potrivirea este conservatoare: folosește titlul/titlul original și, unde lista conține anul producției, cere și anul corect pentru a evita eliminarea unui remake sau a unui film cu același nume.
-
-Secțiunea nouă este separată de pagina existentă „Cinema românesc”, care continuă să ofere recomandări românești personalizate.
-
-3.9.2 elimină și modificarea greșită introdusă temporar în 3.9.1 care reordona recomandările generale după perioada acțiunii. Motorul și ordinea recomandărilor generale revin la comportamentul anterior.
-
-Aceasta este intenționat doar etapa bazată pe lista ta. Extinderea la catalogul complet de filme românești se face după ce verifici această versiune.
+Pagina existentă „Cinema românesc” cu recomandări personalizate rămâne separată.
