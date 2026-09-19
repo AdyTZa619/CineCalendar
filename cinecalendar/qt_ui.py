@@ -281,10 +281,27 @@ class CineCalendarWindow(QMainWindow):
         right.addLayout(buttons); main.addLayout(right,1); return box
 
     def load_poster_async(self,label:QLabel,url:str,key:str,on_failure=None):
-        cache=self.s.paths.cache/"posters"; cache.mkdir(parents=True,exist_ok=True); path=cache/(hashlib.sha256((key+url).encode()).hexdigest()+".jpg")
+        cache=self.s.paths.cache/"posters"; cache.mkdir(parents=True,exist_ok=True)
+        path=cache/(hashlib.sha256((key+url).encode()).hexdigest()+".jpg")
         def fn(progress):
             if not path.exists():
-                r=requests.get(url,timeout=15,headers={"User-Agent":"CineCalendar/3.9"}); r.raise_for_status(); path.write_bytes(r.content)
+                r=requests.get(
+                    url,
+                    timeout=15,
+                    headers={
+                        "User-Agent":"CineCalendar/3.9",
+                        "Accept":"image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                    },
+                )
+                r.raise_for_status()
+                content_type=str(r.headers.get("Content-Type") or "").lower()
+                if content_type and not content_type.startswith("image/"):
+                    raise ValueError(f"URL-ul posterului nu a returnat o imagine ({content_type}).")
+                if len(r.content) < 512:
+                    raise ValueError("Imaginea posterului este goală sau prea mică.")
+                tmp=path.with_suffix(path.suffix+".part")
+                tmp.write_bytes(r.content)
+                tmp.replace(path)
             return str(path)
         w=WorkerThread(fn,self); self.poster_threads.append(w)
         def done(p):
@@ -292,18 +309,16 @@ class CineCalendarWindow(QMainWindow):
             if not pm.isNull():
                 label.setPixmap(pm.scaled(label.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)); label.setText("")
             else:
-                try:
-                    Path(p).unlink(missing_ok=True)
-                except Exception:
-                    pass
-                if callable(on_failure):
-                    on_failure("Imagine invalidă sau coruptă.")
+                try: Path(p).unlink(missing_ok=True)
+                except Exception: pass
+                if callable(on_failure): on_failure("Imagine invalidă sau coruptă.")
             if w in self.poster_threads:self.poster_threads.remove(w)
         def failed(message):
+            try: path.unlink(missing_ok=True)
+            except Exception: pass
             if w in self.poster_threads:self.poster_threads.remove(w)
-            if callable(on_failure):
-                on_failure(str(message))
-        w.success.connect(done); w.failure.connect(failed); w.start()
+            if callable(on_failure): on_failure(str(message))
+        w.success.connect(done); w.failure.connect(failed); w.finished.connect(w.deleteLater); w.start()
 
     def feedback(self,movie_id:int,kind:str):
         try:
@@ -419,6 +434,7 @@ class CineCalendarWindow(QMainWindow):
                     "IMDb",
                     f"Sincronizare finalizată.\nNoi: {len(r.new_ratings)}\nModificate: {len(r.changed_ratings)}\nVerificate: {r.fetched}",
                 )
+            self._romanian_prepare_signature = None
             if self.current_page in {"ratings", "romanian_list"}:
                 self.show_page(self.current_page)
         def fail(error):
