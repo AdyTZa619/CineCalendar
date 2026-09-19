@@ -135,3 +135,13 @@ def test_ui_sync_uses_full_public_profile_history():
     ui = (root / "cinecalendar" / "qt_ui.py").read_text(encoding="utf-8")
     sync_block = ui[ui.index("def sync_imdb_public"):ui.index("def manual_rating")]
     assert "baseline_date=None" in sync_block
+
+
+def test_public_sync_sends_required_imdb_web_headers():
+    session = Session([payload([("tt1000200", "Headers", 8, "2026-09-19", 2025)])])
+    fetch_public_ratings(URL, session=session)
+    headers = session.calls[0][1]["headers"]
+    assert headers["Origin"] == "https://www.imdb.com"
+    assert headers["Referer"] == "https://www.imdb.com/"
+    assert headers["x-imdb-client-name"] == "imdb-web-next"
+    assert "application/graphql+json" in headers["Accept"]
