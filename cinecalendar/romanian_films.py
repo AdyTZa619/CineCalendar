@@ -43,6 +43,7 @@ _ALLOWED_TYPES = {
 _RESOLVED_SETTING = "romanian_resolved_imdb_ids"
 _LOCAL_SCAN_SETTING = "romanian_resolver_local_scan_signature"
 _SUGGESTION_ATTEMPTS_SETTING = "romanian_resolver_suggestion_attempts"
+_BROKEN_POSTERS_SETTING = "romanian_broken_poster_urls"
 
 
 def _release_years(label: str) -> set[int]:
@@ -101,6 +102,13 @@ def load_romanian_films_catalog() -> dict:
 
 def romanian_chapters() -> list[dict]:
     return list(DATA["chapters"])
+
+
+def _broken_poster_urls(db: Database) -> set[str]:
+    raw = db.get_setting(_BROKEN_POSTERS_SETTING, [])
+    if not isinstance(raw, list):
+        return set()
+    return {str(x) for x in raw if str(x).startswith(("http://", "https://"))}
 
 
 def _resolved_map(db: Database) -> dict[str, str]:
@@ -619,6 +627,7 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
         }
 
     ids = list(dict.fromkeys(item.imdb_id for item in targets if item.imdb_id))
+    broken_urls = _broken_poster_urls(db)
     session = requests.Session()
     source_errors = 0
 
@@ -659,6 +668,8 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
                         continue
                     iid = str(row.get("id") or "").strip()
                     image = str(((row.get("primaryImage") or {}).get("url") or "")).strip()
+                    if image in broken_urls:
+                        image = ""
                     raw_rating = (row.get("ratingsSummary") or {}).get("aggregateRating")
                     try:
                         aggregate = float(raw_rating) if raw_rating is not None else None
@@ -721,8 +732,10 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
             poster_search_errors = 0
             chosen = _choose_candidate(item, candidates)
             if chosen and chosen.get("imdb_id") == item.imdb_id and chosen.get("poster_url"):
-                image = str(chosen["poster_url"])
-                break
+                candidate_image = str(chosen["poster_url"])
+                if candidate_image not in broken_urls:
+                    image = candidate_image
+                    break
         if network_down:
             break
         if image:
@@ -767,6 +780,8 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
                 image = (row.get("image") or {}).get("value", "").strip()
                 if image and "Special:FilePath/" in image and "?" not in image:
                     image += "?width=342"
+                if image in broken_urls:
+                    image = ""
                 if iid and image and iid not in wikidata_found:
                     wikidata_found[iid] = image
         except (requests.RequestException, ValueError, TypeError):
@@ -820,6 +835,10 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
                 break
             continue
         fallback_errors = 0
+        if movie.poster_url in broken_urls:
+            with db.tx() as con:
+                con.execute("UPDATE movies SET poster_url=NULL WHERE id=?", (int(item.local_movie_id),))
+            movie.poster_url = None
         if movie.poster_url:
             fallback += 1
         if progress and (idx == len(remaining_items) or idx % 12 == 0):
