@@ -118,8 +118,11 @@ def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int 
             headers={
                 "User-Agent": "CineCalendar/3.9 (personal IMDb ratings sync)",
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                "Accept": "application/graphql+json, application/json",
                 "Origin": "https://www.imdb.com",
+                "Referer": "https://www.imdb.com/",
+                "x-imdb-client-name": "imdb-web-next",
+                "x-imdb-user-language": "en-US",
             },
             timeout=timeout,
         )
