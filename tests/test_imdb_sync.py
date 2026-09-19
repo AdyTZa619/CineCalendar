@@ -132,7 +132,12 @@ def test_graphql_errors_never_touch_database(tmp_path: Path):
         sync_public_ratings(
             db,
             URL,
-            session=Session([{"errors": [{"message": "private"}]}]),
+            session=Session([
+                {"errors": [{"message": "private"}]},
+                {"errors": [{"message": "private"}]},
+                {"errors": [{"message": "private"}]},
+                {"errors": [{"message": "private"}]},
+            ]),
         )
     with db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 0
