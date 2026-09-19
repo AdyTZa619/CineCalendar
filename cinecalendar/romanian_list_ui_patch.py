@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (
 
 from .qt_ui import WorkerThread
 from .romanian_films import (
-    backfill_romanian_posters,
     display_title,
+    prepare_romanian_library,
     romanian_chapters,
     romanian_films,
 )
@@ -59,14 +59,24 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         tokens = [x for x in query.casefold().split() if x]
         return all(token in haystack for token in tokens)
 
+    def _library_signature(self):
+        entries = romanian_films(self.db)
+        linked = sum(1 for item in entries if item.imdb_id)
+        watched = sum(1 for item in entries if item.watched)
+        posters = sum(1 for item in entries if item.poster_url)
+        with self.db.connect() as con:
+            ratings = int(con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0])
+        return (linked, watched, posters, ratings)
+
     def _poster_failed(self, item):
         if not item.local_movie_id or not item.poster_url:
             return
-        failed_ids = getattr(self, "_romanian_broken_poster_ids", set())
-        if int(item.local_movie_id) in failed_ids:
+        failed = getattr(self, "_romanian_broken_poster_urls", set())
+        failure_key = (int(item.local_movie_id), str(item.poster_url))
+        if failure_key in failed:
             return
-        failed_ids.add(int(item.local_movie_id))
-        self._romanian_broken_poster_ids = failed_ids
+        failed.add(failure_key)
+        self._romanian_broken_poster_urls = failed
         try:
             with self.db.tx() as con:
                 con.execute(
@@ -75,33 +85,23 @@ def install_romanian_list_ui_patch(window_cls) -> None:
                 )
         except Exception:
             return
-        self._romanian_assets_attempted_session = False
+        self._romanian_prepare_signature = None
         self.set_status("Un poster nu s-a încărcat; caut automat o sursă alternativă.", False)
-        QTimer.singleShot(350, lambda: _auto_fill_posters(self))
+        QTimer.singleShot(350, lambda: _auto_prepare_library(self, force=True))
 
-    def _auto_fill_posters(self):
+    def _auto_prepare_library(self, force: bool = False):
         worker = getattr(self, "romanian_assets_worker", None)
         if worker is not None and worker.isRunning():
             return
-        if getattr(self, "_romanian_assets_attempted_session", False):
-            return
-        self._romanian_assets_attempted_session = True
 
-        current = romanian_films(self.db)
-        missing = [
-            item for item in current
-            if item.local_movie_id and item.imdb_id and not item.poster_url
-        ]
-        if not missing:
+        signature = _library_signature(self)
+        if not force and getattr(self, "_romanian_prepare_signature", None) == signature:
             return
+        self._romanian_prepare_signature = signature
 
-        self.set_status(f"Completez automat posterele… {len(missing)} lipsă", True)
+        self.set_status("Verific automat legăturile IMDb și posterele filmelor românești…", True)
         worker = WorkerThread(
-            lambda progress: backfill_romanian_posters(
-                self.db,
-                fallback_limit=48,
-                progress=progress,
-            ),
+            lambda progress: prepare_romanian_library(self.db, progress=progress),
             self,
         )
         self.romanian_assets_worker = worker
@@ -109,31 +109,37 @@ def install_romanian_list_ui_patch(window_cls) -> None:
 
         def done(result):
             self.romanian_assets_worker = None
-            gained = int(result.get("filled", 0) or 0) + int(result.get("fallback", 0) or 0)
-            remaining = int(result.get("remaining", 0) or 0)
-            if gained:
+            self._romanian_prepare_signature = _library_signature(self)
+            linked = int(result.get("linked", 0) or 0)
+            posters = int(result.get("posters", 0) or 0)
+            watched = int(result.get("watched", 0) or 0)
+            unresolved = int(result.get("unresolved", 0) or 0)
+            errors = int(result.get("resolver_errors", 0) or 0) + int(result.get("poster_errors", 0) or 0)
+            if errors:
                 self.set_status(
-                    f"Postere completate automat: {gained}. Mai lipsesc {remaining} dintre titlurile identificate.",
+                    f"Filme RO: {linked}/233 identificate • {posters}/233 postere • "
+                    f"{watched} văzute • {errors} erori de sursă.",
                     False,
                 )
-                if self.current_page == "romanian_list":
-                    self.show_page("romanian_list")
             else:
                 self.set_status(
-                    "Posterele disponibile automat au fost verificate; unele titluri nu au imagine în sursele deschise.",
+                    f"Filme RO: {linked}/233 identificate • {posters}/233 postere • "
+                    f"{watched} văzute • {unresolved} neidentificate.",
                     False,
                 )
+            if self.current_page == "romanian_list" and int(result.get("changed", 0) or 0):
+                self.show_page("romanian_list")
 
         def failed(message):
             self.romanian_assets_worker = None
-            self.set_status(
-                "Nu am putut completa toate posterele acum; lista rămâne utilizabilă și se reîncearcă la următoarea pornire.",
-                False,
-            )
-            self.s.log.warning("Romanian poster backfill failed: %s", message)
+            self._romanian_prepare_signature = None
+            detail = str(message or "eroare necunoscută").replace("\n", " ")[:180]
+            self.set_status(f"Pregătirea filmelor românești a eșuat: {detail}", False)
+            self.s.log.warning("Romanian library preparation failed: %s", message)
 
         worker.success.connect(done)
         worker.failure.connect(failed)
+        worker.finished.connect(worker.deleteLater)
         worker.start()
 
     def _detail_dialog(self, item):
@@ -429,7 +435,10 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         page, content = self.page_shell(
             "Cronologia filmului românesc",
             "Filmele sunt așezate după perioada acțiunii, nu după anul lansării.",
-            [("Sincronizează IMDb", lambda: self.sync_imdb_public(silent=False), False)],
+            [
+                ("Sincronizează IMDb", lambda: self.sync_imdb_public(silent=False), False),
+                ("Reverifică datele", lambda: _auto_prepare_library(self, force=True), False),
+            ],
         )
 
         hero = QFrame()
@@ -457,6 +466,10 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         stats.addWidget(self.metric_badge(str(len(all_entries)), "în colecție") if hasattr(self, "metric_badge") else QLabel(str(len(all_entries))))
         stats.addWidget(self.metric_badge(str(len(unwatched)), "de văzut") if hasattr(self, "metric_badge") else QLabel(str(len(unwatched))))
         stats.addWidget(self.metric_badge(str(len(watched)), "văzute") if hasattr(self, "metric_badge") else QLabel(str(len(watched))))
+        linked_count = sum(1 for item in all_entries if item.imdb_id)
+        poster_count = sum(1 for item in all_entries if item.poster_url)
+        stats.addWidget(self.metric_badge(str(linked_count), "IMDb identificate") if hasattr(self, "metric_badge") else QLabel(str(linked_count)))
+        stats.addWidget(self.metric_badge(str(poster_count), "postere") if hasattr(self, "metric_badge") else QLabel(str(poster_count)))
         stats.addStretch(1)
         hl.addLayout(stats)
 
@@ -490,9 +503,10 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         hl.addLayout(search_row)
         content.addWidget(hero)
 
-        # Poster metadata is completed in the background on every first visit,
-        # regardless of the current filter/search result.
-        QTimer.singleShot(0, lambda: _auto_fill_posters(self))
+        # Resolve missing IMDb identities first, then posters. The signature
+        # changes after a ratings sync, so the same session can automatically
+        # re-run when new profile data arrives.
+        QTimer.singleShot(0, lambda: _auto_prepare_library(self))
 
         next_item = next((x for x in unwatched if _matches_search(x, query)), None)
         if next_item and mode != "watched":
