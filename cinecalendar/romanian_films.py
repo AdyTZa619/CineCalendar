@@ -566,7 +566,7 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
     if not targets:
         posters = sum(1 for item in entries if item.poster_url)
         return {
-            "targets": 0, "filled": 0, "imdb": 0, "wikidata": 0,
+            "targets": 0, "filled": 0, "imdb": 0, "suggestion": 0, "wikidata": 0,
             "fallback": 0, "remaining": 0, "posters": posters, "errors": 0,
         }
 
@@ -643,6 +643,43 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
                 )
                 if image:
                     imdb_filled += 1
+
+    refreshed = romanian_films(db)
+    still_missing = [
+        item for item in refreshed
+        if item.local_movie_id and item.imdb_id and not item.poster_url
+    ]
+
+    # The suggestion service is often more reliable for poster thumbnails than
+    # title GraphQL, especially for obscure/older Romanian titles. Require the
+    # candidate IMDb id to equal the already-resolved id, so this cannot attach
+    # a same-name remake by accident.
+    suggestion_filled = 0
+    now = utcnow_iso()
+    for idx, item in enumerate(still_missing, 1):
+        image = ""
+        for alias in _raw_title_aliases(item.film)[:2]:
+            try:
+                candidates = _suggest_candidates(session, alias)
+            except (requests.RequestException, ValueError, TypeError):
+                source_errors += 1
+                continue
+            chosen = _choose_candidate(item, candidates)
+            if chosen and chosen.get("imdb_id") == item.imdb_id and chosen.get("poster_url"):
+                image = str(chosen["poster_url"])
+                break
+        if image:
+            with db.tx() as con:
+                con.execute(
+                    """UPDATE movies SET poster_url=CASE
+                           WHEN poster_url IS NULL OR TRIM(poster_url)='' THEN ?
+                           ELSE poster_url END,
+                           updated_at=? WHERE id=?""",
+                    (image, now, int(item.local_movie_id)),
+                )
+            suggestion_filled += 1
+        if progress and (idx == len(still_missing) or idx % 20 == 0):
+            progress(f"Postere IMDb Search: {idx}/{len(still_missing)}")
 
     refreshed = romanian_films(db)
     still_missing = [
@@ -732,8 +769,9 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
     posters = sum(1 for item in final_entries if item.poster_url)
     return {
         "targets": len(targets),
-        "filled": imdb_filled + wikidata_filled,
+        "filled": imdb_filled + suggestion_filled + wikidata_filled,
         "imdb": imdb_filled,
+        "suggestion": suggestion_filled,
         "wikidata": wikidata_filled,
         "fallback": fallback,
         "remaining": remaining,
