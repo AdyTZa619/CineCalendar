@@ -103,7 +103,7 @@ def _parse_node(node: dict[str, Any]) -> RemoteRating:
     return RemoteRating(imdb_id, name, rating, rated, original, year, title_type)
 
 
-def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int = 8,
+def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int = 40,
                          session: requests.Session | None = None) -> list[RemoteRating]:
     user_id = user_id_from_profile_url(profile_url)
     client = session or requests.Session()
