@@ -46,3 +46,44 @@ def test_production_sidebar_exposes_curated_romanian_list():
     keys = [key for key, _label in DecisionWindow.NAV]
     assert "romanian_list" in keys
     assert callable(getattr(DecisionWindow, "page_romanian_list", None))
+
+
+def test_premium_composition_installs_cinematic_romanian_list():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    composition = (root / "cinecalendar" / "ui_composition.py").read_text(encoding="utf-8")
+    patch = (root / "cinecalendar" / "romanian_list_ui_patch.py").read_text(encoding="utf-8")
+
+    assert "install_romanian_list_ui_patch(window_cls)" in composition
+    assert "QScrollArea" in patch
+    assert "poster_label" in patch
+    assert "QTableWidget" not in patch
+    assert "COLECȚIA TA ROMÂNEASCĂ" in patch
+
+
+def test_unwatched_local_match_exposes_poster_metadata(tmp_path):
+    from cinecalendar.util import identity_key, normalize_text, utcnow_iso
+
+    db = Database(tmp_path / "cinecalendar.db")
+    now = utcnow_iso()
+    with db.tx() as con:
+        con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,year,title_type,
+                genres_json,directors_json,countries_json,overview,keywords_json,semantic_json,
+                imdb_rating,num_votes,poster_url,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt0097889", identity_key("Mircea", "Mircea", 1989, "movie"),
+                "Mircea", "Mircea", normalize_text("Mircea"), normalize_text("Mircea"),
+                1989, "movie", "[]", "[]", "[]", "", "[]", "{}",
+                7.4, 1000, "https://example.invalid/mircea.jpg", "test", now, now,
+            ),
+        )
+
+    item = next(x for x in romanian_films(db) if x.film == "Mircea (1989)")
+    assert item.watched is False
+    assert item.local_movie_id is not None
+    assert item.poster_url == "https://example.invalid/mircea.jpg"
+    assert item.imdb_rating == 7.4
