@@ -193,9 +193,9 @@ def romanian_films(db: Database | None = None) -> list[RomanianFilmEntry]:
 def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progress=None) -> dict[str, int]:
     """Fill missing posters automatically for the curated Romanian chronology.
 
-    Fast path: one batched Wikidata query per ~80 IMDb ids using P18.
-    Fallback: the existing Wikimedia provider may discover an article image for
-    titles without P18. All successful URLs are persisted in the local movie DB.
+    Preferred source is IMDb itself, queried in batches by IMDb id. Titles that
+    still have no primary image fall back to Wikidata/Wikipedia. Successful URLs
+    are persisted so subsequent launches read them locally.
     """
     entries = romanian_films(db)
     targets = [
@@ -203,18 +203,93 @@ def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progres
         if item.local_movie_id and item.imdb_id and not item.poster_url
     ]
     if not targets:
-        return {"targets": 0, "filled": 0, "fallback": 0, "remaining": 0}
+        return {"targets": 0, "filled": 0, "imdb": 0, "wikidata": 0, "fallback": 0, "remaining": 0}
 
     ids = list(dict.fromkeys(item.imdb_id for item in targets if item.imdb_id))
     session = requests.Session()
     session.headers.update({
         "User-Agent": "CineCalendar/3.9 personal desktop movie recommender",
-        "Accept": "application/sparql-results+json, application/json",
+        "Accept": "application/graphql+json, application/json",
     })
 
-    found: dict[str, str] = {}
+    # 1) IMDb primaryImage is the best match because we already know the exact title id.
+    imdb_found: dict[str, tuple[str, float | None]] = {}
+    imdb_query = """
+    query CineCalendarPosterBatch($ids: [ID!]!) {
+      titles(ids: $ids) {
+        id
+        primaryImage { url }
+        ratingsSummary { aggregateRating }
+      }
+    }
+    """
     for start in range(0, len(ids), 80):
         batch = ids[start:start + 80]
+        try:
+            response = session.post(
+                "https://caching.graphql.imdb.com/",
+                json={"query": imdb_query, "variables": {"ids": batch}},
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/graphql+json, application/json",
+                    "Origin": "https://www.imdb.com",
+                    "Referer": "https://www.imdb.com/",
+                    "x-imdb-client-name": "imdb-web-next",
+                    "x-imdb-user-language": "en-US",
+                },
+                timeout=(8, 25),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not payload.get("errors"):
+                for row in (payload.get("data") or {}).get("titles") or []:
+                    if not isinstance(row, dict):
+                        continue
+                    iid = str(row.get("id") or "").strip()
+                    image = str(((row.get("primaryImage") or {}).get("url") or "")).strip()
+                    raw_rating = (row.get("ratingsSummary") or {}).get("aggregateRating")
+                    try:
+                        aggregate = float(raw_rating) if raw_rating is not None else None
+                    except (TypeError, ValueError):
+                        aggregate = None
+                    if iid:
+                        imdb_found[iid] = (image, aggregate)
+        except (requests.RequestException, ValueError, TypeError):
+            pass
+        if progress:
+            progress(f"Postere IMDb: {min(start + len(batch), len(ids))}/{len(ids)}")
+
+    imdb_filled = 0
+    if imdb_found:
+        now = utcnow_iso()
+        with db.tx() as con:
+            for item in targets:
+                image, aggregate = imdb_found.get(item.imdb_id or "", ("", None))
+                if not image and aggregate is None:
+                    continue
+                con.execute(
+                    """UPDATE movies
+                       SET poster_url=CASE
+                           WHEN (poster_url IS NULL OR TRIM(poster_url)='') AND ?<>'' THEN ?
+                           ELSE poster_url END,
+                           imdb_rating=COALESCE(?, imdb_rating),
+                           updated_at=?
+                       WHERE id=?""",
+                    (image, image, aggregate, now, int(item.local_movie_id)),
+                )
+                if image:
+                    imdb_filled += 1
+
+    # 2) Key-free Wikidata P18 batch fallback for exact IMDb ids still missing posters.
+    refreshed = romanian_films(db)
+    still_missing = [
+        item for item in refreshed
+        if item.local_movie_id and item.imdb_id and not item.poster_url
+    ]
+    missing_ids = list(dict.fromkeys(item.imdb_id for item in still_missing if item.imdb_id))
+    wikidata_found: dict[str, str] = {}
+    for start in range(0, len(missing_ids), 80):
+        batch = missing_ids[start:start + 80]
         values = " ".join(f'"{iid}"' for iid in batch)
         query = f"""SELECT ?imdb ?image WHERE {{
           VALUES ?imdb {{ {values} }}
@@ -232,21 +307,22 @@ def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progres
             for row in rows:
                 iid = (row.get("imdb") or {}).get("value", "").strip()
                 image = (row.get("image") or {}).get("value", "").strip()
-                if iid and image and iid not in found:
-                    found[iid] = image
-        except requests.RequestException:
-            # The fallback provider below is isolated per title, so one batch
-            # failure never blocks the chronology page.
+                if iid and image and iid not in wikidata_found:
+                    # Special:FilePath supports width= and avoids downloading giant originals.
+                    if "Special:FilePath/" in image and "?" not in image:
+                        image += "?width=342"
+                    wikidata_found[iid] = image
+        except (requests.RequestException, ValueError, TypeError):
             pass
         if progress:
-            progress(f"Postere filme românești: {min(start + len(batch), len(ids))}/{len(ids)}")
+            progress(f"Postere Wikidata: {min(start + len(batch), len(missing_ids))}/{len(missing_ids)}")
 
-    filled = 0
-    if found:
+    wikidata_filled = 0
+    if wikidata_found:
         now = utcnow_iso()
         with db.tx() as con:
-            for item in targets:
-                image = found.get(item.imdb_id or "")
+            for item in still_missing:
+                image = wikidata_found.get(item.imdb_id or "")
                 if not image:
                     continue
                 con.execute(
@@ -258,10 +334,9 @@ def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progres
                        WHERE id=?""",
                     (image, now, int(item.local_movie_id)),
                 )
-                filled += 1
+                wikidata_filled += 1
 
-    # Retry still-missing titles through the richer key-free Wikimedia provider.
-    # It can use a Wikipedia article image even when Wikidata has no P18 poster.
+    # 3) Richer Wikimedia fallback can discover a Wikipedia article image when P18 is absent.
     refreshed = romanian_films(db)
     remaining_items = [
         item for item in refreshed
@@ -269,7 +344,8 @@ def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progres
     ]
     fallback = 0
     provider = OpenMovieMetadataProvider(db)
-    for idx, item in enumerate(remaining_items[:max(0, int(fallback_limit))], 1):
+    limit = max(0, int(fallback_limit))
+    for idx, item in enumerate(remaining_items[:limit], 1):
         movie = Movie(
             id=item.local_movie_id,
             imdb_id=item.imdb_id,
@@ -277,17 +353,14 @@ def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progres
             year=item.release_year,
             poster_url=None,
         )
-        before = movie.poster_url
         try:
             provider.enrich_by_imdb(movie)
         except Exception:
             continue
-        if movie.poster_url and movie.poster_url != before:
+        if movie.poster_url:
             fallback += 1
         if progress:
-            progress(
-                f"Postere fallback: {idx}/{min(len(remaining_items), max(0, int(fallback_limit)))}"
-            )
+            progress(f"Postere fallback: {idx}/{min(len(remaining_items), limit)}")
 
     final_entries = romanian_films(db)
     remaining = sum(
@@ -296,7 +369,9 @@ def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progres
     )
     return {
         "targets": len(targets),
-        "filled": filled,
+        "filled": imdb_filled + wikidata_filled,
+        "imdb": imdb_filled,
+        "wikidata": wikidata_filled,
         "fallback": fallback,
         "remaining": remaining,
     }
