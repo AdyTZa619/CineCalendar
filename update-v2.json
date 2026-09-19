@@ -1,9 +1,9 @@
 {
-  "version": "3.9.4",
-  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.4/CineCalendar-3.9.4-Premium-Windows-x64.zip",
-  "sha256": "2c086b6e4f87dfb41a356620da831feca6a3a64b966bb045c7b72a591dc2ad7f",
-  "notes": "CineCalendar 3.9.4 redesenează complet secțiunea „Filme românești” într-un stil modern de bibliotecă de streaming.\r\n\r\nLista ta de 233 de titluri rămâne sursa de date și cronologia rămâne neschimbată, dar interfața nu mai arată ca tabelul Word.\r\n\r\nNoutăți:\r\n- header vizual cu statistici pentru colecție / de văzut / văzute;\r\n- filtre mari: De văzut, Văzute, Toate;\r\n- fiecare perioadă istorică apare ca un rând orizontal de postere;\r\n- carduri cinematografice cu titlu, perioadă, stare și rating IMDb când există;\r\n- posterele existente din catalogul local sunt folosite automat;\r\n- buton Detalii pentru context, perioadă, anotimp și sursa/certitudinea din document;\r\n- buton IMDb când titlul este legat de un ID IMDb;\r\n- scrollbar orizontal discret, integrat în tema Premium.\r\n\r\nLegătura cu ratingurile tale IMDb rămâne activă: un film evaluat de tine este marcat automat VĂZUT și dispare din filtrul implicit „De văzut”.\r\n\r\nPagina existentă „Cinema românesc” cu recomandări personalizate rămâne separată.",
-  "publishedAt": "2026-09-19T10:15:19.6643895Z",
+  "version": "3.9.5",
+  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.5/CineCalendar-3.9.5-Premium-Windows-x64.zip",
+  "sha256": "25958ec5161b1969de5252e7ac31e66b2551d1a4fc16d05a30a40a8b27f54efb",
+  "notes": "CineCalendar 3.9.5 rafinează secțiunea cronologică de filme românești și repară sincronizarea publică IMDb pentru schema curentă.\r\n\r\nInterfață:\r\n- secțiunea se numește acum „Filme RO • Cronologie” în sidebar;\r\n- pagina se numește „Cronologia filmului românesc”;\r\n- pagina separată de recomandări românești se numește clar „Recomandări românești”;\r\n- progres vizual văzute / total;\r\n- căutare după titlu, perioadă sau context;\r\n- card „Următorul cronologic” pentru primul film nevăzut din ordine;\r\n- rândurile vizuale cu postere și filtrele De văzut / Văzute / Toate rămân active.\r\n\r\nIMDb:\r\n- query-ul public a fost actualizat la schema curentă RatingsResult.userRating { value date };\r\n- parserul păstrează compatibilitate cu forma veche rating/date;\r\n- o eroare de sincronizare în fundal nu mai lasă aplicația cu un mesaj alarmant permanent;\r\n- datele locale rămân active și intacte dacă IMDb nu răspunde;\r\n- la sincronizarea manuală se afișează motivul prietenos și detaliul tehnic exact.\r\n\r\nLista de 233 de titluri și cronologia din documentul tău rămân neschimbate.",
+  "publishedAt": "2026-09-19T10:43:04.1334108Z",
   "channel": "stable",
   "package": "onedir-zip"
 }
