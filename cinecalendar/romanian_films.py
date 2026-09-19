@@ -3,9 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import re
 
+import requests
+
 from .db import Database
 from .romanian_films_data import DATA
-from .util import normalize_text
+from .models import Movie
+from .open_metadata import OpenMovieMetadataProvider
+from .util import normalize_text, utcnow_iso
 
 
 @dataclass(frozen=True)
@@ -184,3 +188,115 @@ def romanian_films(db: Database | None = None) -> list[RomanianFilmEntry]:
             )
         out.append(entry)
     return out
+
+
+def backfill_romanian_posters(db: Database, *, fallback_limit: int = 48, progress=None) -> dict[str, int]:
+    """Fill missing posters automatically for the curated Romanian chronology.
+
+    Fast path: one batched Wikidata query per ~80 IMDb ids using P18.
+    Fallback: the existing Wikimedia provider may discover an article image for
+    titles without P18. All successful URLs are persisted in the local movie DB.
+    """
+    entries = romanian_films(db)
+    targets = [
+        item for item in entries
+        if item.local_movie_id and item.imdb_id and not item.poster_url
+    ]
+    if not targets:
+        return {"targets": 0, "filled": 0, "fallback": 0, "remaining": 0}
+
+    ids = list(dict.fromkeys(item.imdb_id for item in targets if item.imdb_id))
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "CineCalendar/3.9 personal desktop movie recommender",
+        "Accept": "application/sparql-results+json, application/json",
+    })
+
+    found: dict[str, str] = {}
+    for start in range(0, len(ids), 80):
+        batch = ids[start:start + 80]
+        values = " ".join(f'"{iid}"' for iid in batch)
+        query = f"""SELECT ?imdb ?image WHERE {{
+          VALUES ?imdb {{ {values} }}
+          ?item wdt:P345 ?imdb .
+          OPTIONAL {{ ?item wdt:P18 ?image . }}
+        }}"""
+        try:
+            response = session.get(
+                "https://query.wikidata.org/sparql",
+                params={"query": query, "format": "json"},
+                timeout=(10, 30),
+            )
+            response.raise_for_status()
+            rows = response.json().get("results", {}).get("bindings", [])
+            for row in rows:
+                iid = (row.get("imdb") or {}).get("value", "").strip()
+                image = (row.get("image") or {}).get("value", "").strip()
+                if iid and image and iid not in found:
+                    found[iid] = image
+        except requests.RequestException:
+            # The fallback provider below is isolated per title, so one batch
+            # failure never blocks the chronology page.
+            pass
+        if progress:
+            progress(f"Postere filme românești: {min(start + len(batch), len(ids))}/{len(ids)}")
+
+    filled = 0
+    if found:
+        now = utcnow_iso()
+        with db.tx() as con:
+            for item in targets:
+                image = found.get(item.imdb_id or "")
+                if not image:
+                    continue
+                con.execute(
+                    """UPDATE movies
+                       SET poster_url=CASE
+                           WHEN poster_url IS NULL OR TRIM(poster_url)='' THEN ?
+                           ELSE poster_url END,
+                           updated_at=?
+                       WHERE id=?""",
+                    (image, now, int(item.local_movie_id)),
+                )
+                filled += 1
+
+    # Retry still-missing titles through the richer key-free Wikimedia provider.
+    # It can use a Wikipedia article image even when Wikidata has no P18 poster.
+    refreshed = romanian_films(db)
+    remaining_items = [
+        item for item in refreshed
+        if item.local_movie_id and item.imdb_id and not item.poster_url
+    ]
+    fallback = 0
+    provider = OpenMovieMetadataProvider(db)
+    for idx, item in enumerate(remaining_items[:max(0, int(fallback_limit))], 1):
+        movie = Movie(
+            id=item.local_movie_id,
+            imdb_id=item.imdb_id,
+            title=display_title(item.film),
+            year=item.release_year,
+            poster_url=None,
+        )
+        before = movie.poster_url
+        try:
+            provider.enrich_by_imdb(movie)
+        except Exception:
+            continue
+        if movie.poster_url and movie.poster_url != before:
+            fallback += 1
+        if progress:
+            progress(
+                f"Postere fallback: {idx}/{min(len(remaining_items), max(0, int(fallback_limit)))}"
+            )
+
+    final_entries = romanian_films(db)
+    remaining = sum(
+        1 for item in final_entries
+        if item.local_movie_id and item.imdb_id and not item.poster_url
+    )
+    return {
+        "targets": len(targets),
+        "filled": filled,
+        "fallback": fallback,
+        "remaining": remaining,
+    }
