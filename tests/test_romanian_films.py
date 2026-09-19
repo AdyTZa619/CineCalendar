@@ -1,6 +1,12 @@
 from cinecalendar.db import Database
 from cinecalendar.imdb_import import add_manual_rating
-from cinecalendar.romanian_films import backfill_romanian_posters, romanian_chapters, romanian_films
+from cinecalendar.romanian_films import (
+    backfill_romanian_posters,
+    prepare_romanian_library,
+    resolve_romanian_catalog_links,
+    romanian_chapters,
+    romanian_films,
+)
 
 
 def test_curated_romanian_model_has_all_233_rows():
@@ -165,7 +171,7 @@ def test_romanian_posters_are_backfilled_automatically(tmp_path, monkeypatch):
         lambda self, *args, **kwargs: ImdbResponse(),
     )
 
-    result = backfill_romanian_posters(db, fallback_limit=0)
+    result = backfill_romanian_posters(db)
     assert result["filled"] == 1
     assert result["imdb"] == 1
 
@@ -179,5 +185,69 @@ def test_romanian_ui_starts_poster_backfill_without_manual_action():
 
     root = Path(__file__).resolve().parents[1]
     patch = (root / "cinecalendar" / "romanian_list_ui_patch.py").read_text(encoding="utf-8")
-    assert "backfill_romanian_posters" in patch
-    assert "QTimer.singleShot(0, lambda: _auto_fill_posters(self))" in patch
+    assert "prepare_romanian_library" in patch
+    assert "QTimer.singleShot(0, lambda: _auto_prepare_library(self))" in patch
+    assert "IMDb identificate" in patch
+
+
+def test_resolver_can_link_title_missing_from_vote_filtered_catalog(tmp_path, monkeypatch):
+    db = Database(tmp_path / "CineCalendarData" / "data" / "cinecalendar.db")
+
+    class SuggestResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "d": [{
+                    "id": "tt0097889",
+                    "l": "Mircea",
+                    "y": 1989,
+                    "qid": "movie",
+                    "i": {"imageUrl": "https://m.media-amazon.com/images/M/mircea.jpg"},
+                }]
+            }
+
+    monkeypatch.setattr(
+        "cinecalendar.romanian_films.requests.Session.get",
+        lambda self, *args, **kwargs: SuggestResponse(),
+    )
+
+    result = resolve_romanian_catalog_links(db)
+    assert result["online"] >= 1
+    item = next(x for x in romanian_films(db) if x.film == "Mircea (1989)")
+    assert item.imdb_id == "tt0097889"
+    assert item.poster_url == "https://m.media-amazon.com/images/M/mircea.jpg"
+
+
+def test_undated_ambiguous_title_prefers_unique_rated_candidate(tmp_path):
+    from cinecalendar.util import identity_key, normalize_text, utcnow_iso
+
+    db = Database(tmp_path / "cinecalendar.db")
+    target = next(x for x in romanian_films() if not any(ch.isdigit() for ch in x.film))
+    title = target.film.split(" (", 1)[0].split(" [", 1)[0]
+    now = utcnow_iso()
+
+    with db.tx() as con:
+        for imdb_id, year, rating in (("tt9000001", 2000, None), ("tt9000002", 2010, 8)):
+            cur = con.execute(
+                """INSERT INTO movies(
+                    imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                    year,title_type,genres_json,directors_json,countries_json,overview,
+                    keywords_json,semantic_json,source,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    imdb_id, identity_key(title, title, year, "movie"),
+                    title, title, normalize_text(title), normalize_text(title),
+                    year, "movie", "[]", "[]", "[]", "", "[]", "{}", "test", now, now,
+                ),
+            )
+            if rating is not None:
+                con.execute(
+                    "INSERT INTO ratings(movie_id,rating,source,imported_at,updated_at) VALUES(?,?,?,?,?)",
+                    (int(cur.lastrowid), rating, "test", now, now),
+                )
+
+    item = next(x for x in romanian_films(db) if x.film == target.film)
+    assert item.watched is True
+    assert item.user_rating == 8
