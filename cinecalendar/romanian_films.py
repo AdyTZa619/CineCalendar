@@ -519,20 +519,32 @@ def _resolve_from_suggestions(
     if not isinstance(attempts, dict):
         attempts = {}
     unresolved = [entry for entry in entries if entry.film not in resolved]
+    consecutive_network_errors = 0
     for idx, entry in enumerate(unresolved, 1):
         if not force and str(attempts.get(entry.film) or "") == today:
             continue
         chosen = None
+        request_completed = False
+        network_down = False
         for alias in _raw_title_aliases(entry.film)[:3]:
             try:
                 candidates = _suggest_candidates(session, alias)
+                request_completed = True
+                consecutive_network_errors = 0
             except (requests.RequestException, ValueError):
                 errors += 1
+                consecutive_network_errors += 1
+                if consecutive_network_errors >= 3:
+                    network_down = True
+                    break
                 continue
             chosen = _choose_candidate(entry, candidates)
             if chosen:
                 break
-        attempts[entry.film] = today
+        if network_down:
+            break
+        if request_completed:
+            attempts[entry.film] = today
         if chosen:
             _upsert_resolved_movie(
                 db,
@@ -692,18 +704,27 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
     # a same-name remake by accident.
     suggestion_filled = 0
     now = utcnow_iso()
+    poster_search_errors = 0
     for idx, item in enumerate(still_missing, 1):
         image = ""
+        network_down = False
         for alias in _raw_title_aliases(item.film)[:2]:
             try:
                 candidates = _suggest_candidates(session, alias)
             except (requests.RequestException, ValueError, TypeError):
                 source_errors += 1
+                poster_search_errors += 1
+                if poster_search_errors >= 3:
+                    network_down = True
+                    break
                 continue
+            poster_search_errors = 0
             chosen = _choose_candidate(item, candidates)
             if chosen and chosen.get("imdb_id") == item.imdb_id and chosen.get("poster_url"):
                 image = str(chosen["poster_url"])
                 break
+        if network_down:
+            break
         if image:
             with db.tx() as con:
                 con.execute(
@@ -781,6 +802,7 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
     ]
     fallback = 0
     provider = OpenMovieMetadataProvider(db)
+    fallback_errors = 0
     for idx, item in enumerate(remaining_items, 1):
         movie = Movie(
             id=item.local_movie_id,
@@ -793,7 +815,11 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
             provider.enrich_by_imdb(movie)
         except Exception:
             source_errors += 1
+            fallback_errors += 1
+            if fallback_errors >= 3:
+                break
             continue
+        fallback_errors = 0
         if movie.poster_url:
             fallback += 1
         if progress and (idx == len(remaining_items) or idx % 12 == 0):
