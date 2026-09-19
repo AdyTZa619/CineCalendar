@@ -178,7 +178,7 @@ def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
                 (item.title, original, normalize_text(item.title), normalize_text(original),
                  item.year, item.title_type, now, movie_id),
             )
-        old = con.execute("SELECT rating FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
+        old = con.execute("SELECT rating,date_rated FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
         if old is None:
             con.execute(
                 "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
@@ -193,10 +193,13 @@ def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
             )
             result.changed_ratings.append((item.title, previous, item.rating))
         else:
-            con.execute(
-                "UPDATE ratings SET date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=? WHERE movie_id=?",
-                (item.date_rated, "imdb_public_sync", now, now, movie_id),
-            )
+            # Full-profile sync runs regularly. Avoid rewriting every unchanged rating on
+            # every pass; only refresh the date when IMDb reports a genuinely different one.
+            if item.date_rated and str(old["date_rated"] or "") != item.date_rated:
+                con.execute(
+                    "UPDATE ratings SET date_rated=?,source=?,imported_at=?,updated_at=? WHERE movie_id=?",
+                    (item.date_rated, "imdb_public_sync", now, now, movie_id),
+                )
             result.unchanged += 1
 
 
