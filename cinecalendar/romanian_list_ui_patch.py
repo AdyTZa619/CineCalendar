@@ -460,6 +460,11 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         hl.addLayout(search_row)
         content.addWidget(hero)
 
+        # Poster metadata is completed in the background on every first visit,
+        # regardless of the current filter/search result.
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: _auto_fill_posters(self))
+
         next_item = next((x for x in unwatched if _matches_search(x, query)), None)
         if next_item and mode != "watched":
             content.addWidget(_next_up_hero(self, next_item))
@@ -486,8 +491,6 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             content.addWidget(_chapter_row(self, chapter, items))
 
         content.addStretch(1)
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, lambda: _auto_fill_posters(self))
         return page
 
     window_cls.page_romanian_list = page_romanian_list
