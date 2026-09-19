@@ -146,29 +146,32 @@ def test_romanian_posters_are_backfilled_automatically(tmp_path, monkeypatch):
             ),
         )
 
-    class Response:
+    class ImdbResponse:
         def raise_for_status(self):
             return None
         def json(self):
             return {
-                "results": {
-                    "bindings": [{
-                        "imdb": {"value": "tt0097889"},
-                        "image": {"value": "https://upload.wikimedia.org/mircea.jpg"},
+                "data": {
+                    "titles": [{
+                        "id": "tt0097889",
+                        "primaryImage": {"url": "https://m.media-amazon.com/images/M/mircea.jpg"},
+                        "ratingsSummary": {"aggregateRating": 7.8},
                     }]
                 }
             }
 
     monkeypatch.setattr(
-        "cinecalendar.romanian_films.requests.Session.get",
-        lambda self, *args, **kwargs: Response(),
+        "cinecalendar.romanian_films.requests.Session.post",
+        lambda self, *args, **kwargs: ImdbResponse(),
     )
 
     result = backfill_romanian_posters(db, fallback_limit=0)
     assert result["filled"] == 1
+    assert result["imdb"] == 1
 
     item = next(x for x in romanian_films(db) if x.film == "Mircea (1989)")
-    assert item.poster_url == "https://upload.wikimedia.org/mircea.jpg"
+    assert item.poster_url == "https://m.media-amazon.com/images/M/mircea.jpg"
+    assert item.imdb_rating == 7.8
 
 
 def test_romanian_ui_starts_poster_backfill_without_manual_action():
