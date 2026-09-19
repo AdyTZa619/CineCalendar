@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget, QLineEdit, QProgressBar,
 )
 
-from .romanian_films import display_title, romanian_chapters, romanian_films
+from .qt_ui import WorkerThread
+from .romanian_films import (
+    backfill_romanian_posters,
+    display_title,
+    romanian_chapters,
+    romanian_films,
+)
 
 
 def install_romanian_list_ui_patch(window_cls) -> None:
@@ -52,6 +58,83 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         ).casefold()
         tokens = [x for x in query.casefold().split() if x]
         return all(token in haystack for token in tokens)
+
+    def _poster_failed(self, item):
+        if not item.local_movie_id or not item.poster_url:
+            return
+        failed_ids = getattr(self, "_romanian_broken_poster_ids", set())
+        if int(item.local_movie_id) in failed_ids:
+            return
+        failed_ids.add(int(item.local_movie_id))
+        self._romanian_broken_poster_ids = failed_ids
+        try:
+            with self.db.tx() as con:
+                con.execute(
+                    "UPDATE movies SET poster_url=NULL WHERE id=? AND poster_url=?",
+                    (int(item.local_movie_id), item.poster_url),
+                )
+        except Exception:
+            return
+        self._romanian_assets_attempted_session = False
+        self.set_status("Un poster nu s-a încărcat; caut automat o sursă alternativă.", False)
+        QTimer.singleShot(350, lambda: _auto_fill_posters(self))
+
+    def _auto_fill_posters(self):
+        worker = getattr(self, "romanian_assets_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        if getattr(self, "_romanian_assets_attempted_session", False):
+            return
+        self._romanian_assets_attempted_session = True
+
+        current = romanian_films(self.db)
+        missing = [
+            item for item in current
+            if item.local_movie_id and item.imdb_id and not item.poster_url
+        ]
+        if not missing:
+            return
+
+        self.set_status(f"Completez automat posterele… {len(missing)} lipsă", True)
+        worker = WorkerThread(
+            lambda progress: backfill_romanian_posters(
+                self.db,
+                fallback_limit=48,
+                progress=progress,
+            ),
+            self,
+        )
+        self.romanian_assets_worker = worker
+        worker.message.connect(lambda message: self.set_status(message, True))
+
+        def done(result):
+            self.romanian_assets_worker = None
+            gained = int(result.get("filled", 0) or 0) + int(result.get("fallback", 0) or 0)
+            remaining = int(result.get("remaining", 0) or 0)
+            if gained:
+                self.set_status(
+                    f"Postere completate automat: {gained}. Mai lipsesc {remaining} dintre titlurile identificate.",
+                    False,
+                )
+                if self.current_page == "romanian_list":
+                    self.show_page("romanian_list")
+            else:
+                self.set_status(
+                    "Posterele disponibile automat au fost verificate; unele titluri nu au imagine în sursele deschise.",
+                    False,
+                )
+
+        def failed(message):
+            self.romanian_assets_worker = None
+            self.set_status(
+                "Nu am putut completa toate posterele acum; lista rămâne utilizabilă și se reîncearcă la următoarea pornire.",
+                False,
+            )
+            self.s.log.warning("Romanian poster backfill failed: %s", message)
+
+        worker.success.connect(done)
+        worker.failure.connect(failed)
+        worker.start()
 
     def _detail_dialog(self, item):
         dialog = QDialog(self)
@@ -157,7 +240,12 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             poster.setAlignment(Qt.AlignCenter)
             poster.setObjectName("Muted")
         if item.poster_url and hasattr(self, "load_poster_async"):
-            self.load_poster_async(poster, item.poster_url, item.imdb_id or str(item.local_movie_id or item.film))
+            self.load_poster_async(
+                poster,
+                item.poster_url,
+                item.imdb_id or str(item.local_movie_id or item.film),
+                lambda _message, x=item: _poster_failed(self, x),
+            )
         else:
             placeholder = display_title(item.film)
             if len(placeholder) > 42:
@@ -222,7 +310,12 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             poster.setAlignment(Qt.AlignCenter)
             poster.setObjectName("Muted")
         if item.poster_url and hasattr(self, "load_poster_async"):
-            self.load_poster_async(poster, item.poster_url, item.imdb_id or str(item.local_movie_id or item.film))
+            self.load_poster_async(
+                poster,
+                item.poster_url,
+                item.imdb_id or str(item.local_movie_id or item.film),
+                lambda _message, x=item: _poster_failed(self, x),
+            )
         else:
             poster.setText("CINECALENDAR\n\n" + _short(display_title(item.film), 34))
             poster.setWordWrap(True)
@@ -396,6 +489,10 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             search_row.addWidget(clear)
         hl.addLayout(search_row)
         content.addWidget(hero)
+
+        # Poster metadata is completed in the background on every first visit,
+        # regardless of the current filter/search result.
+        QTimer.singleShot(0, lambda: _auto_fill_posters(self))
 
         next_item = next((x for x in unwatched if _matches_search(x, query)), None)
         if next_item and mode != "watched":

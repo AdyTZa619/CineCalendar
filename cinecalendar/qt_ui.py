@@ -280,18 +280,30 @@ class CineCalendarWindow(QMainWindow):
             ib=QPushButton("Deschide IMDb"); ib.clicked.connect(lambda _,iid=m.imdb_id:QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))); buttons.addWidget(ib,2,2)
         right.addLayout(buttons); main.addLayout(right,1); return box
 
-    def load_poster_async(self,label:QLabel,url:str,key:str):
+    def load_poster_async(self,label:QLabel,url:str,key:str,on_failure=None):
         cache=self.s.paths.cache/"posters"; cache.mkdir(parents=True,exist_ok=True); path=cache/(hashlib.sha256((key+url).encode()).hexdigest()+".jpg")
         def fn(progress):
             if not path.exists():
-                r=requests.get(url,timeout=15,headers={"User-Agent":"CineCalendar/1.0"}); r.raise_for_status(); path.write_bytes(r.content)
+                r=requests.get(url,timeout=15,headers={"User-Agent":"CineCalendar/3.9"}); r.raise_for_status(); path.write_bytes(r.content)
             return str(path)
         w=WorkerThread(fn,self); self.poster_threads.append(w)
         def done(p):
             pm=QPixmap(p)
-            if not pm.isNull(): label.setPixmap(pm.scaled(label.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)); label.setText("")
+            if not pm.isNull():
+                label.setPixmap(pm.scaled(label.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)); label.setText("")
+            else:
+                try:
+                    Path(p).unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if callable(on_failure):
+                    on_failure("Imagine invalidă sau coruptă.")
             if w in self.poster_threads:self.poster_threads.remove(w)
-        w.success.connect(done); w.failure.connect(lambda _:None); w.start()
+        def failed(message):
+            if w in self.poster_threads:self.poster_threads.remove(w)
+            if callable(on_failure):
+                on_failure(str(message))
+        w.success.connect(done); w.failure.connect(failed); w.start()
 
     def feedback(self,movie_id:int,kind:str):
         try:
@@ -381,10 +393,13 @@ class CineCalendarWindow(QMainWindow):
             return
         self.set_status("Verific ratingurile noi de pe IMDb…", True)
         def fn(progress):
+            # The public profile is the source of truth for watched/rated state.
+            # Import the full history, not only ratings newer than the old CSV baseline.
+            # Upsert-by-IMDb-id keeps this idempotent and also picks up changed old ratings.
             result = sync_public_ratings(
                 self.db,
                 url,
-                baseline_date=str(self.db.get_setting("imdb_public_sync_baseline", "2026-09-05") or "") or None,
+                baseline_date=None,
             )
             if result.changed:
                 build_profile(self.db)

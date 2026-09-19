@@ -103,7 +103,7 @@ def _parse_node(node: dict[str, Any]) -> RemoteRating:
     return RemoteRating(imdb_id, name, rating, rated, original, year, title_type)
 
 
-def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int = 8,
+def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int = 40,
                          session: requests.Session | None = None) -> list[RemoteRating]:
     user_id = user_id_from_profile_url(profile_url)
     client = session or requests.Session()
@@ -118,8 +118,11 @@ def fetch_public_ratings(profile_url: str, *, timeout: int = 15, max_pages: int 
             headers={
                 "User-Agent": "CineCalendar/3.9 (personal IMDb ratings sync)",
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                "Accept": "application/graphql+json, application/json",
                 "Origin": "https://www.imdb.com",
+                "Referer": "https://www.imdb.com/",
+                "x-imdb-client-name": "imdb-web-next",
+                "x-imdb-user-language": "en-US",
             },
             timeout=timeout,
         )
@@ -175,7 +178,7 @@ def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
                 (item.title, original, normalize_text(item.title), normalize_text(original),
                  item.year, item.title_type, now, movie_id),
             )
-        old = con.execute("SELECT rating FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
+        old = con.execute("SELECT rating,date_rated FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
         if old is None:
             con.execute(
                 "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
@@ -190,10 +193,13 @@ def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
             )
             result.changed_ratings.append((item.title, previous, item.rating))
         else:
-            con.execute(
-                "UPDATE ratings SET date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=? WHERE movie_id=?",
-                (item.date_rated, "imdb_public_sync", now, now, movie_id),
-            )
+            # Full-profile sync runs regularly. Avoid rewriting every unchanged rating on
+            # every pass; only refresh the date when IMDb reports a genuinely different one.
+            if item.date_rated and str(old["date_rated"] or "") != item.date_rated:
+                con.execute(
+                    "UPDATE ratings SET date_rated=?,source=?,imported_at=?,updated_at=? WHERE movie_id=?",
+                    (item.date_rated, "imdb_public_sync", now, now, movie_id),
+                )
             result.unchanged += 1
 
 

@@ -1,6 +1,6 @@
 from cinecalendar.db import Database
 from cinecalendar.imdb_import import add_manual_rating
-from cinecalendar.romanian_films import romanian_chapters, romanian_films
+from cinecalendar.romanian_films import backfill_romanian_posters, romanian_chapters, romanian_films
 
 
 def test_curated_romanian_model_has_all_233_rows():
@@ -124,3 +124,60 @@ def test_existing_romanian_page_is_clearly_named_recommendations():
     root = Path(__file__).resolve().parents[1]
     patch = (root / "cinecalendar" / "romanian_cinema_ui_patch.py").read_text(encoding="utf-8")
     assert '("romanian", "Recomandări românești")' in patch
+
+
+def test_romanian_posters_are_backfilled_automatically(tmp_path, monkeypatch):
+    from cinecalendar.util import identity_key, normalize_text, utcnow_iso
+
+    db = Database(tmp_path / "cinecalendar.db")
+    now = utcnow_iso()
+    with db.tx() as con:
+        con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,year,title_type,
+                genres_json,directors_json,countries_json,overview,keywords_json,semantic_json,
+                imdb_rating,num_votes,poster_url,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt0097889", identity_key("Mircea", "Mircea", 1989, "movie"),
+                "Mircea", "Mircea", normalize_text("Mircea"), normalize_text("Mircea"),
+                1989, "movie", "[]", "[]", "[]", "", "[]", "{}",
+                7.4, 1000, None, "test", now, now,
+            ),
+        )
+
+    class ImdbResponse:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "data": {
+                    "titles": [{
+                        "id": "tt0097889",
+                        "primaryImage": {"url": "https://m.media-amazon.com/images/M/mircea.jpg"},
+                        "ratingsSummary": {"aggregateRating": 7.8},
+                    }]
+                }
+            }
+
+    monkeypatch.setattr(
+        "cinecalendar.romanian_films.requests.Session.post",
+        lambda self, *args, **kwargs: ImdbResponse(),
+    )
+
+    result = backfill_romanian_posters(db, fallback_limit=0)
+    assert result["filled"] == 1
+    assert result["imdb"] == 1
+
+    item = next(x for x in romanian_films(db) if x.film == "Mircea (1989)")
+    assert item.poster_url == "https://m.media-amazon.com/images/M/mircea.jpg"
+    assert item.imdb_rating == 7.8
+
+
+def test_romanian_ui_starts_poster_backfill_without_manual_action():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    patch = (root / "cinecalendar" / "romanian_list_ui_patch.py").read_text(encoding="utf-8")
+    assert "backfill_romanian_posters" in patch
+    assert "QTimer.singleShot(0, lambda: _auto_fill_posters(self))" in patch

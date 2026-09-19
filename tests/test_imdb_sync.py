@@ -114,3 +114,34 @@ def test_legacy_rating_shape_is_still_accepted():
     assert len(rows) == 1
     assert rows[0].rating == 8
     assert rows[0].date_rated == "2026-09-12"
+
+
+def test_full_profile_sync_imports_pre_baseline_ratings(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    s = Session([payload([
+        ("tt1000100", "Historical Rating", 10, "2020-01-02", 1989),
+    ])])
+    r = sync_public_ratings(db, URL, baseline_date=None, session=s)
+    assert r.new_ratings == [("Historical Rating", 10)]
+    with db.connect() as con:
+        row = con.execute(
+            "SELECT m.imdb_id,r.rating,r.date_rated FROM ratings r JOIN movies m ON m.id=r.movie_id"
+        ).fetchone()
+        assert tuple(row) == ("tt1000100", 10, "2020-01-02")
+
+
+def test_ui_sync_uses_full_public_profile_history():
+    root = Path(__file__).resolve().parents[1]
+    ui = (root / "cinecalendar" / "qt_ui.py").read_text(encoding="utf-8")
+    sync_block = ui[ui.index("def sync_imdb_public"):ui.index("def manual_rating")]
+    assert "baseline_date=None" in sync_block
+
+
+def test_public_sync_sends_required_imdb_web_headers():
+    session = Session([payload([("tt1000200", "Headers", 8, "2026-09-19", 2025)])])
+    fetch_public_ratings(URL, session=session)
+    headers = session.calls[0][1]["headers"]
+    assert headers["Origin"] == "https://www.imdb.com"
+    assert headers["Referer"] == "https://www.imdb.com/"
+    assert headers["x-imdb-client-name"] == "imdb-web-next"
+    assert "application/graphql+json" in headers["Accept"]
