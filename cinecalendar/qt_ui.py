@@ -291,8 +291,13 @@ class CineCalendarWindow(QMainWindow):
             pm=QPixmap(p)
             if not pm.isNull():
                 label.setPixmap(pm.scaled(label.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)); label.setText("")
-            elif callable(on_failure):
-                on_failure("Imagine invalidă sau coruptă.")
+            else:
+                try:
+                    Path(p).unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if callable(on_failure):
+                    on_failure("Imagine invalidă sau coruptă.")
             if w in self.poster_threads:self.poster_threads.remove(w)
         def failed(message):
             if w in self.poster_threads:self.poster_threads.remove(w)
