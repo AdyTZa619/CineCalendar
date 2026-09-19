@@ -20,11 +20,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -67,6 +67,14 @@ jobs:
         env:
           PYTHONPATH: .
         run: python -m pytest -q
+
+      - name: Diagnostic live IMDb public profile sync
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          PYTHONPATH: .
+        run: |
+          python -c "from cinecalendar.imdb_sync import fetch_public_ratings,DEFAULT_PROFILE_URL; rows=fetch_public_ratings(DEFAULT_PROFILE_URL,timeout=20); print('LIVE_IMDB_RATINGS',len(rows)); assert len(rows) >= 2000, len(rows)"
 
       - name: Benchmark 260k catalog engine
         env:
