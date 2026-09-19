@@ -291,9 +291,11 @@ def _upsert_resolved_movie(
         if existing is None and year is not None:
             rows = con.execute(
                 """SELECT id FROM movies
-                   WHERE year=? AND (title_norm IN (?,?) OR original_title_norm IN (?,?))
+                   WHERE year=?
+                     AND (imdb_id IS NULL OR imdb_id=?)
+                     AND (title_norm IN (?,?) OR original_title_norm IN (?,?))
                    ORDER BY id LIMIT 2""",
-                (year, tn, on, tn, on),
+                (year, imdb_id, tn, on, tn, on),
             ).fetchall()
             if len(rows) == 1:
                 clash = con.execute(
