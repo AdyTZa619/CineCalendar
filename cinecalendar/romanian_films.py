@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 import csv
 import gzip
 import hashlib
@@ -375,10 +376,19 @@ def _choose_candidate(entry: RomanianFilmEntry, candidates: list[dict]) -> dict 
 
         exact = bool(norms & aliases)
         fuzzy = bool(loose & loose_aliases)
+        similarity = 0.0
+        if years and not exact and not fuzzy:
+            for candidate_norm in norms:
+                for alias in aliases:
+                    if candidate_norm and alias:
+                        similarity = max(
+                            similarity,
+                            SequenceMatcher(None, candidate_norm, alias).ratio(),
+                        )
         year_ok = not years or year in years
         if years and not year_ok:
             continue
-        if not exact and not (years and fuzzy):
+        if not exact and not (years and (fuzzy or similarity >= 0.92)):
             continue
 
         score = 0
@@ -386,6 +396,8 @@ def _choose_candidate(entry: RomanianFilmEntry, candidates: list[dict]) -> dict 
             score += 100
         elif fuzzy:
             score += 65
+        elif similarity >= 0.92:
+            score += 55 + int(similarity * 10)
         if years and year_ok:
             score += 80
         if typ in {"movie", "tvmovie", "short"}:
