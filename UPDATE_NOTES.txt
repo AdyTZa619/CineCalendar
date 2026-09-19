@@ -1,17 +1,19 @@
-CineCalendar 3.9.4 redesenează complet secțiunea „Filme românești” într-un stil modern de bibliotecă de streaming.
+CineCalendar 3.9.5 rafinează secțiunea cronologică de filme românești și repară sincronizarea publică IMDb pentru schema curentă.
 
-Lista ta de 233 de titluri rămâne sursa de date și cronologia rămâne neschimbată, dar interfața nu mai arată ca tabelul Word.
+Interfață:
+- secțiunea se numește acum „Filme RO • Cronologie” în sidebar;
+- pagina se numește „Cronologia filmului românesc”;
+- pagina separată de recomandări românești se numește clar „Recomandări românești”;
+- progres vizual văzute / total;
+- căutare după titlu, perioadă sau context;
+- card „Următorul cronologic” pentru primul film nevăzut din ordine;
+- rândurile vizuale cu postere și filtrele De văzut / Văzute / Toate rămân active.
 
-Noutăți:
-- header vizual cu statistici pentru colecție / de văzut / văzute;
-- filtre mari: De văzut, Văzute, Toate;
-- fiecare perioadă istorică apare ca un rând orizontal de postere;
-- carduri cinematografice cu titlu, perioadă, stare și rating IMDb când există;
-- posterele existente din catalogul local sunt folosite automat;
-- buton Detalii pentru context, perioadă, anotimp și sursa/certitudinea din document;
-- buton IMDb când titlul este legat de un ID IMDb;
-- scrollbar orizontal discret, integrat în tema Premium.
+IMDb:
+- query-ul public a fost actualizat la schema curentă RatingsResult.userRating { value date };
+- parserul păstrează compatibilitate cu forma veche rating/date;
+- o eroare de sincronizare în fundal nu mai lasă aplicația cu un mesaj alarmant permanent;
+- datele locale rămân active și intacte dacă IMDb nu răspunde;
+- la sincronizarea manuală se afișează motivul prietenos și detaliul tehnic exact.
 
-Legătura cu ratingurile tale IMDb rămâne activă: un film evaluat de tine este marcat automat VĂZUT și dispare din filtrul implicit „De văzut”.
-
-Pagina existentă „Cinema românesc” cu recomandări personalizate rămâne separată.
+Lista de 233 de titluri și cronologia din documentul tău rămân neschimbate.
