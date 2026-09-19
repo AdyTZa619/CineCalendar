@@ -281,53 +281,61 @@ def fetch_public_ratings(
     return out
 
 
-def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
-    now = utcnow_iso()
+def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> None:
     original = item.original_title or item.title
     ident = identity_key(item.title, original, item.year, item.title_type)
+    movie = con.execute("SELECT * FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
+    if movie is None:
+        cur = con.execute(
+            """INSERT INTO movies(imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+               year,title_type,genres_json,directors_json,source,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                item.imdb_id, ident, item.title, original, normalize_text(item.title),
+                normalize_text(original), item.year, item.title_type, json_dumps([]), json_dumps([]),
+                "imdb_public_sync", now, now,
+            ),
+        )
+        movie_id = int(cur.lastrowid)
+    else:
+        movie_id = int(movie["id"])
+        con.execute(
+            """UPDATE movies SET title=?,original_title=?,title_norm=?,original_title_norm=?,
+               year=COALESCE(?,year),title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
+            (
+                item.title, original, normalize_text(item.title), normalize_text(original),
+                item.year, item.title_type, now, movie_id,
+            ),
+        )
+
+    old = con.execute("SELECT rating,date_rated FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
+    if old is None:
+        con.execute(
+            "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (movie_id, item.rating, item.date_rated, "imdb_public_sync", now, now),
+        )
+        result.new_ratings.append((item.title, item.rating))
+    elif int(old["rating"]) != item.rating:
+        previous = int(old["rating"])
+        con.execute(
+            "UPDATE ratings SET rating=?,date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=? WHERE movie_id=?",
+            (item.rating, item.date_rated, "imdb_public_sync", now, now, movie_id),
+        )
+        result.changed_ratings.append((item.title, previous, item.rating))
+    else:
+        if item.date_rated and str(old["date_rated"] or "") != item.date_rated:
+            con.execute(
+                "UPDATE ratings SET date_rated=?,source=?,imported_at=?,updated_at=? WHERE movie_id=?",
+                (item.date_rated, "imdb_public_sync", now, now, movie_id),
+            )
+        result.unchanged += 1
+
+
+def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
+    """Compatibility wrapper; full sync uses one transaction for the entire profile."""
+    now = utcnow_iso()
     with db.tx() as con:
-        movie = con.execute("SELECT * FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
-        if movie is None:
-            cur = con.execute(
-                """INSERT INTO movies(imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
-                   year,title_type,genres_json,directors_json,source,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (item.imdb_id, ident, item.title, original, normalize_text(item.title),
-                 normalize_text(original), item.year, item.title_type, json_dumps([]), json_dumps([]),
-                 "imdb_public_sync", now, now),
-            )
-            movie_id = int(cur.lastrowid)
-        else:
-            movie_id = int(movie["id"])
-            con.execute(
-                """UPDATE movies SET title=?,original_title=?,title_norm=?,original_title_norm=?,
-                   year=COALESCE(?,year),title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
-                (item.title, original, normalize_text(item.title), normalize_text(original),
-                 item.year, item.title_type, now, movie_id),
-            )
-        old = con.execute("SELECT rating,date_rated FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
-        if old is None:
-            con.execute(
-                "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
-                (movie_id, item.rating, item.date_rated, "imdb_public_sync", now, now),
-            )
-            result.new_ratings.append((item.title, item.rating))
-        elif int(old["rating"]) != item.rating:
-            previous = int(old["rating"])
-            con.execute(
-                "UPDATE ratings SET rating=?,date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=? WHERE movie_id=?",
-                (item.rating, item.date_rated, "imdb_public_sync", now, now, movie_id),
-            )
-            result.changed_ratings.append((item.title, previous, item.rating))
-        else:
-            # Full-profile sync runs regularly. Avoid rewriting every unchanged rating on
-            # every pass; only refresh the date when IMDb reports a genuinely different one.
-            if item.date_rated and str(old["date_rated"] or "") != item.date_rated:
-                con.execute(
-                    "UPDATE ratings SET date_rated=?,source=?,imported_at=?,updated_at=? WHERE movie_id=?",
-                    (item.date_rated, "imdb_public_sync", now, now, movie_id),
-                )
-            result.unchanged += 1
+        _upsert_with_con(con, item, result, now)
 
 
 def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | None = "2026-09-05",
@@ -335,27 +343,37 @@ def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | 
     items = fetch_public_ratings(profile_url, session=session)
     result = SyncResult(fetched=len(items))
     cutoff = date.fromisoformat(baseline_date) if baseline_date else None
-    for item in items:
-        if cutoff:
-            if not item.date_rated:
-                # Fail closed for undated remote rows. The CSV baseline is authoritative and an
-                # undated historical row must never be mistaken for a newly rated title.
-                with db.connect() as con:
-                    existing = con.execute("SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
-                if existing is None:
-                    continue
-            else:
-                try:
-                    if date.fromisoformat(item.date_rated) <= cutoff:
-                        result.stopped_at_baseline = True
-                        continue
-                except ValueError:
-                    # Invalid dates are treated like missing dates: never create an unknown movie.
-                    with db.connect() as con:
-                        existing = con.execute("SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
+    now = utcnow_iso()
+
+    # One transaction for the entire profile. A 2,000+ rating account must not
+    # perform thousands of BEGIN/COMMIT cycles on a portable HDD, and a failed
+    # sync must never leave a half-imported profile.
+    with db.tx() as con:
+        for item in items:
+            if cutoff:
+                if not item.date_rated:
+                    existing = con.execute(
+                        "SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)
+                    ).fetchone()
                     if existing is None:
                         continue
-        _upsert(db, item, result)
-    # A successful no-change check is still a successful synchronization.
-    db.set_setting("imdb_public_sync_last_success", utcnow_iso())
+                else:
+                    try:
+                        if date.fromisoformat(item.date_rated) <= cutoff:
+                            result.stopped_at_baseline = True
+                            continue
+                    except ValueError:
+                        existing = con.execute(
+                            "SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)
+                        ).fetchone()
+                        if existing is None:
+                            continue
+            _upsert_with_con(con, item, result, now)
+
+        con.execute(
+            """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
+               ON CONFLICT(key) DO UPDATE SET
+                 value_json=excluded.value_json,updated_at=excluded.updated_at""",
+            ("imdb_public_sync_last_success", json_dumps(now), now),
+        )
     return result
