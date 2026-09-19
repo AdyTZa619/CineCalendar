@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import csv
 import gzip
+import hashlib
 import re
 from pathlib import Path
 from urllib.parse import quote
@@ -40,6 +41,8 @@ _ALLOWED_TYPES = {
     "movie", "short", "tvmovie", "video", "tvminiseries", "tvseries",
 }
 _RESOLVED_SETTING = "romanian_resolved_imdb_ids"
+_LOCAL_SCAN_SETTING = "romanian_resolver_local_scan_signature"
+_SUGGESTION_ATTEMPTS_SETTING = "romanian_resolver_suggestion_attempts"
 
 
 def _release_years(label: str) -> set[int]:
@@ -505,12 +508,20 @@ def _resolve_from_suggestions(
     entries: list[RomanianFilmEntry],
     resolved: dict[str, str],
     progress=None,
+    *,
+    force: bool = False,
 ) -> tuple[int, int]:
     session = requests.Session()
     added = 0
     errors = 0
+    today = utcnow_iso()[:10]
+    attempts = db.get_setting(_SUGGESTION_ATTEMPTS_SETTING, {})
+    if not isinstance(attempts, dict):
+        attempts = {}
     unresolved = [entry for entry in entries if entry.film not in resolved]
     for idx, entry in enumerate(unresolved, 1):
+        if not force and str(attempts.get(entry.film) or "") == today:
+            continue
         chosen = None
         for alias in _raw_title_aliases(entry.film)[:3]:
             try:
@@ -521,6 +532,7 @@ def _resolve_from_suggestions(
             chosen = _choose_candidate(entry, candidates)
             if chosen:
                 break
+        attempts[entry.film] = today
         if chosen:
             _upsert_resolved_movie(
                 db,
@@ -536,18 +548,40 @@ def _resolve_from_suggestions(
             added += 1
         if progress and (idx == len(unresolved) or idx % 15 == 0):
             progress(f"Identificare IMDb online: {idx}/{len(unresolved)}")
+    db.set_setting(_SUGGESTION_ATTEMPTS_SETTING, attempts)
     return added, errors
 
 
-def resolve_romanian_catalog_links(db: Database, progress=None) -> dict[str, int]:
+def resolve_romanian_catalog_links(db: Database, progress=None, *, force: bool = False) -> dict[str, int]:
     entries = [RomanianFilmEntry(**row) for row in DATA["films"]]
     resolved = _resolved_map(db)
     before = len(resolved)
 
-    local = _resolve_from_local_basics(db, entries, resolved, progress)
-    online, errors = _resolve_from_suggestions(db, entries, resolved, progress)
+    basics = _catalog_basics_path(db)
+    pending_before = sorted(entry.film for entry in entries if entry.film not in resolved)
+    basics_stamp = "missing"
+    if basics.is_file():
+        try:
+            stat = basics.stat()
+            basics_stamp = f"{stat.st_size}:{stat.st_mtime_ns}"
+        except OSError:
+            basics_stamp = "unreadable"
+    pending_hash = hashlib.sha256("\n".join(pending_before).encode("utf-8")).hexdigest()
+    scan_signature = f"{basics_stamp}:{pending_hash}"
+
+    local = 0
+    if force or db.get_setting(_LOCAL_SCAN_SETTING, "") != scan_signature:
+        local = _resolve_from_local_basics(db, entries, resolved, progress)
+
+    online, errors = _resolve_from_suggestions(
+        db, entries, resolved, progress, force=force
+    )
     if resolved:
         db.set_setting(_RESOLVED_SETTING, resolved)
+
+    pending_after = sorted(entry.film for entry in entries if entry.film not in resolved)
+    after_hash = hashlib.sha256("\n".join(pending_after).encode("utf-8")).hexdigest()
+    db.set_setting(_LOCAL_SCAN_SETTING, f"{basics_stamp}:{after_hash}")
 
     return {
         "before": before,
@@ -782,8 +816,8 @@ def backfill_romanian_posters(db: Database, *, progress=None) -> dict[str, int]:
     }
 
 
-def prepare_romanian_library(db: Database, progress=None) -> dict[str, int]:
-    links = resolve_romanian_catalog_links(db, progress)
+def prepare_romanian_library(db: Database, progress=None, *, force: bool = False) -> dict[str, int]:
+    links = resolve_romanian_catalog_links(db, progress, force=force)
     posters = backfill_romanian_posters(db, progress=progress)
     entries = romanian_films(db)
     linked = sum(1 for item in entries if item.imdb_id)
