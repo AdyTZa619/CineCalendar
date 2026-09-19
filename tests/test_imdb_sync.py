@@ -70,7 +70,7 @@ def test_profile_url_is_strict():
 def test_resolves_modern_public_profile_id_before_ratings():
     s = Session([profile_payload("ur7654321")])
     assert resolve_public_user_id("p.666yozwb6likjcvvjlu2hwmtli", session=s) == "ur7654321"
-    assert s.calls[0][1]["variables"] == {"profileId": "p.666yozwb6likjcvvjlu2hwmtli"}
+    assert s.calls[0][1]["json"]["variables"] == {"profileId": "p.666yozwb6likjcvvjlu2hwmtli"}
 
 
 def test_fetch_paginates_and_deduplicates():
@@ -84,7 +84,7 @@ def test_fetch_paginates_and_deduplicates():
     rows = fetch_public_ratings(URL, session=s)
     assert [r.imdb_id for r in rows] == ["tt1000001", "tt1000002"]
     assert len(s.calls) == 3
-    assert s.calls[1][1]["variables"]["userId"] == "ur123456"
+    assert s.calls[1][1]["json"]["variables"]["userId"] == "ur123456"
 
 
 def test_sync_only_after_csv_baseline_and_is_idempotent(tmp_path: Path):
