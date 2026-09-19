@@ -217,6 +217,8 @@ class PremiumDecisionWindow(DecisionWindow):
             QProgressBar::chunk {{ background:{accent2}; border-radius:6px; }}
             QScrollBar:vertical {{ background:transparent; width:12px; margin:2px; }}
             QScrollBar::handle:vertical {{ background:{border}; min-height:34px; border-radius:5px; }}
+            QScrollBar:horizontal {{ background:transparent; height:10px; margin:2px; }}
+            QScrollBar::handle:horizontal {{ background:{border}; min-width:48px; border-radius:4px; }}
         """)
 
     def pill(self, text: str) -> QLabel:
