@@ -7,7 +7,13 @@ from PySide6.QtWidgets import (
     QSizePolicy, QVBoxLayout, QWidget, QLineEdit, QProgressBar,
 )
 
-from .romanian_films import display_title, romanian_chapters, romanian_films
+from .qt_ui import WorkerThread
+from .romanian_films import (
+    backfill_romanian_posters,
+    display_title,
+    romanian_chapters,
+    romanian_films,
+)
 
 
 def install_romanian_list_ui_patch(window_cls) -> None:
@@ -52,6 +58,63 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         ).casefold()
         tokens = [x for x in query.casefold().split() if x]
         return all(token in haystack for token in tokens)
+
+    def _auto_fill_posters(self):
+        worker = getattr(self, "romanian_assets_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        if getattr(self, "_romanian_assets_attempted_session", False):
+            return
+        self._romanian_assets_attempted_session = True
+
+        current = romanian_films(self.db)
+        missing = [
+            item for item in current
+            if item.local_movie_id and item.imdb_id and not item.poster_url
+        ]
+        if not missing:
+            return
+
+        self.set_status(f"Completez automat posterele… {len(missing)} lipsă", True)
+        worker = WorkerThread(
+            lambda progress: backfill_romanian_posters(
+                self.db,
+                fallback_limit=48,
+                progress=progress,
+            ),
+            self,
+        )
+        self.romanian_assets_worker = worker
+        worker.message.connect(lambda message: self.set_status(message, True))
+
+        def done(result):
+            self.romanian_assets_worker = None
+            gained = int(result.get("filled", 0) or 0) + int(result.get("fallback", 0) or 0)
+            remaining = int(result.get("remaining", 0) or 0)
+            if gained:
+                self.set_status(
+                    f"Postere completate automat: {gained}. Mai lipsesc {remaining} dintre titlurile identificate.",
+                    False,
+                )
+                if self.current_page == "romanian_list":
+                    self.show_page("romanian_list")
+            else:
+                self.set_status(
+                    "Posterele disponibile automat au fost verificate; unele titluri nu au imagine în sursele deschise.",
+                    False,
+                )
+
+        def failed(message):
+            self.romanian_assets_worker = None
+            self.set_status(
+                "Nu am putut completa toate posterele acum; lista rămâne utilizabilă și se reîncearcă la următoarea pornire.",
+                False,
+            )
+            self.s.log.warning("Romanian poster backfill failed: %s", message)
+
+        worker.success.connect(done)
+        worker.failure.connect(failed)
+        worker.start()
 
     def _detail_dialog(self, item):
         dialog = QDialog(self)
@@ -423,6 +486,8 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             content.addWidget(_chapter_row(self, chapter, items))
 
         content.addStretch(1)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: _auto_fill_posters(self))
         return page
 
     window_cls.page_romanian_list = page_romanian_list
