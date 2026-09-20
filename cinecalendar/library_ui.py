@@ -165,6 +165,45 @@ def _profile_feature_rows(profile: dict) -> list[dict]:
     return rows
 
 
+
+def _rating_activity(db) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """Return rating activity by year and by recent month from IMDb date_rated."""
+    with db.connect() as con:
+        rows = con.execute(
+            """SELECT substr(date_rated,1,10) AS d
+               FROM ratings
+               WHERE date_rated IS NOT NULL AND length(date_rated) >= 7"""
+        ).fetchall()
+    years: dict[str, int] = {}
+    months: dict[str, int] = {}
+    for row in rows:
+        value = str(row["d"] or "")
+        if len(value) >= 4:
+            years[value[:4]] = years.get(value[:4], 0) + 1
+        if len(value) >= 7:
+            months[value[:7]] = months.get(value[:7], 0) + 1
+    by_year = sorted(years.items(), key=lambda item: item[0], reverse=True)
+    by_month = sorted(months.items(), key=lambda item: item[0], reverse=True)
+    return by_year, by_month
+
+
+def _stable_extremes(features: list[dict], category: str, *, positive: bool, limit: int = 5) -> list[dict]:
+    rows = [
+        row for row in features
+        if row["category"] == category
+        and row["mean_rating"] is not None
+        and int(row["count"]) >= 3
+    ]
+    rows.sort(
+        key=lambda row: (
+            float(row["mean_rating"]),
+            int(row["count"]),
+            row["label"].casefold(),
+        ),
+        reverse=positive,
+    )
+    return rows[:limit]
+
 def install_library_ui(window_cls) -> None:
     """Install the full library/profile explorer on the Premium window class."""
 
@@ -244,10 +283,10 @@ def install_library_ui(window_cls) -> None:
         count_label.setObjectName("Muted")
         content.addWidget(count_label)
 
-        table = QTableWidget(0, 10)
+        table = QTableWidget(0, 11)
         table.setHorizontalHeaderLabels([
-            "Titlu original", "An", "Nota ta", "IMDb", "Δ ta−IMDb", "Genuri",
-            "Regizor", "Data", "Sursă", "IMDb ID",
+            "Titlu original", "Titlu localizat", "An", "Nota ta", "IMDb", "Δ ta−IMDb",
+            "Genuri", "Regizor", "Data", "Sursă", "IMDb ID",
         ])
         table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -258,12 +297,14 @@ def install_library_ui(window_cls) -> None:
         table.setMinimumHeight(620)
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in (1, 2, 3, 4, 7, 8, 9):
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
+        for col in (2, 3, 4, 5, 8, 9, 10):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.Interactive)
         header.setSectionResizeMode(6, QHeaderView.Interactive)
-        table.setColumnWidth(5, 220)
-        table.setColumnWidth(6, 190)
+        header.setSectionResizeMode(7, QHeaderView.Interactive)
+        table.setColumnWidth(1, 210)
+        table.setColumnWidth(6, 220)
+        table.setColumnWidth(7, 190)
         content.addWidget(table)
 
         def open_imdb(row_index: int, _column: int):
@@ -321,8 +362,12 @@ def install_library_ui(window_cls) -> None:
             table.clearContents()
             table.setRowCount(len(selected))
             for i, row in enumerate(selected):
+                original = _display_title(row)
+                localized = str(row["title"] or "").strip()
+                localized_display = "—" if not localized or localized.casefold() == original.casefold() else localized
                 values = [
-                    SmartItem(_display_title(row), _display_title(row).casefold()),
+                    SmartItem(original, original.casefold()),
+                    SmartItem(localized_display, localized.casefold() if localized else ""),
                     SmartItem(str(row["year"] or "—"), row["year"]),
                     SmartItem(f"{row['user_rating']}/10", row["user_rating"]),
                     SmartItem(f"{row['imdb_rating']:.1f}" if row["imdb_rating"] is not None else "—", row["imdb_rating"]),
@@ -339,14 +384,14 @@ def install_library_ui(window_cls) -> None:
             table.setSortingEnabled(True)
             mode = str(sort_combo.currentData() or "date_desc")
             sort_column, sort_order = {
-                "date_desc": (7, Qt.DescendingOrder),
-                "rating_desc": (2, Qt.DescendingOrder),
-                "rating_asc": (2, Qt.AscendingOrder),
-                "imdb_desc": (3, Qt.DescendingOrder),
-                "delta_desc": (4, Qt.DescendingOrder),
-                "year_desc": (1, Qt.DescendingOrder),
+                "date_desc": (8, Qt.DescendingOrder),
+                "rating_desc": (3, Qt.DescendingOrder),
+                "rating_asc": (3, Qt.AscendingOrder),
+                "imdb_desc": (4, Qt.DescendingOrder),
+                "delta_desc": (5, Qt.DescendingOrder),
+                "year_desc": (2, Qt.DescendingOrder),
                 "title_asc": (0, Qt.AscendingOrder),
-            }.get(mode, (7, Qt.DescendingOrder))
+            }.get(mode, (8, Qt.DescendingOrder))
             table.sortItems(sort_column, sort_order)
             count_label.setText(f"Afișate {len(selected):,} din {len(rows):,} ratinguri")
 
@@ -415,6 +460,32 @@ def install_library_ui(window_cls) -> None:
         content.addWidget(explain)
 
         all_features = _profile_feature_rows(profile)
+
+        by_year, by_month = _rating_activity(self.db)
+        activity = QFrame(); activity.setObjectName("PremiumCard")
+        al = QVBoxLayout(activity); al.setContentsMargins(18, 16, 18, 16); al.setSpacing(7)
+        ah = QLabel("Activitatea ratingurilor")
+        ah.setObjectName("SectionTitle"); al.addWidget(ah)
+        years_text = " • ".join(f"{year}: {count}" for year, count in by_year[:6]) or "Nu există date calendaristice în ratinguri."
+        months_text = " • ".join(f"{month}: {count}" for month, count in by_month[:6]) or "—"
+        yl = QLabel("Pe ani: " + years_text); yl.setWordWrap(True); al.addWidget(yl)
+        ml = QLabel("Ultimele luni cu activitate: " + months_text); ml.setObjectName("Muted"); ml.setWordWrap(True); al.addWidget(ml)
+        content.addWidget(activity)
+
+        extremes = QFrame(); extremes.setObjectName("PremiumCard")
+        xl = QVBoxLayout(extremes); xl.setContentsMargins(18, 16, 18, 16); xl.setSpacing(6)
+        xh = QLabel("Tipare stabile din ratingurile tale")
+        xh.setObjectName("SectionTitle"); xl.addWidget(xh)
+        for category, label in (("genres", "Genuri"), ("directors", "Regizori")):
+            best = _stable_extremes(all_features, category, positive=True)
+            worst = _stable_extremes(all_features, category, positive=False)
+            best_text = ", ".join(f"{r['label']} {r['mean_rating']:.1f}/10 ({r['count']})" for r in best) or "insuficiente date"
+            worst_text = ", ".join(f"{r['label']} {r['mean_rating']:.1f}/10 ({r['count']})" for r in worst) or "insuficiente date"
+            line = QLabel(f"{label} — cel mai bine: {best_text}\n{label} — cel mai slab: {worst_text}")
+            line.setWordWrap(True); xl.addWidget(line)
+        note = QLabel("Rezumatul rapid cere minimum 3 filme per gen/regizor, ca să nu tragă concluzii dintr-un singur rating.")
+        note.setObjectName("Muted"); note.setWordWrap(True); xl.addWidget(note)
+        content.addWidget(extremes)
         controls = QFrame(); controls.setObjectName("PremiumCard")
         cl = QGridLayout(controls); cl.setContentsMargins(16, 14, 16, 14); cl.setHorizontalSpacing(10); cl.setVerticalSpacing(8)
         search = QLineEdit(); search.setPlaceholderText("Caută Western, Tarantino, război, România…")
