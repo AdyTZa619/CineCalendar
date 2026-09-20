@@ -482,6 +482,8 @@ class CineCalendarWindow(QMainWindow):
                 msg=f"Import finalizat: {r.total_rows:,} ratinguri.\nNoi: {len(r.new_ratings)} • modificate: {len(r.changed_ratings)} • reconciliate: {r.merged_manual}."
                 if details: msg += "\n\n"+"\n".join(details)
             QMessageBox.information(self,"IMDb",msg); self.set_status("Profil actualizat."); self.show_page("ratings"); QTimer.singleShot(400,self.auto_catalog_if_needed)
+            if self.db.get_setting("imdb_public_sync_enabled", True) and self.db.get_setting("imdb_public_ratings_url", ""):
+                QTimer.singleShot(1200, lambda: self.sync_imdb_public(silent=True))
         except Exception as exc: QMessageBox.critical(self,"Import IMDb",str(exc))
 
     def sync_imdb_public(self, silent: bool = True):
@@ -588,6 +590,10 @@ class CineCalendarWindow(QMainWindow):
             if results:
                 build_profile(self.db); r=results[0]; self.set_status(f"Export IMDb nou importat: {len(r.new_ratings)} ratinguri noi, {len(r.changed_ratings)} modificate.")
                 if self.current_page in {"ratings","romanian_list"}: self.show_page(self.current_page)
+                # A CSV can be older than the live profile. Reconcile immediately so
+                # historical exports cannot reintroduce ratings removed/corrected on IMDb.
+                if self.db.get_setting("imdb_public_sync_enabled", True) and self.db.get_setting("imdb_public_ratings_url", ""):
+                    QTimer.singleShot(500, lambda: self.sync_imdb_public(silent=True))
         except Exception as exc: self.s.log.exception("ratings watcher failed"); self.set_status("Monitorizarea IMDb a întâmpinat o eroare.")
 
     def page_romanian_list(self):
