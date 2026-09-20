@@ -522,6 +522,13 @@ class CineCalendarWindow(QMainWindow):
                 if len(result.remaining_gaps) > len(preview):
                     unresolved += f"\n… și încă {len(result.remaining_gaps) - len(preview)} în raport."
 
+            consistency = ""
+            if result.consistency_issues:
+                preview = list(result.consistency_issues[:10])
+                consistency = "\n\nVerificare de consistență 4.1:\n- " + "\n- ".join(preview)
+                if len(result.consistency_issues) > len(preview):
+                    consistency += f"\n… și încă {len(result.consistency_issues) - len(preview)} cazuri de verificat."
+
             QMessageBox.information(
                 self,
                 "Repară biblioteca",
@@ -540,6 +547,7 @@ class CineCalendarWindow(QMainWindow):
                 f"({result.after.completion_percent:.1f}%)\n"
                 f"Încă incomplete: {result.after.incomplete:,}."
                 + unresolved
+                + consistency
                 + (
                     "\n\nEtape temporar indisponibile:\n- " + "\n- ".join(result.stage_errors)
                     if result.stage_errors else ""
