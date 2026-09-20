@@ -502,9 +502,9 @@ class CineCalendarWindow(QMainWindow):
             return
         self.set_status("Verific ratingurile noi de pe IMDb…", True)
         def fn(progress):
-            # The public profile is the source of truth for watched/rated state.
-            # Import the full history, not only ratings newer than the old CSV baseline.
-            # Upsert-by-IMDb-id keeps this idempotent and also picks up changed old ratings.
+            # The imported IMDb export remains the historical canonical baseline.
+            # Public sync updates new/changed ratings and repairs identity aliases;
+            # metadata backfill then fills missing fields across the whole rated library.
             baseline = str(self.db.get_setting("imdb_public_sync_baseline", "2026-09-05") or "2026-09-05")
             result = sync_public_ratings(
                 self.db,
@@ -512,7 +512,7 @@ class CineCalendarWindow(QMainWindow):
                 baseline_date=baseline,
             )
             try:
-                result.metadata_enriched = backfill_public_rating_metadata(self.db, limit=120)
+                result.metadata_enriched = backfill_public_rating_metadata(self.db, limit=5000)
             except Exception as exc:
                 self.s.log.warning("IMDb metadata backfill failed: %s", exc)
             if result.changed or result.metadata_enriched:

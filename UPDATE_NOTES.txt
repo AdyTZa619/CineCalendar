@@ -1,34 +1,29 @@
-CineCalendar 4.0.0 introduce Watchlist inteligent și „Următoarele 5”.
+CineCalendar 4.0.1 corectează biblioteca de ratinguri și completarea metadatelor.
 
-Watchlist inteligent:
-- Watchlist-ul nu mai este doar o listă cronologică;
-- aplicația calculează din filmele salvate o coadă „Următoarele 5”;
-- rankingul NU este un al doilea motor: reutilizează exact stack-ul de producție deja validat pentru recomandări;
-- intră în calcul ratingurile personale, scorul de conținut, ALS MovieLens, preferințele adaptive, Watch Success/Startability și poarta V16 de încredere;
-- calendarul și sezonul rămân semnale secundare și nu înlocuiesc gustul personal.
+Ratinguri IMDb:
+- ordinea implicită este „Cele mai recente”, cu ultimul rating acordat afișat primul;
+- este reparată eroarea internă de sortare pentru acest mod;
+- în tabel, titlul principal este titlul original al filmului când este disponibil;
+- titlul localizat rămâne în date și poate fi găsit în căutare.
 
-Următoarele 5:
-- ordinea se recalculează din Watchlist la deschiderea paginii;
-- sunt excluse din Top 5 titlurile deja evaluate/văzute, cele blocate explicit și lansările viitoare cunoscute;
-- fiecare rezultat arată estimarea personală, metadatele și motivul recomandării;
-- din card poți alege filmul pentru azi, deschide detaliile, porni Stremio sau scoate filmul din Watchlist;
-- alegerea pentru azi folosește același sistem de exposure/action tracking ca Home.
+Metadate:
+- completarea automată nu mai verifică doar filmele create de sincronizarea publică IMDb;
+- sunt verificate toate filmele evaluate care au IMDb ID și cărora le lipsesc câmpuri;
+- sunt completate best-effort genul, regizorul, durata, ratingul IMDb, numărul de voturi și posterul;
+- sunt incluse explicit cazurile în care lipsește numai regizorul sau numai posterul;
+- până la 5.000 de titluri evaluate cu metadate incomplete pot fi reparate într-o sincronizare, suficient pentru biblioteca personală curentă;
+- dacă interogarea IMDb cu credite eșuează, datele de bază sunt păstrate și regizorii sunt reîncercați separat.
 
-Consistența Watchlist:
-- „Scoate” elimină numai intenția „Vreau să văd” și NU creează feedback negativ;
-- „Am văzut”, „Nu mă interesează” și „Nu-mi recomanda similare” elimină automat starea contradictorie din Watchlist;
-- restul filmelor salvate rămân vizibile sub Top 5 chiar dacă nu sunt eligibile pentru rankingul inteligent.
+Interfață:
+- pagina Ratinguri are buton „Sincronizează + completează” pentru a porni manual sincronizarea și repararea metadatelor;
+- căutarea continuă să includă atât titlul original, cât și titlul localizat.
 
 Siguranță:
-- schema bazei de date rămâne neschimbată; nu este necesară migrare nouă;
-- sincronizarea IMDb și reparațiile 3.9.10 nu sunt modificate;
-- cronologia filmelor românești nu este modificată;
-- noua funcție rulează separat în worker, fără să blocheze interfața.
+- baza istorică din exportul IMDb rămâne canonică;
+- reconcilierea duplicatelor din 3.9.10 rămâne activă;
+- Smart Watchlist și „Următoarele 5” din 4.0.0 nu sunt modificate.
 
 Validare:
-- teste unitare noi pentru eligibilitate, filme viitoare/văzute, ordinea Top 5 și semantica Watchlist;
-- suită completă pytest;
-- gate live pentru profilul public IMDb;
-- benchmark pe catalogul mare;
-- build PyInstaller Premium;
-- smoke-launch Windows.
+- teste de regresie pentru ordinea cronologică a ratingurilor;
+- test pentru preferarea titlului original;
+- test pentru completarea regizorului lipsă pe un rating canonic provenit din exportul IMDb.

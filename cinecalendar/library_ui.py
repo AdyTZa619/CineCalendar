@@ -96,19 +96,26 @@ def load_rating_rows(db) -> list[dict]:
     return out
 
 
+def _display_title(row: dict) -> str:
+    """Prefer the work's original-language title, falling back to the stored display title."""
+    original = str(row.get("original_title") or "").strip()
+    return original or str(row.get("title") or "").strip()
+
+
 def _rating_sort_key(row: dict, mode: str):
+    title = _display_title(row).casefold()
     if mode == "rating_desc":
-        return (-int(row["user_rating"]), (row["title"] or "").casefold())
+        return (-int(row["user_rating"]), title)
     if mode == "rating_asc":
-        return (int(row["user_rating"]), (row["title"] or "").casefold())
+        return (int(row["user_rating"]), title)
     if mode == "imdb_desc":
-        return (-(row["imdb_rating"] if row["imdb_rating"] is not None else -999.0), (row["title"] or "").casefold())
+        return (-(row["imdb_rating"] if row["imdb_rating"] is not None else -999.0), title)
     if mode == "delta_desc":
-        return (-(row["delta"] if row["delta"] is not None else -999.0), (row["title"] or "").casefold())
+        return (-(row["delta"] if row["delta"] is not None else -999.0), title)
     if mode == "year_desc":
-        return (-(row["year"] if row["year"] is not None else -1), (row["title"] or "").casefold())
+        return (-(row["year"] if row["year"] is not None else -1), title)
     if mode == "title_asc":
-        return ((row["title"] or "").casefold(), -(row["year"] or 0))
+        return (title, -(row["year"] or 0))
     return ((row["date_rated"] or ""), int(row["rating_id"]))
 
 
@@ -164,7 +171,8 @@ def install_library_ui(window_cls) -> None:
             "Ratinguri IMDb",
             "Toată biblioteca ta de ratinguri, fără limita veche de 500. Caută, filtrează și sortează local.",
             [
-                ("Import IMDb ratings.csv", self.import_ratings, True),
+                ("Sincronizează + completează", lambda: self.sync_imdb_public(silent=False), True),
+                ("Import IMDb ratings.csv", self.import_ratings, False),
                 ("Adaugă rating", self.manual_rating, False),
             ],
         )
@@ -219,7 +227,7 @@ def install_library_ui(window_cls) -> None:
 
         table = QTableWidget(0, 10)
         table.setHorizontalHeaderLabels([
-            "Titlu", "An", "Nota ta", "IMDb", "Δ ta−IMDb", "Genuri",
+            "Titlu original", "An", "Nota ta", "IMDb", "Δ ta−IMDb", "Genuri",
             "Regizor", "Data", "Sursă", "IMDb ID",
         ])
         table.setAlternatingRowColors(True)
@@ -270,7 +278,7 @@ def install_library_ui(window_cls) -> None:
 
             mode = str(sort_combo.currentData() or "date_desc")
             if mode == "date_desc":
-                selected.sort(key=_rating_sort_key, reverse=True)
+                selected.sort(key=lambda r: _rating_sort_key(r, mode), reverse=True)
             else:
                 selected.sort(key=lambda r: _rating_sort_key(r, mode))
             return selected
@@ -282,7 +290,7 @@ def install_library_ui(window_cls) -> None:
             table.setRowCount(len(selected))
             for i, row in enumerate(selected):
                 values = [
-                    SmartItem(row["title"], row["title"].casefold()),
+                    SmartItem(_display_title(row), _display_title(row).casefold()),
                     SmartItem(str(row["year"] or "—"), row["year"]),
                     SmartItem(f"{row['user_rating']}/10", row["user_rating"]),
                     SmartItem(f"{row['imdb_rating']:.1f}" if row["imdb_rating"] is not None else "—", row["imdb_rating"]),
@@ -297,6 +305,17 @@ def install_library_ui(window_cls) -> None:
                     item.setData(Qt.UserRole, row["imdb_id"] or "")
                     table.setItem(i, j, item)
             table.setSortingEnabled(True)
+            mode = str(sort_combo.currentData() or "date_desc")
+            sort_column, sort_order = {
+                "date_desc": (7, Qt.DescendingOrder),
+                "rating_desc": (2, Qt.DescendingOrder),
+                "rating_asc": (2, Qt.AscendingOrder),
+                "imdb_desc": (3, Qt.DescendingOrder),
+                "delta_desc": (4, Qt.DescendingOrder),
+                "year_desc": (1, Qt.DescendingOrder),
+                "title_asc": (0, Qt.AscendingOrder),
+            }.get(mode, (7, Qt.DescendingOrder))
+            table.sortItems(sort_column, sort_order)
             count_label.setText(f"Afișate {len(selected):,} din {len(rows):,} ratinguri")
 
         debounce = QTimer(page); debounce.setSingleShot(True); debounce.setInterval(120); debounce.timeout.connect(render)

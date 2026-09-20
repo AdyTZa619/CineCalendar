@@ -524,3 +524,49 @@ def test_399_deleted_export_rating_is_restored_to_rich_export_movie(tmp_path: Pa
     assert [tuple(row) for row in rows] == [
         ("tt1861356",5,3.3,'["Shaji Kailas"]'),
     ]
+
+
+def test_metadata_backfill_also_enriches_exported_ratings_missing_director(tmp_path: Path):
+    db = Database(tmp_path / "export-metadata.db")
+    now = "2026-09-20T00:00:00+00:00"
+    with db.tx() as con:
+        cur = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,runtime_min,genres_json,directors_json,imdb_rating,num_votes,
+                poster_url,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt0405094","lives|leben|2006|movie","The Lives of Others","Das Leben der Anderen",
+                "the lives of others","das leben der anderen",2006,"Movie",137,'["Drama","Thriller"]',
+                "[]",8.4,420000,"https://m.media-amazon.com/images/M/test.jpg","imdb_csv",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(cur.lastrowid),9,"2026-09-20","imdb",now,now),
+        )
+
+    metadata = {
+        "data": {
+            "titles": [{
+                "id": "tt0405094",
+                "runtime": {"seconds": 8220},
+                "ratingsSummary": {"aggregateRating": 8.4, "voteCount": 420000},
+                "genres": {"genres": [{"text": "Drama"}, {"text": "Thriller"}]},
+                "primaryImage": {"url": "https://m.media-amazon.com/images/M/test.jpg"},
+                "principalCredits": [{
+                    "category": {"id": "director", "text": "Director"},
+                    "credits": [{"name": {"nameText": {"text": "Florian Henckel von Donnersmarck"}}}],
+                }],
+            }]
+        }
+    }
+    count = backfill_public_rating_metadata(db, session=Session([metadata]))
+    assert count == 1
+    with db.connect() as con:
+        row = con.execute(
+            "SELECT directors_json FROM movies WHERE imdb_id='tt0405094'"
+        ).fetchone()
+    assert row["directors_json"] == '["Florian Henckel von Donnersmarck"]'

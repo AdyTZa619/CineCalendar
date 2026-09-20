@@ -1,5 +1,5 @@
 from cinecalendar.db import Database
-from cinecalendar.library_ui import load_rating_rows, _feature_category, _pretty_feature
+from cinecalendar.library_ui import load_rating_rows, _display_title, _rating_sort_key, _feature_category, _pretty_feature
 from cinecalendar.util import json_dumps, utcnow_iso
 
 
@@ -47,3 +47,38 @@ def test_profile_feature_labels_and_categories_are_human_readable():
     assert _pretty_feature("genre:western") == "Western"
     assert _pretty_feature("theme:cross_veneration") == "Cross Veneration"
     assert _pretty_feature("combo:director:quentin tarantino|genre:crime") == "Quentin Tarantino + Crime"
+
+
+def test_ratings_default_to_latest_first_and_show_original_title(tmp_path):
+    db = Database(tmp_path / "recent.db")
+    now = utcnow_iso()
+    with db.tx() as con:
+        rows = [
+            ("tt0000001", "localized-1", "The Lives of Others", "Das Leben der Anderen", 2006, "movie", '["Drama"]', '["Florian Henckel von Donnersmarck"]'),
+            ("tt0000002", "older-2", "Older Localized", "Older Original", 2001, "movie", '["Drama"]', '["Director Old"]'),
+        ]
+        for imdb_id, ident, title, original, year, typ, genres, directors in rows:
+            cur = con.execute(
+                """INSERT INTO movies(
+                    imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                    year,title_type,genres_json,directors_json,source,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (imdb_id, ident, title, original, title.lower(), original.lower(),
+                 year, typ, genres, directors, "test", now, now),
+            )
+            rated_date = "2026-09-20" if imdb_id == "tt0000001" else "2026-09-19"
+            con.execute(
+                "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (int(cur.lastrowid), 9, rated_date, "imdb", now, now),
+            )
+
+    rows = load_rating_rows(db)
+    assert rows[0]["date_rated"] == "2026-09-20"
+    assert _display_title(rows[0]) == "Das Leben der Anderen"
+
+    sorted_rows = sorted(
+        reversed(rows),
+        key=lambda row: _rating_sort_key(row, "date_desc"),
+        reverse=True,
+    )
+    assert [row["date_rated"] for row in sorted_rows] == ["2026-09-20", "2026-09-19"]
