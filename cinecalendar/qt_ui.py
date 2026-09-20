@@ -23,7 +23,7 @@ from .backup import export_profile, import_profile
 from .catalog import bootstrap_official_imdb_catalog, import_imdb_datasets
 from .feedback import apply_feedback
 from .imdb_import import import_imdb_csv, add_manual_rating
-from .imdb_sync import sync_public_ratings
+from .imdb_sync import backfill_public_rating_metadata, sync_public_ratings
 from .profile import build_profile, get_profile, top_profile_features
 from .recommendation import Recommendation
 from .romanian_films import romanian_chapters, romanian_films
@@ -508,23 +508,35 @@ class CineCalendarWindow(QMainWindow):
                 url,
                 baseline_date=None,
             )
-            if result.changed:
+            try:
+                result.metadata_enriched = backfill_public_rating_metadata(self.db, limit=120)
+            except Exception as exc:
+                self.s.log.warning("IMDb metadata backfill failed: %s", exc)
+            if result.changed or result.metadata_enriched:
                 build_profile(self.db)
             return result
         self.worker = WorkerThread(fn, self)
         def done(r):
             self.db.set_setting("imdb_public_sync_last_error", "")
+            removed = len(r.removed_ratings)
             if silent:
-                self.set_status("Pregătit • IMDb sincronizat în fundal.", False)
+                suffix = f" • {removed} ratinguri vechi eliminate" if removed else ""
+                self.set_status("Pregătit • IMDb sincronizat în fundal" + suffix + ".", False)
             else:
                 self.set_status(
-                    f"IMDb sincronizat: {len(r.new_ratings)} noi, {len(r.changed_ratings)} modificate.",
+                    f"IMDb sincronizat: {len(r.new_ratings)} noi, {len(r.changed_ratings)} modificate, "
+                    f"{removed} eliminate.",
                     False,
                 )
                 QMessageBox.information(
                     self,
                     "IMDb",
-                    f"Sincronizare finalizată.\nNoi: {len(r.new_ratings)}\nModificate: {len(r.changed_ratings)}\nVerificate: {r.fetched}",
+                    f"Sincronizare finalizată.\n"
+                    f"Noi: {len(r.new_ratings)}\n"
+                    f"Modificate: {len(r.changed_ratings)}\n"
+                    f"Eliminate din istoricul local (nu mai sunt pe profil): {removed}\n"
+                    f"Metadate completate: {r.metadata_enriched}\n"
+                    f"Verificate pe profil: {r.fetched}",
                 )
             self._romanian_prepare_signature = None
             if self.current_page in {"ratings", "romanian_list"}:
