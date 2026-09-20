@@ -7,6 +7,7 @@ from .models import Recommendation
 from .recommender_v12 import FastRecommendationEngineV12
 from .recommender_v15 import FastRecommendationEngineV15
 from .trust_audit import ensure_trust_audit_schema, record_trust_snapshot
+from .recommendation_history_v43 import record_explanation_snapshot
 from .util import clamp, utcnow_iso
 
 
@@ -296,21 +297,26 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
         if not selected:
             return
         now = utcnow_iso()
+        engine_version = str(getattr(self, "LEARNING_INSIGHT_VERSION", ENGINE_VERSION) or ENGINE_VERSION)
         with self.db.tx() as con:
             ensure_trust_audit_schema(con)
             run = con.execute(
                 """INSERT INTO recommendation_runs(
                        context_date,slot,generated_at,candidate_count,result_count,engine_version
                    ) VALUES(?,?,?,?,?,?)""",
-                (when.isoformat(), slot, now, int(candidate_count), len(selected), ENGINE_VERSION),
+                (when.isoformat(), slot, now, int(candidate_count), len(selected), engine_version),
             )
             run_id = int(run.lastrowid)
             for rank_position, rec in enumerate(selected, start=1):
                 history = con.execute(
                     """INSERT INTO recommendation_history(
-                           movie_id,recommended_at,context_date,slot,final_score
-                       ) VALUES(?,?,?,?,?)""",
-                    (rec.movie.id, now, when.isoformat(), slot, rec.score.final),
+                           movie_id,recommended_at,context_date,slot,final_score,
+                           predicted_rating,confidence
+                       ) VALUES(?,?,?,?,?,?,?)""",
+                    (
+                        rec.movie.id, now, when.isoformat(), slot, rec.score.final,
+                        rec.score.predicted_rating, rec.score.confidence,
+                    ),
                 )
                 payload = getattr(rec.score, "trust_audit", None)
                 record_trust_snapshot(
@@ -321,10 +327,11 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
                     context_date=when.isoformat(),
                     slot=slot,
                     rank_position=rank_position,
-                    engine_version=ENGINE_VERSION,
+                    engine_version=engine_version,
                     payload=payload if isinstance(payload, dict) else {"status": "unclassified"},
                     created_at=now,
                 )
+                record_explanation_snapshot(con, int(history.lastrowid), rec.score, created_at=now)
 
     def recommend(self, when: date | None = None, count: int = 3, exclude_ids: set[int] | None = None,
                   record: bool = False, slot: str = "today", candidate_limit: int = 100000,
