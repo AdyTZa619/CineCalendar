@@ -164,7 +164,7 @@ def test_feedback_never_mutates_exposure(tmp_path):
     assert after == before
 
 
-def test_partial_v5_migration_is_resumed_and_upgraded_to_v6(tmp_path):
+def test_partial_v5_migration_is_resumed_and_upgraded_to_v7(tmp_path):
     path = tmp_path / "partial.db"
     con = sqlite3.connect(path)
     try:
@@ -185,7 +185,7 @@ def test_partial_v5_migration_is_resumed_and_upgraded_to_v6(tmp_path):
 
     db = Database(path)
     with db.connect() as con:
-        assert con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 6
+        assert con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7
         assert con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_trust_audit'"
         ).fetchone() is not None
@@ -230,7 +230,7 @@ def test_backup_merge_keeps_newer_local_rating_and_restore_can_replace_it(tmp_pa
     import_profile(target, archive, mode="restore")
     with target.connect() as con:
         row = con.execute("SELECT rating,source FROM ratings WHERE movie_id=?", (target_movie,)).fetchone()
-    assert row["rating"] == 6
+    assert row["rating"] == 7
     assert row["source"] == "backup-source"
 
 
