@@ -305,6 +305,17 @@ def install_library_ui(window_cls) -> None:
                     item.setData(Qt.UserRole, row["imdb_id"] or "")
                     table.setItem(i, j, item)
             table.setSortingEnabled(True)
+            mode = str(sort_combo.currentData() or "date_desc")
+            sort_column, sort_order = {
+                "date_desc": (7, Qt.DescendingOrder),
+                "rating_desc": (2, Qt.DescendingOrder),
+                "rating_asc": (2, Qt.AscendingOrder),
+                "imdb_desc": (3, Qt.DescendingOrder),
+                "delta_desc": (4, Qt.DescendingOrder),
+                "year_desc": (1, Qt.DescendingOrder),
+                "title_asc": (0, Qt.AscendingOrder),
+            }.get(mode, (7, Qt.DescendingOrder))
+            table.sortItems(sort_column, sort_order)
             count_label.setText(f"Afișate {len(selected):,} din {len(rows):,} ratinguri")
 
         debounce = QTimer(page); debounce.setSingleShot(True); debounce.setInterval(120); debounce.timeout.connect(render)
