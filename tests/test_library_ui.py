@@ -135,3 +135,14 @@ def test_ratings_ui_keeps_technical_fields_out_of_main_table():
     assert "refresh_visible_posters" in block
     assert "Toți regizorii" in block
     assert "Toți anii" in block
+
+
+def test_ratings_ui_uses_larger_font_and_poster_geometry():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "cinecalendar" / "library_ui.py").read_text(encoding="utf-8")
+    block = source[source.index("def page_ratings"):source.index("def page_profile", source.index("def page_ratings"))]
+    assert "setDefaultSectionSize(72)" in block
+    assert "poster.setFixedSize(44, 64)" in block
+    assert "table.font().pointSize() + 1" in block
+    assert "header.font().pointSize() + 1" in block

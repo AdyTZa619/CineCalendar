@@ -77,7 +77,7 @@ class RatingTitleDelegate(QStyledItemDelegate):
 
         primary_font = QFont(option.font)
         primary_font.setBold(True)
-        primary_font.setPointSize(max(9, option.font.pointSize()))
+        primary_font.setPointSize(max(10, option.font.pointSize() + 1))
         painter.setFont(primary_font)
         painter.setPen(primary_color)
         fm = QFontMetrics(primary_font)
@@ -86,7 +86,7 @@ class RatingTitleDelegate(QStyledItemDelegate):
 
         if localized:
             secondary_font = QFont(option.font)
-            secondary_font.setPointSize(max(8, option.font.pointSize() - 1))
+            secondary_font.setPointSize(max(9, option.font.pointSize()))
             painter.setFont(secondary_font)
             painter.setPen(secondary_color)
             sfm = QFontMetrics(secondary_font)
@@ -96,7 +96,7 @@ class RatingTitleDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
         hint = super().sizeHint(option, index)
-        return QSize(hint.width(), max(56, hint.height()))
+        return QSize(hint.width(), max(70, hint.height()))
 
 
 _GENRE_COLORS = {
@@ -129,7 +129,7 @@ class GenreBadgeDelegate(QStyledItemDelegate):
         y = option.rect.center().y()
         right = option.rect.right() - 8
         font = QFont(option.font)
-        font.setPointSize(max(8, option.font.pointSize() - 1))
+        font.setPointSize(max(9, option.font.pointSize()))
         painter.setFont(font)
         fm = QFontMetrics(font)
 
@@ -142,8 +142,8 @@ class GenreBadgeDelegate(QStyledItemDelegate):
             badge = option.rect.adjusted(0, 0, 0, 0)
             badge.setLeft(x)
             badge.setWidth(text_w)
-            badge.setTop(y - 14)
-            badge.setHeight(28)
+            badge.setTop(y - 15)
+            badge.setHeight(30)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(bg))
             painter.drawRoundedRect(badge, 10, 10)
@@ -490,7 +490,10 @@ def install_library_ui(window_cls) -> None:
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setSelectionMode(QTableWidget.SingleSelection)
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(58)
+        table.verticalHeader().setDefaultSectionSize(72)
+        table_font = QFont(table.font())
+        table_font.setPointSize(max(10, table.font().pointSize() + 1))
+        table.setFont(table_font)
         table.setSortingEnabled(False)
         table.setMinimumHeight(650)
         table.setShowGrid(True)
@@ -498,7 +501,11 @@ def install_library_ui(window_cls) -> None:
         table.setItemDelegateForColumn(7, GenreBadgeDelegate(table))
 
         header = table.horizontalHeader()
-        header.setMinimumHeight(42)
+        header.setMinimumHeight(46)
+        header_font = QFont(header.font())
+        header_font.setPointSize(max(10, header.font().pointSize() + 1))
+        header_font.setBold(True)
+        header.setFont(header_font)
         for col in (0, 1, 3, 4, 5, 6, 9, 10):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
@@ -640,7 +647,7 @@ def install_library_ui(window_cls) -> None:
                 poster_item.setData(Qt.UserRole, imdb_id)
                 poster = QLabel("—")
                 poster.setAlignment(Qt.AlignCenter)
-                poster.setFixedSize(34, 50)
+                poster.setFixedSize(44, 64)
                 poster.setObjectName("Muted")
                 poster.setStyleSheet(
                     "border:1px solid rgba(115,132,154,0.30); border-radius:5px;"
