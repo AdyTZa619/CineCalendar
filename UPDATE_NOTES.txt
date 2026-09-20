@@ -9,7 +9,7 @@ Regizori IMDb:
 - dacă regizorul lipsește în continuare, folosește dataseturile oficiale IMDb title.crew.tsv.gz + name.basics.tsv.gz;
 - această etapă verifică direct toate filmele evaluate, fără pragul de minimum 50 voturi folosit de catalogul de recomandări;
 - filmele foarte noi, scurtmetrajele și titlurile obscure pot primi astfel regizorul chiar dacă nu au intrat în catalogul eligibil;
-- fișierele oficiale sunt păstrate în cache și refolosite.
+- fișierele oficiale sunt păstrate în cache și refolosite; dacă au peste 36 de ore, etapa de reparare descarcă automat copia IMDb actuală.
 
 Titlu original și alte câmpuri:
 - title.basics.tsv.gz devine sursă oficială pentru originalTitle;
