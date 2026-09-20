@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
-# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v5 through
+# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v6 through
 # idempotent Python helpers so an interrupted ALTER TABLE can be resumed safely.
 MIGRATIONS: dict[int, str] = {
 1: r'''
@@ -161,6 +161,16 @@ CREATE TABLE IF NOT EXISTS recommendation_trust_audit(
 );
 CREATE INDEX IF NOT EXISTS ix_rec_trust_date_status ON recommendation_trust_audit(context_date,trust_status);
 CREATE INDEX IF NOT EXISTS ix_rec_trust_movie_date ON recommendation_trust_audit(movie_id,context_date);
+''',
+6: r'''
+CREATE TABLE IF NOT EXISTS metadata_provenance(
+  movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  field TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(movie_id,field)
+);
+CREATE INDEX IF NOT EXISTS ix_metadata_provenance_provider ON metadata_provenance(provider);
 '''
 }
 
@@ -270,6 +280,8 @@ class Database:
         if not self._table_exists(con, "recommendation_runs"):
             return True
         if not self._table_exists(con, "recommendation_trust_audit"):
+            return True
+        if not self._table_exists(con, "metadata_provenance"):
             return True
         return False
 
@@ -393,6 +405,20 @@ class Database:
             "CREATE INDEX IF NOT EXISTS ix_rec_trust_movie_date ON recommendation_trust_audit(movie_id,context_date)"
         )
 
+    def _apply_v6(self, con: sqlite3.Connection) -> None:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS metadata_provenance(
+              movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+              field TEXT NOT NULL,
+              provider TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY(movie_id,field)
+            )"""
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS ix_metadata_provenance_provider ON metadata_provenance(provider)"
+        )
+
     def connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -451,6 +477,7 @@ class Database:
                 (3, self._apply_v3),
                 (4, self._apply_v4),
                 (5, self._apply_v5),
+                (6, self._apply_v6),
             ):
                 con.execute("BEGIN IMMEDIATE")
                 try:
