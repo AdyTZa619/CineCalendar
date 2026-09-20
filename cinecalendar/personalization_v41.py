@@ -591,7 +591,7 @@ class PersonalizationBrainV41:
                 """SELECT m.*,h.context_date
                    FROM recommendation_history h JOIN movies m ON m.id=h.movie_id
                    WHERE h.context_date>=?""",
-                ((when.fromordinal(cutoff)).isoformat(),),
+                (date.fromordinal(cutoff).isoformat(),),
             ).fetchall()
         for row in rows:
             movie = row_to_movie(row)
@@ -678,7 +678,7 @@ class PersonalizationBrainV41:
     def dynamic_watchlist_shift(self, row: dict, score, *, pinned: bool, when: date) -> tuple[float, str]:
         movie = row_to_movie(row)
         data = self.enhance_score(movie, score, when, mood="neutral")
-        shift = float(data.get("total_shift", 0.0) or 0.0)
+        taste_shift = float(data.get("total_shift", 0.0) or 0.0)
         added = _date_from(str(row.get("watchlist_added_at") or ""))
         age_days = max(0, (when - added).days) if added else 0
         # Old items do not float upward just because they are old. Low-fit stale items drift down.
@@ -686,13 +686,15 @@ class PersonalizationBrainV41:
         if age_days >= 365 and float(score.predicted_rating or 0.0) < 6.5 and not pinned:
             stale_penalty = min(.018, .006 + (age_days - 365) / 3650.0)
         pin_bonus = .08 if pinned else 0.0
-        total = max(-.04, min(.09, shift + pin_bonus - stale_penalty))
+        # enhance_score already applied the quality-gated taste/context shift to score.final.
+        # Return only the Watchlist-specific pin/staleness delta to avoid double application.
+        watchlist_only = max(-.025, min(.08, pin_bonus - stale_penalty))
         reason = (
             ("prioritate manuală; " if pinned else "")
-            + ("gust recalculat după ratingurile noi; " if abs(shift) >= .004 else "")
+            + ("gust recalculat după ratingurile noi; " if abs(taste_shift) >= .004 else "")
             + ("film vechi în Watchlist cu potrivire modestă" if stale_penalty else "")
         ).strip("; ")
-        return total, reason
+        return watchlist_only, reason
 
     def choose_runtime_bounds(self) -> tuple[int | None, int | None]:
         key = str(self.db.get_setting("chooser_runtime_bucket", "all") or "all")
