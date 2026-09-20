@@ -1,5 +1,5 @@
 from cinecalendar.db import Database
-from cinecalendar.library_ui import load_rating_rows, _display_title, _rating_sort_key, _feature_category, _pretty_feature
+from cinecalendar.library_ui import load_rating_rows, _display_title, _rating_sort_key, _feature_category, _pretty_feature, _rating_activity, _stable_extremes
 from cinecalendar.util import json_dumps, utcnow_iso
 
 
@@ -82,3 +82,38 @@ def test_ratings_default_to_latest_first_and_show_original_title(tmp_path):
         reverse=True,
     )
     assert [row["date_rated"] for row in sorted_rows] == ["2026-09-20", "2026-09-19"]
+
+
+def test_rating_activity_groups_by_year_and_month(tmp_path):
+    db = Database(tmp_path / "activity.db")
+    now = utcnow_iso()
+    with db.tx() as con:
+        for idx, rated_date in enumerate(("2026-09-20", "2026-09-01", "2025-12-31"), start=1):
+            cur = con.execute(
+                """INSERT INTO movies(
+                    imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                    year,title_type,genres_json,directors_json,source,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    f"tt91{idx:05d}", f"activity-{idx}", f"Activity {idx}", f"Activity {idx}",
+                    f"activity {idx}", f"activity {idx}", 2020, "movie", "[]", "[]", "test", now, now,
+                ),
+            )
+            con.execute(
+                "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (int(cur.lastrowid), 8, rated_date, "test", now, now),
+            )
+
+    years, months = _rating_activity(db)
+    assert years[:2] == [("2026", 2), ("2025", 1)]
+    assert months[:2] == [("2026-09", 2), ("2025-12", 1)]
+
+
+def test_stable_extremes_ignore_single_movie_noise():
+    rows = [
+        {"category": "genres", "label": "Drama", "mean_rating": 8.5, "count": 10},
+        {"category": "genres", "label": "Comedy", "mean_rating": 5.0, "count": 8},
+        {"category": "genres", "label": "Noise", "mean_rating": 10.0, "count": 1},
+    ]
+    assert [r["label"] for r in _stable_extremes(rows, "genres", positive=True)] == ["Drama", "Comedy"]
+    assert [r["label"] for r in _stable_extremes(rows, "genres", positive=False)] == ["Comedy", "Drama"]
