@@ -49,4 +49,10 @@ class CineCalendarService:
             self.db.set_setting("ratings_folder", str(Path.home() / "Downloads"))
         if self.db.get_setting("theme", None) is None:
             self.db.set_setting("theme", "dark")
+        if self.db.get_setting("chooser_runtime_bucket", None) is None:
+            self.db.set_setting("chooser_runtime_bucket", "all")
+        if self.db.get_setting("chooser_mood", None) is None:
+            self.db.set_setting("chooser_mood", "neutral")
+        if self.db.get_setting("watchlist_decision_mode", None) is None:
+            self.db.set_setting("watchlist_decision_mode", "decide")
         self.db.set_setting("catalog_bootstrap_running", False)
