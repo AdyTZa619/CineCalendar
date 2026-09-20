@@ -509,8 +509,8 @@ def backfill_public_rating_metadata(
                 con.execute(
                     """UPDATE movies SET
                          runtime_min=COALESCE(runtime_min,?),
-                         genres_json=CASE WHEN genres_json='[]' AND ?!='[]' THEN ? ELSE genres_json END,
-                         directors_json=CASE WHEN directors_json='[]' AND ?!='[]' THEN ? ELSE directors_json END,
+                         genres_json=CASE WHEN TRIM(COALESCE(genres_json,'')) IN ('','[]') AND ?!='[]' THEN ? ELSE genres_json END,
+                         directors_json=CASE WHEN TRIM(COALESCE(directors_json,'')) IN ('','[]') AND ?!='[]' THEN ? ELSE directors_json END,
                          imdb_rating=COALESCE(imdb_rating,?),
                          num_votes=COALESCE(num_votes,?),
                          poster_url=COALESCE(NULLIF(poster_url,''),?),
