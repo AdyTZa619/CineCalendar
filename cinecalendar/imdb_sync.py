@@ -720,8 +720,9 @@ def _merge_public_duplicate_with_con(
              (SELECT COUNT(*) FROM ratings WHERE movie_id=?)
            + (SELECT COUNT(*) FROM feedback WHERE movie_id=?)
            + (SELECT COUNT(*) FROM recommendation_history WHERE movie_id=?)
+           + (SELECT COUNT(*) FROM recommendation_trust_audit WHERE movie_id=?)
            + (SELECT COUNT(*) FROM watchlist WHERE movie_id=?)""",
-        (public_id, public_id, public_id, public_id),
+        (public_id, public_id, public_id, public_id, public_id),
     ).fetchone()[0])
     if refs == 0 and str(public_row["source"] or "") == "imdb_public_sync":
         con.execute("DELETE FROM movies WHERE id=?", (public_id,))
