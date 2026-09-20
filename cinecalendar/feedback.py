@@ -11,6 +11,12 @@ FEEDBACK_WEIGHTS = {
     "never_similar": -.20,
     "more_like_this": .10,
     "less_like_this": -.10,
+    # Contextual feedback: stored for short-horizon learning, but deliberately does not
+    # alter the long-term taste profile.
+    "not_now": 0.0,
+    "too_long": 0.0,
+    "mood_mismatch": 0.0,
+    "too_similar": 0.0,
 }
 
 
