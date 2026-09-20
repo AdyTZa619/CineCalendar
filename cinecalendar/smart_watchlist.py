@@ -95,9 +95,13 @@ def set_watchlist_pinned(db, movie_id: int, pinned: bool) -> bool:
 
 def remove_from_watchlist(db, movie_id: int) -> bool:
     """Remove only the explicit Watchlist intent; do not create negative taste feedback."""
+    mid = int(movie_id)
     with db.tx() as con:
-        cur = con.execute("DELETE FROM watchlist WHERE movie_id=?", (int(movie_id),))
-        return int(cur.rowcount or 0) > 0
+        cur = con.execute("DELETE FROM watchlist WHERE movie_id=?", (mid,))
+        removed = int(cur.rowcount or 0) > 0
+    if removed:
+        set_watchlist_pinned(db, mid, False)
+    return removed
 
 
 def rank_watchlist(
@@ -143,7 +147,7 @@ def rank_watchlist(
             return False
         if content_type == "documentary" and "documentary" not in genres:
             return False
-        if content_type == "movie" and typ == "short":
+        if content_type == "movie" and (typ == "short" or "documentary" in genres):
             return False
         return True
 
