@@ -230,6 +230,7 @@ def install_library_ui(window_cls) -> None:
 
         date_filter = QComboBox()
         date_filter.addItem("Oricând", "all")
+        date_filter.addItem("Azi", "today")
         date_filter.addItem("Ultimele 7 zile", "7d")
         date_filter.addItem("Ultimele 30 zile", "30d")
         date_filter.addItem("Anul acesta", "year")
@@ -280,7 +281,9 @@ def install_library_ui(window_cls) -> None:
             period = str(date_filter.currentData() or "all")
             today = date.today()
             cutoff = None
-            if period == "7d":
+            if period == "today":
+                cutoff = today.isoformat()
+            elif period == "7d":
                 cutoff = (today - timedelta(days=6)).isoformat()
             elif period == "30d":
                 cutoff = (today - timedelta(days=29)).isoformat()
