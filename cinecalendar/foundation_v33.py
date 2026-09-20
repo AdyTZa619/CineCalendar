@@ -80,9 +80,18 @@ def _record_exposures(window, recs, ctx: date, slot: str) -> list[int]:
         for rank_position, rec in enumerate(new_recs, start=1):
             history = con.execute(
                 """INSERT INTO recommendation_history(
-                       movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id
-                   ) VALUES(?,?,?,?,?,0,NULL,NULL)""",
-                (int(rec.movie.id), now, context_date, str(slot), float(rec.score.final)),
+                       movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id,
+                       predicted_rating,confidence
+                   ) VALUES(?,?,?,?,?,0,NULL,NULL,?,?)""",
+                (
+                    int(rec.movie.id),
+                    now,
+                    context_date,
+                    str(slot),
+                    float(rec.score.final),
+                    float(rec.score.predicted_rating) if rec.score.predicted_rating is not None else None,
+                    float(rec.score.confidence) if rec.score.confidence is not None else None,
+                ),
             )
             history_id = int(history.lastrowid)
             payload = getattr(rec.score, "trust_audit", None)
