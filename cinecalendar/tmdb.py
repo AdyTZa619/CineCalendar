@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import requests
 from .db import Database
+from .metadata_provenance import record_metadata_sources
 from .models import Movie
 from .semantic import extract_semantic
 from .util import json_dumps, json_loads, utcnow_iso
@@ -44,28 +45,54 @@ class TmdbProvider:
         if not results: return movie
         tmdb_id=int(results[0]["id"])
         details=self._get(f"/movie/{tmdb_id}",{"append_to_response":"credits,keywords,external_ids"})
-        movie.original_title=details.get("original_title") or movie.original_title
-        movie.overview=details.get("overview") or movie.overview
-        movie.runtime_min=details.get("runtime") or movie.runtime_min
+        changed_fields: list[str] = ["tmdb_id"]
+        original_title = str(details.get("original_title") or "").strip()
+        if not movie.original_title and original_title:
+            movie.original_title = original_title
+            changed_fields.append("original_title")
+        overview = str(details.get("overview") or "").strip()
+        if not movie.overview and overview:
+            movie.overview = overview
+            changed_fields.append("overview")
+        runtime = details.get("runtime")
+        if not movie.runtime_min and runtime:
+            movie.runtime_min = runtime
+            changed_fields.append("runtime_min")
         countries=[x.get("name","") for x in details.get("production_countries",[]) if x.get("name")]
-        if countries:
+        if not movie.countries and countries:
             movie.countries=countries
+            changed_fields.append("countries")
         genres=[x.get("name","") for x in details.get("genres",[]) if x.get("name")]
-        if genres:
+        if not movie.genres and genres:
             movie.genres=genres
+            changed_fields.append("genres")
         credits=details.get("credits",{}).get("crew",[])
         directors=[x.get("name","") for x in credits if x.get("job")=="Director" and x.get("name")]
-        if directors:
+        if not movie.directors and directors:
             movie.directors=directors
+            changed_fields.append("directors")
         kws=details.get("keywords",{}).get("keywords",[]) or details.get("keywords",{}).get("results",[])
         keywords=[x.get("name","") for x in kws if x.get("name")]
-        if keywords:
+        if not movie.keywords and keywords:
             movie.keywords=keywords
-        poster=details.get("poster_path"); movie.poster_url=(IMG_BASE+poster) if poster else movie.poster_url
+            changed_fields.append("keywords")
+        poster=details.get("poster_path")
+        if not movie.poster_url and poster:
+            movie.poster_url=IMG_BASE+poster
+            changed_fields.append("poster_url")
         movie.semantic=extract_semantic(movie)
+        stamp=utcnow_iso()
         with self.db.tx() as con:
             con.execute("""UPDATE movies SET tmdb_id=?,original_title=?,overview=?,runtime_min=?,countries_json=?,genres_json=?,directors_json=?,keywords_json=?,poster_url=?,semantic_json=?,updated_at=? WHERE id=?""",
-                        (tmdb_id,movie.original_title,movie.overview,movie.runtime_min,json_dumps(movie.countries),json_dumps(movie.genres),json_dumps(movie.directors),json_dumps(movie.keywords),movie.poster_url,json_dumps(movie.semantic),utcnow_iso(),movie.id))
+                        (tmdb_id,movie.original_title,movie.overview,movie.runtime_min,json_dumps(movie.countries),json_dumps(movie.genres),json_dumps(movie.directors),json_dumps(movie.keywords),movie.poster_url,json_dumps(movie.semantic),stamp,movie.id))
+            if movie.id is not None:
+                record_metadata_sources(
+                    con,
+                    int(movie.id),
+                    changed_fields,
+                    "tmdb",
+                    updated_at=stamp,
+                )
         return movie
 
 

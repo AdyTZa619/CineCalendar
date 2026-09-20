@@ -1,15 +1,44 @@
-CineCalendar 4.0.4 rafinează lizibilitatea paginii Ratinguri IMDb.
+CineCalendar 4.0.5 – Metadata Integrity
 
-Vizual:
-- fontul din tabel este mărit discret cu aproximativ 1 punct;
-- titlul principal este puțin mai mare și rămâne bold;
-- titlul localizat este și el mai lizibil;
-- headerul tabelului este puțin mai mare și mai clar;
-- badge-urile de gen au text și înălțime puțin mărite.
+Obiectiv:
+- repară cazurile în care IMDb afișează regizorul, dar CineCalendar rămânea cu „—”;
+- consolidează prioritatea surselor și transparența metadatelor fără a modifica motorul de recomandări.
 
-Postere:
-- dimensiunea posterelor crește de la 34x50 px la 44x64 px;
-- rândurile cresc de la 58 px la 72 px pentru a păstra proporțiile;
-- încărcarea lazy introdusă în 4.0.3 rămâne neschimbată, deci nu se descarcă simultan toate posterele.
+Regizori IMDb:
+- „Repară biblioteca” încearcă întâi metadata IMDb GraphQL;
+- dacă regizorul lipsește în continuare, folosește dataseturile oficiale IMDb title.crew.tsv.gz + name.basics.tsv.gz;
+- această etapă verifică direct toate filmele evaluate, fără pragul de minimum 50 voturi folosit de catalogul de recomandări;
+- filmele foarte noi, scurtmetrajele și titlurile obscure pot primi astfel regizorul chiar dacă nu au intrat în catalogul eligibil;
+- fișierele oficiale sunt păstrate în cache și refolosite; dacă au peste 36 de ore, etapa de reparare descarcă automat copia IMDb actuală.
 
-Restul redesignului 4.0.3 rămâne neschimbat: filtrele, meniul ⋯, Export CSV, titlul pe două rânduri și coloanele compacte.
+Titlu original și alte câmpuri:
+- title.basics.tsv.gz devine sursă oficială pentru originalTitle;
+- corectează titlul original când baza locală are o valoare diferită;
+- completează din datasetul oficial genul, durata și anul când acestea lipsesc;
+- identitatea internă și semantic metadata sunt recalculare după corecție.
+
+Prioritatea surselor:
+1. IMDb GraphQL / dataset oficial IMDb;
+2. TMDb, numai pentru câmpuri încă lipsă;
+3. Wikidata/Wikipedia, numai pentru câmpuri încă lipsă.
+TMDb nu mai suprascrie regizori, genuri, durate sau țări deja obținute din IMDb.
+
+Wikidata:
+- repară interogarea pentru genuri: proprietatea P136 este acum legată efectiv;
+- cache-ul fallback este versionat din nou, astfel încât rezultatele vechi fără gen să fie refăcute o singură dată.
+
+Transparență:
+- baza de date păstrează sursa ultimului furnizor pentru fiecare câmp reparat;
+- în meniul ⋯ al unui film apare submeniul „Surse metadate” când există informație de proveniență;
+- pot apărea surse precum IMDb GraphQL, IMDb dataset oficial, TMDb sau Wikidata/Wikipedia.
+
+Raport de reparare:
+- afișează separat câți regizori au fost completați din datasetul oficial;
+- afișează câte titluri originale au fost corectate;
+- afișează genurile și duratele reparate;
+- la final listează concret titlurile care încă au metadate lipsă și câmpurile rămase.
+
+Siguranță:
+- schema SQLite urcă la v6 și adaugă doar tabela metadata_provenance;
+- migrarea păstrează mecanismul existent de backup/quick_check;
+- motorul de recomandări, ratingurile și logica Smart Watchlist nu sunt modificate.

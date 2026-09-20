@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import requests
 
 from .db import Database
+from .metadata_provenance import record_metadata_sources
 from .models import Movie
 from .semantic import extract_semantic
 from .util import identity_key, json_dumps, json_loads, normalize_text, utcnow_iso
@@ -475,6 +476,19 @@ def backfill_public_rating_metadata(
                 poster_url = str(((meta.get("primaryImage") or {}).get("url") or "")).strip() or None
                 use_genres = genres if genres else None
                 use_directors = directors if directors else None
+                changed_fields: list[str] = []
+                if row["runtime_min"] is None and runtime_min is not None:
+                    changed_fields.append("runtime_min")
+                if not (json_loads(row["genres_json"], []) or []) and use_genres:
+                    changed_fields.append("genres")
+                if not (json_loads(row["directors_json"], []) or []) and use_directors:
+                    changed_fields.append("directors")
+                if row["imdb_rating"] is None and imdb_rating is not None:
+                    changed_fields.append("imdb_rating")
+                if row["num_votes"] is None and num_votes is not None:
+                    changed_fields.append("num_votes")
+                if not str(row["poster_url"] or "").strip() and poster_url:
+                    changed_fields.append("poster_url")
 
                 movie = Movie(
                     id=int(row["id"]),
@@ -495,8 +509,8 @@ def backfill_public_rating_metadata(
                 con.execute(
                     """UPDATE movies SET
                          runtime_min=COALESCE(runtime_min,?),
-                         genres_json=CASE WHEN genres_json='[]' AND ?!='[]' THEN ? ELSE genres_json END,
-                         directors_json=CASE WHEN directors_json='[]' AND ?!='[]' THEN ? ELSE directors_json END,
+                         genres_json=CASE WHEN TRIM(COALESCE(genres_json,'')) IN ('','[]') AND ?!='[]' THEN ? ELSE genres_json END,
+                         directors_json=CASE WHEN TRIM(COALESCE(directors_json,'')) IN ('','[]') AND ?!='[]' THEN ? ELSE directors_json END,
                          imdb_rating=COALESCE(imdb_rating,?),
                          num_votes=COALESCE(num_votes,?),
                          poster_url=COALESCE(NULLIF(poster_url,''),?),
@@ -511,7 +525,14 @@ def backfill_public_rating_metadata(
                         json_dumps(semantic), now, int(row["id"]),
                     ),
                 )
-                if any((runtime_min, use_genres, use_directors, imdb_rating, num_votes, poster_url)):
+                if changed_fields:
+                    record_metadata_sources(
+                        con,
+                        int(row["id"]),
+                        changed_fields,
+                        "imdb_graphql",
+                        updated_at=now,
+                    )
                     enriched += 1
     return enriched
 

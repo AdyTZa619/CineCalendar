@@ -6,7 +6,8 @@ import requests
 from .db import Database
 from .semantic import extract_semantic
 from .models import Movie
-from .util import identity_key, json_dumps, normalize_text, split_csvish, to_float, to_int, utcnow_iso
+from .metadata_provenance import record_metadata_sources
+from .util import identity_key, json_dumps, json_loads, normalize_text, split_csvish, to_float, to_int, utcnow_iso
 
 
 IMDB_DATASET_URLS = {
@@ -103,6 +104,324 @@ def download_official_imdb_recommender_datasets(cache_dir: str|Path, progress: C
     if not _valid_gzip_tsv(names, {'nconst','primaryName'}):
         names.unlink(missing_ok=True); raise ValueError('Fișierul name.basics descărcat nu este valid.')
     return basics, ratings, crew, names
+
+
+def _refresh_if_stale(path: Path, max_age_hours: int, progress: Callable[[str], None], label: str) -> bool:
+    """Remove an old cached dataset so the next download gets current IMDb metadata."""
+    if not path.exists():
+        return False
+    try:
+        age_seconds = max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return False
+    if age_seconds <= max(1, int(max_age_hours)) * 3600:
+        return False
+    progress(
+        f"{label}: copia locală are {age_seconds / 3600:.0f} h; descarc versiunea IMDb actuală."
+    )
+    path.unlink(missing_ok=True)
+    path.with_suffix(path.suffix + ".part").unlink(missing_ok=True)
+    return True
+
+
+def download_official_imdb_metadata_datasets(
+    cache_dir: str | Path,
+    progress: Callable[[str], None] | None = None,
+    force: bool = False,
+    need_directors: bool = True,
+) -> tuple[Path, Path, Path]:
+    """Download only the official IMDb files needed to repair rated-title metadata."""
+    progress = progress or (lambda _message: None)
+    root = Path(cache_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    basics = root / "title.basics.tsv.gz"
+    crew = root / "title.crew.tsv.gz"
+    names = root / "name.basics.tsv.gz"
+    if force:
+        for path in (basics, crew, names):
+            path.unlink(missing_ok=True)
+            path.with_suffix(path.suffix + ".part").unlink(missing_ok=True)
+    else:
+        # IMDb refreshes these datasets regularly. A forever-cache would keep recently
+        # corrected directors/titles stale even though IMDb already shows the new data.
+        _refresh_if_stale(basics, 36, progress, "IMDb title.basics")
+        if need_directors:
+            _refresh_if_stale(crew, 36, progress, "IMDb title.crew")
+            _refresh_if_stale(names, 36, progress, "IMDb name.basics")
+
+    _download_stream(IMDB_DATASET_URLS["basics"], basics, progress, "IMDb title.basics", force=False)
+    if not _valid_gzip_tsv(
+        basics,
+        {"tconst", "titleType", "primaryTitle", "originalTitle", "startYear", "runtimeMinutes", "genres"},
+    ):
+        basics.unlink(missing_ok=True)
+        raise ValueError("Fișierul title.basics descărcat nu este valid.")
+
+    if need_directors:
+        _download_stream(IMDB_DATASET_URLS["crew"], crew, progress, "IMDb title.crew", force=False)
+        if not _valid_gzip_tsv(crew, {"tconst", "directors"}):
+            crew.unlink(missing_ok=True)
+            raise ValueError("Fișierul title.crew descărcat nu este valid.")
+
+        _download_stream(IMDB_DATASET_URLS["names"], names, progress, "IMDb name.basics", force=False)
+        if not _valid_gzip_tsv(names, {"nconst", "primaryName"}):
+            names.unlink(missing_ok=True)
+            raise ValueError("Fișierul name.basics descărcat nu este valid.")
+
+    return basics, crew, names
+
+
+def repair_rated_metadata_from_official_datasets(
+    db: Database,
+    cache_dir: str | Path,
+    progress: Callable[[str], None] | None = None,
+    *,
+    force_download: bool = False,
+) -> dict[str, int]:
+    """Repair every rated IMDb title directly from official datasets.
+
+    Unlike the recommendation catalog import, this path has no minimum-vote threshold.
+    It therefore repairs directors and original titles for obscure/new rated titles too.
+    """
+    progress = progress or (lambda _message: None)
+    with db.connect() as con:
+        rows = con.execute(
+            """SELECT m.*
+               FROM ratings r
+               JOIN movies m ON m.id=r.movie_id
+               WHERE m.imdb_id IS NOT NULL
+                 AND TRIM(m.imdb_id)!=''
+               ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC"""
+        ).fetchall()
+
+    if not rows:
+        return {
+            "rated": 0,
+            "dataset_matches": 0,
+            "directors_filled": 0,
+            "original_titles_corrected": 0,
+            "genres_filled": 0,
+            "runtime_filled": 0,
+            "year_filled": 0,
+            "unresolved_directors": 0,
+        }
+
+    rated_ids = {str(row["imdb_id"]) for row in rows}
+    missing_director_ids = {
+        str(row["imdb_id"])
+        for row in rows
+        if not (json_loads(row["directors_json"], []) or [])
+    }
+    basics, crew, names = download_official_imdb_metadata_datasets(
+        cache_dir,
+        progress,
+        force=force_download,
+        need_directors=bool(missing_director_ids),
+    )
+
+    progress(f"IMDb oficial: caut metadata pentru {len(rated_ids):,} titluri evaluate…")
+    basics_by_id: dict[str, dict[str, object]] = {}
+    seen_basics: set[str] = set()
+    with gzip.open(basics, "rt", encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for index, item in enumerate(reader, 1):
+            tid = str(item.get("tconst") or "")
+            if tid not in rated_ids:
+                continue
+            seen_basics.add(tid)
+            raw_genres = item.get("genres")
+            basics_by_id[tid] = {
+                "original_title": "" if item.get("originalTitle") in {None, "\\N"} else str(item.get("originalTitle") or "").strip(),
+                "year": to_int(item.get("startYear")),
+                "title_type": "" if item.get("titleType") in {None, "\\N"} else str(item.get("titleType") or "").strip(),
+                "runtime_min": to_int(item.get("runtimeMinutes")),
+                "genres": [] if raw_genres in {None, "\\N"} else [x for x in str(raw_genres).split(",") if x],
+            }
+            if len(seen_basics) >= len(rated_ids):
+                break
+            if index % 2_000_000 == 0:
+                progress(f"title.basics scanat: {index:,} • găsite {len(seen_basics):,}/{len(rated_ids):,}")
+
+    director_ids_by_title: dict[str, list[str]] = {}
+    needed_names: set[str] = set()
+    if missing_director_ids:
+        progress(f"IMDb oficial: caut regizorul pentru {len(missing_director_ids):,} titluri fără regizor…")
+        seen_crew: set[str] = set()
+        with gzip.open(crew, "rt", encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for index, item in enumerate(reader, 1):
+                tid = str(item.get("tconst") or "")
+                if tid not in missing_director_ids:
+                    continue
+                seen_crew.add(tid)
+                raw = str(item.get("directors") or "")
+                if raw and raw != "\\N":
+                    ids = [x for x in raw.split(",") if x and x != "\\N"][:8]
+                    if ids:
+                        director_ids_by_title[tid] = ids
+                        needed_names.update(ids)
+                if len(seen_crew) >= len(missing_director_ids):
+                    break
+                if index % 2_000_000 == 0:
+                    progress(f"title.crew scanat: {index:,} • găsite {len(seen_crew):,}/{len(missing_director_ids):,}")
+
+    names_by_id: dict[str, str] = {}
+    if needed_names:
+        progress(f"IMDb oficial: rezolv {len(needed_names):,} nume de regizori…")
+        remaining = set(needed_names)
+        with gzip.open(names, "rt", encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for index, item in enumerate(reader, 1):
+                nid = str(item.get("nconst") or "")
+                if nid not in remaining:
+                    continue
+                name = str(item.get("primaryName") or "").strip()
+                if name and name != "\\N":
+                    names_by_id[nid] = name
+                remaining.discard(nid)
+                if not remaining:
+                    break
+                if index % 2_000_000 == 0:
+                    progress(f"name.basics scanat: {index:,} • rămase {len(remaining):,}")
+
+    directors_by_title = {
+        tid: [names_by_id[nid] for nid in ids if nid in names_by_id]
+        for tid, ids in director_ids_by_title.items()
+    }
+    directors_by_title = {tid: values for tid, values in directors_by_title.items() if values}
+
+    counters = {
+        "rated": len(rows),
+        "dataset_matches": len(basics_by_id),
+        "directors_filled": 0,
+        "original_titles_corrected": 0,
+        "genres_filled": 0,
+        "runtime_filled": 0,
+        "year_filled": 0,
+        "unresolved_directors": 0,
+    }
+    now = utcnow_iso()
+
+    with db.tx() as con:
+        for row in rows:
+            movie_id = int(row["id"])
+            imdb_id = str(row["imdb_id"] or "")
+            official = basics_by_id.get(imdb_id, {})
+            current_genres = list(json_loads(row["genres_json"], []) or [])
+            current_directors = list(json_loads(row["directors_json"], []) or [])
+            current_countries = list(json_loads(row["countries_json"], []) or [])
+            current_keywords = list(json_loads(row["keywords_json"], []) or [])
+
+            original_title = str(row["original_title"] or row["title"] or "").strip()
+            year = int(row["year"]) if row["year"] is not None else None
+            title_type = str(row["title_type"] or "").strip() or "Movie"
+            runtime_min = int(row["runtime_min"]) if row["runtime_min"] is not None else None
+            genres = current_genres
+            directors = current_directors
+            changed_fields: list[str] = []
+
+            official_original = str(official.get("original_title") or "").strip()
+            if official_original and official_original != original_title:
+                original_title = official_original
+                counters["original_titles_corrected"] += 1
+                changed_fields.append("original_title")
+
+            if year is None and official.get("year") is not None:
+                year = int(official["year"])
+                counters["year_filled"] += 1
+                changed_fields.append("year")
+
+            official_type = str(official.get("title_type") or "").strip()
+            if (not str(row["title_type"] or "").strip()) and official_type:
+                title_type = official_type
+                changed_fields.append("title_type")
+
+            if runtime_min is None and official.get("runtime_min") is not None:
+                runtime_min = int(official["runtime_min"])
+                counters["runtime_filled"] += 1
+                changed_fields.append("runtime_min")
+
+            official_genres = list(official.get("genres") or [])
+            if not genres and official_genres:
+                genres = official_genres
+                counters["genres_filled"] += 1
+                changed_fields.append("genres")
+
+            official_directors = directors_by_title.get(imdb_id, [])
+            if not directors and official_directors:
+                directors = official_directors
+                counters["directors_filled"] += 1
+                changed_fields.append("directors")
+
+            if not changed_fields:
+                continue
+
+            movie = Movie(
+                id=movie_id,
+                imdb_id=imdb_id,
+                title=str(row["title"] or ""),
+                original_title=original_title,
+                year=year,
+                title_type=title_type,
+                runtime_min=runtime_min,
+                genres=genres,
+                directors=directors,
+                countries=current_countries,
+                overview=str(row["overview"] or ""),
+                keywords=current_keywords,
+                imdb_rating=float(row["imdb_rating"]) if row["imdb_rating"] is not None else None,
+                num_votes=int(row["num_votes"]) if row["num_votes"] is not None else None,
+                release_date=row["release_date"],
+                poster_url=row["poster_url"],
+                source=str(row["source"] or ""),
+            )
+            movie.semantic = extract_semantic(movie)
+            con.execute(
+                """UPDATE movies SET
+                     original_title=?,
+                     original_title_norm=?,
+                     identity_key=?,
+                     year=?,
+                     title_type=?,
+                     runtime_min=?,
+                     genres_json=?,
+                     directors_json=?,
+                     semantic_json=?,
+                     updated_at=?
+                   WHERE id=?""",
+                (
+                    original_title,
+                    normalize_text(original_title),
+                    identity_key(movie.title, original_title, year, title_type),
+                    year,
+                    title_type,
+                    runtime_min,
+                    json_dumps(genres),
+                    json_dumps(directors),
+                    json_dumps(movie.semantic),
+                    now,
+                    movie_id,
+                ),
+            )
+            record_metadata_sources(
+                con,
+                movie_id,
+                changed_fields,
+                "imdb_dataset",
+                updated_at=now,
+            )
+
+    counters["unresolved_directors"] = max(
+        0,
+        len(missing_director_ids) - counters["directors_filled"],
+    )
+    progress(
+        "IMDb oficial: "
+        f"{counters['directors_filled']} regizori completați • "
+        f"{counters['original_titles_corrected']} titluri originale corectate • "
+        f"{counters['genres_filled']} genuri completate."
+    )
+    return counters
 
 
 def bootstrap_official_imdb_catalog(db: Database, cache_dir: str|Path, min_votes: int=50,

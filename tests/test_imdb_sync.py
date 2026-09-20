@@ -570,3 +570,10 @@ def test_metadata_backfill_also_enriches_exported_ratings_missing_director(tmp_p
             "SELECT directors_json FROM movies WHERE imdb_id='tt0405094'"
         ).fetchone()
     assert row["directors_json"] == '["Florian Henckel von Donnersmarck"]'
+    with db.connect() as con:
+        source = con.execute(
+            """SELECT provider FROM metadata_provenance
+               WHERE movie_id=(SELECT id FROM movies WHERE imdb_id='tt0405094')
+                 AND field='directors'"""
+        ).fetchone()
+    assert source is not None and source["provider"] == "imdb_graphql"

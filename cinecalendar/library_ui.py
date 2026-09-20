@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .library_repair import rated_library_health
+from .metadata_provenance import metadata_sources_for_movie
 from .profile import build_profile, get_profile
 from .util import json_loads
 
@@ -604,6 +605,7 @@ def install_library_ui(window_cls) -> None:
                 return
             imdb_id = str(item.data(Qt.UserRole) or "")
             source = str(item.data(Qt.UserRole + 4) or "")
+            movie_id = int(item.data(Qt.UserRole + 5) or 0)
             menu = QMenu(self)
             if imdb_id:
                 menu.addAction(
@@ -614,8 +616,39 @@ def install_library_ui(window_cls) -> None:
                     "Copiază IMDb ID",
                     lambda iid=imdb_id: QApplication.clipboard().setText(iid),
                 )
-            source_action = menu.addAction(f"Sursă: {source or '—'}")
+            source_action = menu.addAction(f"Sursă rating: {source or '—'}")
             source_action.setEnabled(False)
+
+            if movie_id:
+                provenance = metadata_sources_for_movie(self.db, movie_id)
+                if provenance:
+                    providers = {
+                        "imdb_graphql": "IMDb GraphQL",
+                        "imdb_dataset": "IMDb dataset oficial",
+                        "tmdb": "TMDb",
+                        "wikimedia": "Wikidata/Wikipedia",
+                    }
+                    fields = {
+                        "original_title": "Titlu original",
+                        "runtime_min": "Durată",
+                        "genres": "Genuri",
+                        "directors": "Regizor",
+                        "countries": "Țară",
+                        "overview": "Sinopsis",
+                        "poster_url": "Poster",
+                        "imdb_rating": "Rating IMDb",
+                        "num_votes": "Voturi IMDb",
+                        "keywords": "Cuvinte-cheie",
+                        "tmdb_id": "TMDb ID",
+                        "year": "An",
+                        "title_type": "Tip",
+                    }
+                    sources_menu = menu.addMenu("Surse metadate")
+                    for field, provider in sorted(provenance.items()):
+                        action = sources_menu.addAction(
+                            f"{fields.get(field, field)}: {providers.get(provider, provider)}"
+                        )
+                        action.setEnabled(False)
             menu.exec(QCursor.pos())
 
         def render():
@@ -634,6 +667,7 @@ def install_library_ui(window_cls) -> None:
                 title_item.setData(Qt.UserRole + 1, original)
                 title_item.setData(Qt.UserRole + 2, localized)
                 title_item.setData(Qt.UserRole + 4, row["source"])
+                title_item.setData(Qt.UserRole + 5, int(row["movie_id"]))
                 title_item.setToolTip(
                     f"{original}"
                     + (f"\nTitlu localizat: {localized}" if localized else "")

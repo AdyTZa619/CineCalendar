@@ -164,7 +164,7 @@ def test_feedback_never_mutates_exposure(tmp_path):
     assert after == before
 
 
-def test_partial_v5_migration_is_resumed_idempotently(tmp_path):
+def test_partial_v5_migration_is_resumed_and_upgraded_to_v6(tmp_path):
     path = tmp_path / "partial.db"
     con = sqlite3.connect(path)
     try:
@@ -185,9 +185,12 @@ def test_partial_v5_migration_is_resumed_idempotently(tmp_path):
 
     db = Database(path)
     with db.connect() as con:
-        assert con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
+        assert con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 6
         assert con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_trust_audit'"
+        ).fetchone() is not None
+        assert con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_provenance'"
         ).fetchone() is not None
         assert con.execute("PRAGMA quick_check").fetchone()[0] == "ok"
     assert path.with_name(path.stem + ".pre_migration.bak").is_file()

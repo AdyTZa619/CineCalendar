@@ -14,6 +14,7 @@ from urllib.parse import quote, unquote, urlparse
 import requests
 
 from .db import Database
+from .metadata_provenance import record_metadata_sources
 from .models import Movie
 from .semantic import extract_semantic
 from .util import json_dumps, json_loads, utcnow_iso
@@ -92,6 +93,7 @@ class OpenMovieMetadataProvider:
           OPTIONAL {{ ?item wdt:P2047 ?duration . }}
           OPTIONAL {{ ?item wdt:P57 ?director . }}
           OPTIONAL {{ ?item wdt:P495 ?country . }}
+          OPTIONAL {{ ?item wdt:P136 ?genre . }}
           OPTIONAL {{ ?roArticle schema:about ?item ; schema:isPartOf <https://ro.wikipedia.org/> . }}
           OPTIONAL {{ ?enArticle schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }}
           SERVICE wikibase:label {{ bd:serviceParam wikibase:language "ro,en". }}
@@ -150,7 +152,7 @@ class OpenMovieMetadataProvider:
     def enrich_by_imdb(self, movie: Movie) -> Movie:
         if not movie.imdb_id:
             return movie
-        key = f"movie:{movie.imdb_id}"
+        key = f"movie:v2:{movie.imdb_id}"
         payload = self._cached(key)
         if payload is None:
             try:
@@ -161,18 +163,25 @@ class OpenMovieMetadataProvider:
         if not payload:
             return movie
 
-        if not movie.overview:
+        changed_fields: list[str] = []
+        if not movie.overview and payload.get("overview"):
             movie.overview = payload.get("overview") or ""
-        if not movie.poster_url:
+            changed_fields.append("overview")
+        if not movie.poster_url and payload.get("poster_url"):
             movie.poster_url = payload.get("poster_url") or None
+            changed_fields.append("poster_url")
         if not movie.runtime_min and payload.get("runtime_min"):
             movie.runtime_min = int(payload["runtime_min"])
+            changed_fields.append("runtime_min")
         if not movie.directors and payload.get("directors"):
             movie.directors = list(payload["directors"])
+            changed_fields.append("directors")
         if not movie.countries and payload.get("countries"):
             movie.countries = list(payload["countries"])
+            changed_fields.append("countries")
         if not movie.genres and payload.get("genres"):
             movie.genres = list(payload["genres"])
+            changed_fields.append("genres")
         movie.semantic = extract_semantic(movie)
 
         if movie.id is not None:
@@ -192,4 +201,11 @@ class OpenMovieMetadataProvider:
                         movie.id,
                     ),
                 )
+                if changed_fields:
+                    record_metadata_sources(
+                        con,
+                        int(movie.id),
+                        changed_fields,
+                        "wikimedia",
+                    )
         return movie
