@@ -36,8 +36,7 @@ class CineCalendarService:
         self.quality_manager.start_background()
 
     def _defaults(self):
-        # Genre choice is contextual/day-specific; no hidden global Romance veto.
-        self.db.set_setting("exclude_romance", False)
+        # No global genre vetoes. Taste is learned from ratings instead of hard exclusions.
         if self.db.get_setting("auto_watch_enabled", None) is None:
             self.db.set_setting("auto_watch_enabled", True)
         if self.db.get_setting("imdb_public_sync_enabled", None) is None:
