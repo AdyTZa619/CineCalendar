@@ -1,9 +1,9 @@
 {
-  "version": "3.9.9",
-  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.9/CineCalendar-3.9.9-Premium-Windows-x64.zip",
-  "sha256": "80575c0f667b6526037c3f92a1d66deb1d527a06d47fa5cca5de5bcb9823a8c7",
-  "notes": "CineCalendar 3.9.9 repară reconcilierea completă dintre exporturile IMDb vechi și profilul public IMDb curent.\r\n\r\nRatinguri IMDb:\r\n- profilul public complet este acum sursa de adevăr pentru ratingurile provenite din IMDb;\r\n- după o sincronizare completă, ratingurile vechi din CSV care nu mai există pe profilul public sunt eliminate automat din istoricul local;\r\n- ratingurile manuale nu sunt șterse de această reconciliere;\r\n- o scădere suspect de mare sau un răspuns gol de la IMDb nu poate provoca ștergeri masive: sincronizarea se oprește fără modificări;\r\n- ratingurile confirmate live primesc sursa imdb_public_sync chiar dacă nota și data nu s-au schimbat;\r\n- după orice import CSV manual sau automat, profilul public este reverificat pentru ca un export vechi să nu reintroducă intrări stale.\r\n\r\nIdentitate filme:\r\n- două filme IMDb diferite cu același titlu și același an nu mai sunt combinate după nume/an;\r\n- regula este aplicată la importul CSV de ratinguri, importul de catalog și adăugarea manuală cu IMDb ID;\r\n- o asociere după titlu/an este permisă pentru un IMDb ID nou doar dacă înregistrarea locală nu are încă IMDb ID.\r\n\r\nMetadate:\r\n- filmele descoperite numai prin sincronizarea profilului IMDb primesc automat, best-effort, rating IMDb, număr de voturi, durată, genuri, poster și credite de regie atunci când endpointul public le oferă;\r\n- schema live pentru metadate IMDb este verificată în gate-ul de release.\r\n\r\nCazul care a expus problema:\r\n- în profilul public curent există Jana (2004) cu IMDb ID tt4568192;\r\n- vechiul tt1861356 provenea din istoricul CSV local și nu mai există în ratingurile profilului public curent;\r\n- 3.9.9 îl elimină automat din lista Ratinguri la prima sincronizare completă, păstrând filmul ca titlu de catalog fără rating.\r\n\r\nBuild:\r\n- testele includ reconciliere stale, protecția ratingurilor manuale, două filme cu același titlu/an și completarea metadatelor publice;\r\n- gate-ul live IMDb, benchmark-ul, build-ul Windows și smoke launch-ul trebuie să treacă înainte de Stable.",
-  "publishedAt": "2026-09-20T12:42:39.7231610Z",
+  "version": "3.9.8",
+  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.8/CineCalendar-3.9.8-Premium-Windows-x64.zip",
+  "sha256": "325bf9e08a23eb9fcd569d6047a45439aaac2fec7fbba53fa3c916edfaaf7d5c",
+  "notes": "Rollback temporar: 3.9.9 a introdus o regresie în reconcilierea ratingurilor IMDb. Stable revine la 3.9.8 până la publicarea corecției 3.9.10.",
+  "publishedAt": "2026-09-20T12:55:00Z",
   "channel": "stable",
   "package": "onedir-zip"
 }
