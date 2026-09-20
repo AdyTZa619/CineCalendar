@@ -603,7 +603,7 @@ def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> N
             ),
         )
 
-    old = con.execute("SELECT rating,date_rated FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
+    old = con.execute("SELECT rating,date_rated,source FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
     if old is None:
         con.execute(
             "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
@@ -618,9 +618,14 @@ def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> N
         )
         result.changed_ratings.append((item.title, previous, item.rating))
     else:
-        if item.date_rated and str(old["date_rated"] or "") != item.date_rated:
+        if (
+            (item.date_rated and str(old["date_rated"] or "") != item.date_rated)
+            or str(old["source"] or "") != "imdb_public_sync"
+        ):
             con.execute(
-                "UPDATE ratings SET date_rated=?,source=?,imported_at=?,updated_at=? WHERE movie_id=?",
+                """UPDATE ratings
+                   SET date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=?
+                   WHERE movie_id=?""",
                 (item.date_rated, "imdb_public_sync", now, now, movie_id),
             )
         result.unchanged += 1
