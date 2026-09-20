@@ -24,6 +24,7 @@ from .catalog import bootstrap_official_imdb_catalog, import_imdb_datasets
 from .feedback import apply_feedback
 from .imdb_import import import_imdb_csv, add_manual_rating
 from .imdb_sync import backfill_public_rating_metadata, sync_public_ratings
+from .library_repair import repair_rated_library
 from .profile import build_profile, get_profile, top_profile_features
 from .recommendation import Recommendation
 from .romanian_films import romanian_chapters, romanian_films
@@ -485,6 +486,59 @@ class CineCalendarWindow(QMainWindow):
             if self.db.get_setting("imdb_public_sync_enabled", True) and self.db.get_setting("imdb_public_ratings_url", ""):
                 QTimer.singleShot(1200, lambda: self.sync_imdb_public(silent=True))
         except Exception as exc: QMessageBox.critical(self,"Import IMDb",str(exc))
+
+    def repair_library(self):
+        if self.worker and self.worker.isRunning():
+            self.set_status("Există deja o operație în curs.", True)
+            return
+        url = str(self.db.get_setting("imdb_public_ratings_url", "") or "").strip()
+        baseline = str(self.db.get_setting("imdb_public_sync_baseline", "2026-09-05") or "2026-09-05")
+        self.set_status("Repar biblioteca: sincronizare, duplicate, metadate și statistici…", True)
+
+        def fn(progress):
+            return repair_rated_library(
+                self.db,
+                profile_url=url,
+                baseline_date=baseline,
+                limit=5000,
+                progress=progress,
+            )
+
+        self.worker = WorkerThread(fn, self)
+        self.worker.message.connect(lambda m: self.set_status(m, True))
+
+        def done(result):
+            self.worker = None
+            self._romanian_prepare_signature = None
+            self.set_status(
+                f"Bibliotecă reparată: {result.after.complete:,}/{result.after.total:,} titluri complete.",
+                False,
+            )
+            QMessageBox.information(
+                self,
+                "Repară biblioteca",
+                "Reparare finalizată.\n\n"
+                f"Ratinguri noi: {result.new_ratings}\n"
+                f"Ratinguri modificate: {result.changed_ratings}\n"
+                f"Duplicate reparate: {result.duplicates_repaired}\n"
+                f"IMDb completate: {result.imdb_enriched}\n"
+                f"TMDb completate: {result.tmdb_enriched}\n"
+                f"Wikidata/Wikipedia completate: {result.wikimedia_enriched}\n\n"
+                f"Complete: {result.after.complete:,}/{result.after.total:,} "
+                f"({result.after.completion_percent:.1f}%)\n"
+                f"Încă incomplete: {result.after.incomplete:,}.",
+            )
+            if self.current_page in {"ratings", "profile", "romanian_list"}:
+                self.show_page(self.current_page)
+
+        def fail(error):
+            self.worker = None
+            self.set_status("Repararea bibliotecii a eșuat; datele existente au rămas intacte.", False)
+            QMessageBox.warning(self, "Repară biblioteca", str(error))
+
+        self.worker.success.connect(done)
+        self.worker.failure.connect(fail)
+        self.worker.start()
 
     def sync_imdb_public(self, silent: bool = True):
         # The checkbox controls background syncing only. A manual click must
