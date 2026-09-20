@@ -6,7 +6,7 @@ Bibliotecă / Ratinguri:
 - afișează sănătatea bibliotecii: câte titluri sunt complete și câte mai au lipsuri;
 - arată separat lipsurile de gen, regizor, durată, rating IMDb și poster;
 - filtre noi pentru ratinguri: Azi, ultimele 7 zile, ultimele 30 zile și anul curent;
-- titlul original rămâne titlul principal;
+- titlul original rămâne titlul principal, iar titlul localizat este vizibil separat când diferă;
 - ultimul rating acordat rămâne implicit primul.
 
 Metadate:
@@ -14,11 +14,14 @@ Metadate:
 - TMDb verifică acum și gen, regizor, țară și durată, nu doar poster/overview;
 - TMDb nu mai șterge metadate bune dacă răspunsul lui are un câmp gol;
 - fallback-ul Wikidata poate completa acum și genurile, pe lângă regizor, țară, durată și poster;
-- fallback-urile sunt aplicate numai titlurilor evaluate care chiar au câmpuri lipsă.
+- fallback-urile sunt aplicate numai titlurilor evaluate care chiar au câmpuri lipsă;
+- dacă o sursă online este temporar indisponibilă, repararea continuă cu celelalte surse și raportează etapa care a eșuat.
 
 Statistici:
 - Taste Hub recalculează profilul la deschidere, astfel încât valorile să nu rămână stale după sincronizare;
 - afișează procentul de metadate esențiale complete și numărul real de titluri fără gen/regizor;
+- adaugă activitatea ratingurilor pe ani și pe ultimele luni;
+- adaugă rezumat stabil pentru genurile și regizorii cel mai bine/slab evaluați, cu minimum 3 exemple;
 - statisticile existente pentru genuri, regizori, țări, decenii și afinități rămân disponibile.
 
 Smart Watchlist:
