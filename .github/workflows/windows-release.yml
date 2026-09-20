@@ -68,13 +68,19 @@ jobs:
           PYTHONPATH: .
         run: python -m pytest -q
 
-      - name: Diagnostic live IMDb public profile sync
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
+      - name: Gate live IMDb public profile sync
         env:
           PYTHONPATH: .
+        shell: pwsh
         run: |
-          python -c "from cinecalendar.imdb_sync import fetch_public_ratings,DEFAULT_PROFILE_URL; rows=fetch_public_ratings(DEFAULT_PROFILE_URL,timeout=20); print('LIVE_IMDB_RATINGS',len(rows)); assert len(rows) >= 2000, len(rows)"
+          $ok = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            python -c "from cinecalendar.imdb_sync import fetch_public_ratings,DEFAULT_PROFILE_URL; rows=fetch_public_ratings(DEFAULT_PROFILE_URL,timeout=20); print('LIVE_IMDB_RATINGS',len(rows)); assert len(rows) >= 2000, len(rows)"
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Warning "IMDb live gate attempt $attempt failed."
+            Start-Sleep -Seconds (5 * $attempt)
+          }
+          if (-not $ok) { throw "IMDb public-profile live gate failed after 3 attempts." }
 
       - name: Benchmark 260k catalog engine
         env:
@@ -137,7 +143,7 @@ jobs:
           "zip_name=$zipName" >> $env:GITHUB_OUTPUT
           "zip_sha=$sha" >> $env:GITHUB_OUTPUT
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: CineCalendar-${{ steps.package.outputs.version }}-Premium-Windows-x64
           path: |
