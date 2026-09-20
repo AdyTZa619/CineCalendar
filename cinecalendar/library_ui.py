@@ -32,6 +32,7 @@ from .library_repair import rated_library_health
 from .metadata_provenance import metadata_sources_for_movie
 from .profile import build_profile, get_profile
 from .recommendation_outcomes_v42 import recommendation_performance
+from .recommendation_history_v43 import history_engine_versions
 from .util import json_loads
 
 
@@ -830,8 +831,58 @@ def install_library_ui(window_cls) -> None:
             metrics.addWidget(card, i // 4, i % 4)
         metric_wrap = QFrame(); metric_wrap.setLayout(metrics); content.addWidget(metric_wrap)
 
+        perf_filters = QFrame(); perf_filters.setObjectName("PremiumCard")
+        pfl = QHBoxLayout(perf_filters); pfl.setContentsMargins(14,10,14,10); pfl.setSpacing(8)
+        pfl.addWidget(QLabel("Performanță"))
+        perf_period = QComboBox()
+        for label, key in (
+            ("Toată perioada", "all"),
+            ("30 zile", "30"),
+            ("90 zile", "90"),
+            ("Anul curent", "year"),
+        ):
+            perf_period.addItem(label, key)
+        saved_period = str(self.db.get_setting("performance_period_v43", "all") or "all")
+        idx = perf_period.findData(saved_period)
+        perf_period.setCurrentIndex(idx if idx >= 0 else 0)
+        pfl.addWidget(perf_period)
+
+        perf_engine = QComboBox()
+        perf_engine.addItem("Toate motoarele", "")
+        for version_name in history_engine_versions(self.db):
+            perf_engine.addItem(version_name, version_name)
+        saved_engine = str(self.db.get_setting("performance_engine_v43", "") or "")
+        idx = perf_engine.findData(saved_engine)
+        perf_engine.setCurrentIndex(idx if idx >= 0 else 0)
+        pfl.addWidget(perf_engine)
+        pfl.addStretch(1)
+        content.addWidget(perf_filters)
+
+        period_key = str(perf_period.currentData() or "all")
+        if period_key == "30":
+            perf_since = (date.today() - timedelta(days=30)).isoformat()
+        elif period_key == "90":
+            perf_since = (date.today() - timedelta(days=90)).isoformat()
+        elif period_key == "year":
+            perf_since = date(date.today().year, 1, 1).isoformat()
+        else:
+            perf_since = None
+        selected_engine = str(perf_engine.currentData() or "")
+
+        def performance_filter_changed():
+            self.db.set_setting("performance_period_v43", str(perf_period.currentData() or "all"))
+            self.db.set_setting("performance_engine_v43", str(perf_engine.currentData() or ""))
+            self.show_page("profile")
+
+        perf_period.currentIndexChanged.connect(lambda _i: performance_filter_changed())
+        perf_engine.currentIndexChanged.connect(lambda _i: performance_filter_changed())
+
         try:
-            perf = recommendation_performance(self.db)
+            perf = recommendation_performance(
+                self.db,
+                since_date=perf_since,
+                engine_version=selected_engine,
+            )
         except Exception:
             perf = None
         if perf is not None:
@@ -852,6 +903,13 @@ def install_library_ui(window_cls) -> None:
                   "nu sunt amestecate în aceste statistici."
             )
             desc.setObjectName("Muted"); desc.setWordWrap(True); pl.addWidget(desc)
+            active_filter = QLabel(
+                "Filtru activ: "
+                + (perf_period.currentText() or "Toată perioada")
+                + " • "
+                + (perf_engine.currentText() or "Toate motoarele")
+            )
+            active_filter.setObjectName("Muted"); pl.addWidget(active_filter)
 
             pg = QGridLayout(); pg.setHorizontalSpacing(12); pg.setVerticalSpacing(8)
             perf_values = [
@@ -901,6 +959,43 @@ def install_library_ui(window_cls) -> None:
                     recent_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
                 recent_table.setMaximumHeight(300)
                 pl.addWidget(recent_table)
+
+            versions = history_engine_versions(self.db)
+            version_rows = []
+            for version_name in versions[:8]:
+                try:
+                    version_perf = recommendation_performance(
+                        self.db,
+                        recent_limit=1,
+                        since_date=perf_since,
+                        engine_version=version_name,
+                    )
+                except Exception:
+                    continue
+                if version_perf.decision_exposures or version_perf.rated_outcomes:
+                    version_rows.append((version_name, version_perf))
+            if len(version_rows) > 1:
+                vh = QLabel("Comparație pe versiuni de motor")
+                vh.setObjectName("BodyStrong"); pl.addWidget(vh)
+                vt = QTableWidget(len(version_rows), 5)
+                vt.setHorizontalHeaderLabels(["Motor","Expuneri","Cu rating","MAE","≥8/10"])
+                vt.setEditTriggers(QTableWidget.NoEditTriggers)
+                vt.verticalHeader().setVisible(False)
+                for ri, (version_name, vp) in enumerate(version_rows):
+                    values = [
+                        version_name,
+                        f"{vp.decision_exposures:,}",
+                        f"{vp.rated_outcomes:,}",
+                        f"{vp.mae:.2f}" if vp.mae is not None else "—",
+                        f"{vp.liked_rate*100:.0f}%" if vp.rated_outcomes else "—",
+                    ]
+                    for ci, value in enumerate(values):
+                        vt.setItem(ri, ci, QTableWidgetItem(str(value)))
+                vt.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+                for col in range(1,5):
+                    vt.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+                vt.setMaximumHeight(250)
+                pl.addWidget(vt)
             content.addWidget(box)
 
         brain = getattr(self.s.recommender, "personalization_v41", None)
@@ -953,6 +1048,56 @@ def install_library_ui(window_cls) -> None:
                     )
                     line.setObjectName("Muted"); line.setWordWrap(True); pl.addWidget(line)
             content.addWidget(card)
+
+        insight = getattr(self.s.recommender, "learning_insight_v43", None)
+        if insight is not None:
+            try:
+                insight_status = insight.status()
+            except Exception:
+                insight_status = {}
+            calibration = dict(insight_status.get("calibration") or {})
+            semantic43 = dict(insight_status.get("semantic") or {})
+            card43 = QFrame(); card43.setObjectName("PremiumCard")
+            l43 = QVBoxLayout(card43); l43.setContentsMargins(18,16,18,16); l43.setSpacing(7)
+            h43 = QLabel("Learning Insight 4.3")
+            h43.setObjectName("SectionTitle"); l43.addWidget(h43)
+
+            cal_text = (
+                "Calibrare ACTIVĂ"
+                if calibration.get("approved")
+                else "Calibrare PROTEJATĂ"
+            )
+            cal_detail = QLabel(
+                f"{cal_text} • rezultate reale: {int(calibration.get('count',0) or 0)}"
+                + (
+                    f" • MAE brut {float(calibration.get('raw_mae')):.2f} → "
+                    f"{float(calibration.get('calibrated_mae')):.2f}"
+                    if calibration.get("raw_mae") is not None and calibration.get("calibrated_mae") is not None
+                    else " • se activează numai după suficiente outcome-uri și câștig măsurat"
+                )
+            )
+            cal_detail.setObjectName("BodyStrong" if calibration.get("approved") else "Muted")
+            cal_detail.setWordWrap(True); l43.addWidget(cal_detail)
+
+            sem_text = "Semantică text ACTIVĂ" if semantic43.get("approved") else "Semantică text PROTEJATĂ"
+            sem_detail = QLabel(
+                f"{sem_text} • ratinguri cu text: {int(semantic43.get('count',0) or 0)}"
+                + (
+                    f" • MAE bază {float(semantic43.get('baseline_mae')):.2f} → "
+                    f"{float(semantic43.get('semantic_mae')):.2f}"
+                    if semantic43.get("baseline_mae") is not None and semantic43.get("semantic_mae") is not None
+                    else " • nu modifică ordinea până nu trece validarea cronologică"
+                )
+            )
+            sem_detail.setObjectName("BodyStrong" if semantic43.get("approved") else "Muted")
+            sem_detail.setWordWrap(True); l43.addWidget(sem_detail)
+
+            safety = QLabel(
+                "Ambele semnale sunt plafonate și lucrează numai peste shortlist-ul deja acceptat. "
+                "Nu pot introduce un film nou în Top 3."
+            )
+            safety.setObjectName("Muted"); safety.setWordWrap(True); l43.addWidget(safety)
+            content.addWidget(card43)
 
         explain = QFrame(); explain.setObjectName("PremiumCard")
         el = QVBoxLayout(explain); el.setContentsMargins(18, 16, 18, 16); el.setSpacing(6)
