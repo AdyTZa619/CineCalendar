@@ -144,7 +144,7 @@ def _outcome(
         )
 
 
-def test_schema_v8_adds_recommendation_explanations(tmp_path):
+def test_schema_v9_keeps_recommendation_explanations(tmp_path):
     db = Database(tmp_path / "schema-v9.db")
     assert SCHEMA_VERSION == 9
     with db.connect() as con:
@@ -152,7 +152,7 @@ def test_schema_v8_adds_recommendation_explanations(tmp_path):
         table = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_explanations'"
         ).fetchone()
-    assert current == 8
+    assert current == 9
     assert table is not None
 
 
