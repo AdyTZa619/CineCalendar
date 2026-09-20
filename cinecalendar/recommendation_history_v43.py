@@ -59,7 +59,7 @@ def recommendation_history_rows(
         where.append("h.context_date>=?")
         params.append(cutoff)
     if engine_version:
-        where.append("COALESCE(a.engine_version,'')=?")
+        where.append("a.engine_version=?")
         params.append(str(engine_version))
 
     status_filter = "WHERE row_status=?" if status else ""
