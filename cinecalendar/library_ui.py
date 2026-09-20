@@ -839,9 +839,17 @@ def install_library_ui(window_cls) -> None:
             pl = QVBoxLayout(box); pl.setContentsMargins(18,16,18,16); pl.setSpacing(8)
             ph = QLabel("Performanța reală a recomandărilor")
             ph.setObjectName("SectionTitle"); pl.addWidget(ph)
+            measurement_label = (
+                f"Date măsurabile din {perf.measurement_start} încolo."
+                if perf.measurement_start
+                else "Măsurarea începe după prima recomandare salvată cu snapshot de predicție (CineCalendar 4.2+)."
+            )
             desc = QLabel(
                 "Măsoară traseul recomandat → ales → pornit → văzut → nota ta reală. "
-                "Predicția este comparată cu ratingul IMDb pe care îl dai ulterior."
+                "Predicția este comparată cu ratingul IMDb pe care îl dai ulterior. "
+                + measurement_label
+                + " Recomandările vechi, fără predicted_rating/confidence salvat la momentul afișării, "
+                  "nu sunt amestecate în aceste statistici."
             )
             desc.setObjectName("Muted"); desc.setWordWrap(True); pl.addWidget(desc)
 
