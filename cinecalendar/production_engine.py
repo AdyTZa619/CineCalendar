@@ -7,9 +7,10 @@ from .context_recommender_v35 import CONTEXT_RECOMMENDER_VERSION, contextual_eng
 from .recommender_v16 import FastRecommendationEngineV16
 from .watch_success_v33 import WatchSuccessIntentLearnerV33
 from .personalization_v41 import PERSONALIZATION_V41_VERSION, personalization_engine_class
+from .learning_insight_v43 import LEARNING_INSIGHT_VERSION, learning_insight_engine_class
 
 
-PRODUCTION_STACK_VERSION = "production-stack-v4.1.0"
+PRODUCTION_STACK_VERSION = "production-stack-v4.3.0"
 
 
 def production_engine_class(base_cls: type) -> type:
@@ -31,7 +32,8 @@ def production_engine_class(base_cls: type) -> type:
         context_cls = available_cls
     else:
         context_cls = contextual_engine_class(available_cls)
-    return personalization_engine_class(context_cls)
+    personalized_cls = personalization_engine_class(context_cls)
+    return learning_insight_engine_class(personalized_cls)
 
 
 def build_production_recommender(db, base_cls: type, calendar=None):
@@ -63,5 +65,11 @@ def production_stack_status(engine) -> dict:
             engine.personalization_status()
             if callable(getattr(engine, "personalization_status", None))
             else {"version": PERSONALIZATION_V41_VERSION, "quality_gate": {"approved": False, "reason": "unavailable"}}
+        ),
+        "learning_insight_version": str(getattr(engine, "LEARNING_INSIGHT_VERSION", "")),
+        "learning_insight_status": (
+            engine.learning_insight_status()
+            if callable(getattr(engine, "learning_insight_status", None))
+            else {"version": LEARNING_INSIGHT_VERSION}
         ),
     }
