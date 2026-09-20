@@ -210,23 +210,50 @@ def reconcile_recommendation_outcomes(db) -> int:
     return changed
 
 
-def recommendation_performance(db, *, recent_limit: int = 12) -> RecommendationPerformance:
+def recommendation_performance(
+    db,
+    *,
+    recent_limit: int = 12,
+    since_date: str | None = None,
+    engine_version: str = "",
+) -> RecommendationPerformance:
     reconcile_recommendation_outcomes(db)
+
+    exposure_where = [
+        "h.action IS NULL",
+        "h.predicted_rating IS NOT NULL",
+        "h.slot IN ('decision','decision-refill','watchlist_next','decision-v41')",
+    ]
+    exposure_params: list[object] = []
+    outcome_where = ["o.predicted_rating IS NOT NULL"]
+    outcome_params: list[object] = []
+    if since_date:
+        exposure_where.append("h.context_date>=?")
+        exposure_params.append(str(since_date)[:10])
+        outcome_where.append("o.context_date>=?")
+        outcome_params.append(str(since_date)[:10])
+    if engine_version:
+        exposure_where.append("COALESCE(a.engine_version,'')=?")
+        exposure_params.append(str(engine_version))
+        outcome_where.append("COALESCE(o.engine_version,'')=?")
+        outcome_params.append(str(engine_version))
+
     with db.connect() as con:
         exposure_row = con.execute(
-            """SELECT COUNT(*),MIN(context_date)
-               FROM recommendation_history
-               WHERE action IS NULL
-                 AND predicted_rating IS NOT NULL
-                 AND slot IN ('decision','decision-refill','watchlist_next','decision-v41')"""
+            f"""SELECT COUNT(*),MIN(h.context_date)
+                FROM recommendation_history h
+                LEFT JOIN recommendation_trust_audit a ON a.history_id=h.id
+                WHERE {' AND '.join(exposure_where)}""",
+            tuple(exposure_params),
         ).fetchone()
         rows = con.execute(
-            """SELECT o.*,COALESCE(NULLIF(m.original_title,''),m.title) AS display_title
-               FROM recommendation_outcomes o
-               JOIN movies m ON m.id=o.movie_id
-               WHERE o.predicted_rating IS NOT NULL
-               ORDER BY COALESCE(o.rating_date,o.watched_at,o.playback_at,o.chosen_at,o.context_date) DESC,
-                        o.exposure_history_id DESC"""
+            f"""SELECT o.*,COALESCE(NULLIF(m.original_title,''),m.title) AS display_title
+                FROM recommendation_outcomes o
+                JOIN movies m ON m.id=o.movie_id
+                WHERE {' AND '.join(outcome_where)}
+                ORDER BY COALESCE(o.rating_date,o.watched_at,o.playback_at,o.chosen_at,o.context_date) DESC,
+                         o.exposure_history_id DESC""",
+            tuple(outcome_params),
         ).fetchall()
 
     decision_exposures = int(exposure_row[0] or 0)
@@ -266,6 +293,7 @@ def recommendation_performance(db, *, recent_limit: int = 12) -> RecommendationP
                 "predicted": predicted,
                 "actual": actual,
                 "error": (abs(predicted - actual) if predicted is not None and actual is not None else None),
+                "engine_version": str(row["engine_version"] or ""),
             }
         )
 
