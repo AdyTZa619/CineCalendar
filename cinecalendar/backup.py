@@ -10,7 +10,7 @@ from .db import Database
 from .util import utcnow_iso
 
 
-PROFILE_VERSION = 3
+PROFILE_VERSION = 4
 MAX_PROFILE_JSON_BYTES = 250 * 1024 * 1024
 _TRANSIENT_OR_SECRET_SETTINGS = {
     "tmdb_token",
@@ -90,6 +90,9 @@ def export_profile(db: Database, path: str | Path) -> Path:
             )
             payload["tables"]["recommendation_outcomes"] = _rows(
                 con, "SELECT * FROM recommendation_outcomes ORDER BY exposure_history_id"
+            )
+            payload["tables"]["recommendation_explanations"] = _rows(
+                con, "SELECT * FROM recommendation_explanations ORDER BY history_id"
             )
             payload["tables"]["watchlist"] = _rows(con, "SELECT * FROM watchlist ORDER BY movie_id")
         finally:
@@ -384,6 +387,53 @@ def _restore_outcomes(
     return restored
 
 
+def _restore_explanations(
+    con,
+    rows: list[dict],
+    history_map: dict[int, int],
+    mode: str,
+) -> int:
+    restored = 0
+    for row in rows:
+        old_history = row.get("history_id")
+        if old_history is None:
+            continue
+        history_id = history_map.get(int(old_history))
+        if history_id is None:
+            continue
+        existing = con.execute(
+            "SELECT * FROM recommendation_explanations WHERE history_id=?",
+            (history_id,),
+        ).fetchone()
+        if (
+            mode == "merge"
+            and existing is not None
+            and not _backup_row_is_newer(existing, row, "created_at")
+        ):
+            continue
+        con.execute(
+            """INSERT INTO recommendation_explanations(
+                   history_id,personal_reason,why_not,score_factors_json,contributions_json,created_at
+               ) VALUES(?,?,?,?,?,?)
+               ON CONFLICT(history_id) DO UPDATE SET
+                   personal_reason=excluded.personal_reason,
+                   why_not=excluded.why_not,
+                   score_factors_json=excluded.score_factors_json,
+                   contributions_json=excluded.contributions_json,
+                   created_at=excluded.created_at""",
+            (
+                history_id,
+                row.get("personal_reason") or "",
+                row.get("why_not") or "",
+                row.get("score_factors_json") or "{}",
+                row.get("contributions_json") or "[]",
+                row.get("created_at") or utcnow_iso(),
+            ),
+        )
+        restored += 1
+    return restored
+
+
 def _load_payload(path: Path) -> dict:
     with zipfile.ZipFile(path, "r") as archive:
         try:
@@ -411,7 +461,7 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
     path = Path(path)
     payload = _load_payload(path)
     version = int(payload.get("version") or 0)
-    if payload.get("format") != "CineCalendarProfile" or version not in {1, 2, PROFILE_VERSION}:
+    if payload.get("format") != "CineCalendarProfile" or version not in {1, 2, 3, PROFILE_VERSION}:
         raise ValueError("Backup incompatibil.")
     tables = payload.get("tables", {}) or {}
     if not isinstance(tables, dict):
@@ -425,11 +475,13 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
         "history": 0,
         "trust": 0,
         "outcomes": 0,
+        "explanations": 0,
         "conflicts_skipped": 0,
     }
     with db.tx() as con:
         if mode == "restore":
             con.execute("DELETE FROM recommendation_outcomes")
+            con.execute("DELETE FROM recommendation_explanations")
             con.execute("DELETE FROM recommendation_trust_audit")
             con.execute("DELETE FROM recommendation_history")
             con.execute("DELETE FROM recommendation_runs")
@@ -564,6 +616,12 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
             movie_map,
             history_map,
             rating_map,
+            mode,
+        )
+        stats["explanations"] = _restore_explanations(
+            con,
+            list(tables.get("recommendation_explanations", [])),
+            history_map,
             mode,
         )
 
