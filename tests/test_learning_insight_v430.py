@@ -145,8 +145,8 @@ def _outcome(
 
 
 def test_schema_v8_adds_recommendation_explanations(tmp_path):
-    db = Database(tmp_path / "schema-v8.db")
-    assert SCHEMA_VERSION == 8
+    db = Database(tmp_path / "schema-v9.db")
+    assert SCHEMA_VERSION == 9
     with db.connect() as con:
         current = con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
         table = con.execute(
@@ -243,7 +243,7 @@ def test_exact_explanation_snapshot_is_queryable_and_backed_up(tmp_path):
         day="2026-09-20",
         predicted=8.4,
         confidence=.81,
-        engine="learning-insight-v4.3.0",
+        engine="learning-insight-v4.3.1",
     )
     score = ScoreBreakdown(
         final=.87,
@@ -263,7 +263,7 @@ def test_exact_explanation_snapshot_is_queryable_and_backed_up(tmp_path):
     assert rows[0]["personal_reason"] == "Motiv exact salvat."
     assert rows[0]["why_not"] == "Este puțin mai lung."
     assert rows[0]["score_factors"]["gust"] == .8
-    assert history_engine_versions(source) == ["learning-insight-v4.3.0"]
+    assert history_engine_versions(source) == ["learning-insight-v4.3.1"]
 
     archive = export_profile(source, tmp_path / "profile-v4.zip")
     assert PROFILE_VERSION == 4
@@ -340,7 +340,7 @@ def test_production_stack_and_ui_include_v43_layers():
     library = (root / "cinecalendar" / "library_ui.py").read_text(encoding="utf-8")
 
     assert "learning_insight_engine_class(personalized_cls)" in production
-    assert "production-stack-v4.3.0" in production
+    assert "production-stack-v4.3.1" in production
     assert "install_learning_insight_ui_v43(window_cls)" in composition
     assert "Față de alegerea #1:" in premium
     assert "Comparație pe versiuni de motor" in library
