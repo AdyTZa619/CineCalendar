@@ -46,25 +46,9 @@ def row_to_movie(row) -> Movie:
     )
 
 
-def romance_policy(movie: Movie, exclude_romance: bool = True) -> tuple[bool, float, str]:
-    if not exclude_romance:
-        return True, 0.0, ""
-    genres = {g.lower() for g in movie.genres}
-    sem = movie.semantic or extract_semantic(movie)
-    has_romance = "romance" in genres or sem.get("romance", 0) >= .45
-    if not has_romance:
-        return True, 0.0, ""
-    strong_non_romance = max([
-        sem.get(x, 0) for x in (
-            "history", "war", "christianity", "holocaust", "crime", "horror", "scifi",
-            "documentary", "biography", "nature", "survival", "politics", "antiquity", "medieval"
-        )
-    ] + [0])
-    hard = "romance" in genres and strong_non_romance < .55 and len(genres - {"romance", "drama", "comedy"}) == 0
-    if hard:
-        return False, 1.0, "Romance este dominant."
-    penalty = .08 if strong_non_romance >= .7 else .16
-    return True, penalty, "Romance pare secundar; s-a aplicat penalizare."
+def romance_policy(movie: Movie, exclude_romance: bool = False) -> tuple[bool, float, str]:
+    """Compatibility shim: CineCalendar no longer excludes or penalizes Romance globally."""
+    return True, 0.0, ""
 
 
 class RecommendationEngine:
@@ -329,7 +313,8 @@ class RecommendationEngine:
         when = when or date.today(); exclude_ids = exclude_ids or set(); profile = get_profile(self.db)
         with self.db.tx() as con:
             con.execute("UPDATE recommendation_history SET ignored=1 WHERE ignored=0 AND action IS NULL AND context_date < ?", (when.isoformat(),))
-        exclude_romance = bool(self.db.get_setting("exclude_romance", True))
+        # Romance is never globally excluded; the personal model decides naturally from ratings.
+        exclude_romance = False
         context = self._run_context()
         candidates = []
         for row in self._candidate_rows(when, candidate_limit):

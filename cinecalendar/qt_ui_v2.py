@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from . import __version__ as APP_VERSION
 from .feedback import apply_feedback
 from .qt_ui import CineCalendarWindow, ScoreDialog, WorkerThread
-from .recommendation import Recommendation
+from .recommendation import Recommendation, row_to_movie
 from .updater import UpdateInfo, check_for_update, stage_and_start_update, update_supported
 
 
@@ -75,23 +75,154 @@ class DecisionWindow(CineCalendarWindow):
         self.set_status("Am trecut peste el doar pentru sesiunea asta. Caut următorul.")
         self.show_page("today")
 
+    def _clear_chosen_decision(self):
+        self.db.set_setting("decision_chosen_date", "")
+        self.db.set_setting("decision_chosen_movie_id", 0)
+
+    def _chosen_movie_today(self):
+        today = date.today().isoformat()
+        chosen_date = str(self.db.get_setting("decision_chosen_date", "") or "")
+        try:
+            movie_id = int(self.db.get_setting("decision_chosen_movie_id", 0) or 0)
+        except (TypeError, ValueError):
+            movie_id = 0
+        if chosen_date != today or movie_id <= 0:
+            if chosen_date and chosen_date != today:
+                self._clear_chosen_decision()
+            return None
+        with self.db.connect() as con:
+            row = con.execute(
+                """SELECT m.*,r.movie_id AS rated_movie_id
+                   FROM movies m
+                   LEFT JOIN ratings r ON r.movie_id=m.id
+                   WHERE m.id=?""",
+                (movie_id,),
+            ).fetchone()
+        if row is None or row["rated_movie_id"] is not None:
+            self._clear_chosen_decision()
+            return None
+        return row_to_movie(row)
+
+    def clear_chosen_decision(self):
+        movie = self._chosen_movie_today()
+        if movie is not None:
+            try:
+                with self.db.tx() as con:
+                    con.execute(
+                        """UPDATE recommendation_history
+                           SET action='unselected'
+                           WHERE movie_id=? AND context_date=? AND action='chosen'""",
+                        (int(movie.id), date.today().isoformat()),
+                    )
+            except Exception:
+                pass
+        self._clear_chosen_decision()
+        self.set_status("Alegerea pentru azi a fost eliberată.")
+        self.show_page("today")
+
     def choose_decision(self, movie_id: int):
         try:
+            today = date.today().isoformat()
             with self.db.tx() as con:
-                con.execute("""UPDATE recommendation_history
-                    SET action='chosen'
-                    WHERE movie_id=? AND id=(SELECT id FROM recommendation_history WHERE movie_id=? ORDER BY id DESC LIMIT 1)""",
-                    (movie_id, movie_id))
-            self.set_status("Alegerea a fost fixată. Gata cu căutatul.")
-            QMessageBox.information(self, "CineCalendar", "Ăsta este filmul ales. Nu mai trebuie să compari alte liste.")
+                con.execute(
+                    """UPDATE recommendation_history
+                       SET action='chosen'
+                       WHERE movie_id=? AND id=(
+                           SELECT id FROM recommendation_history
+                           WHERE movie_id=? ORDER BY id DESC LIMIT 1
+                       )""",
+                    (movie_id, movie_id),
+                )
+            self.db.set_setting("decision_chosen_date", today)
+            self.db.set_setting("decision_chosen_movie_id", int(movie_id))
+            self.session_skips.discard(int(movie_id))
+            self.set_status("Alegerea pentru azi este fixată.")
+            self.show_page("today")
         except Exception as exc:
             QMessageBox.critical(self, "CineCalendar", str(exc))
+
+    def feedback(self, movie_id: int, kind: str):
+        if kind == "seen":
+            try:
+                if int(self.db.get_setting("decision_chosen_movie_id", 0) or 0) == int(movie_id):
+                    self._clear_chosen_decision()
+            except (TypeError, ValueError):
+                self._clear_chosen_decision()
+        super().feedback(movie_id, kind)
+
+    def chosen_decision_card(self, movie):
+        box = self.card()
+        main = QHBoxLayout(box)
+        main.setContentsMargins(22,22,22,22)
+        main.setSpacing(24)
+
+        poster = QLabel("Poster\nindisponibil")
+        poster.setObjectName("Muted")
+        poster.setAlignment(Qt.AlignCenter)
+        poster.setFixedSize(190, 278)
+        poster.setStyleSheet("border-radius:14px; border:1px solid rgba(120,130,145,0.35);")
+        main.addWidget(poster, 0, Qt.AlignTop)
+        if movie.poster_url:
+            self.load_poster_async(poster, movie.poster_url, movie.imdb_id or str(movie.id))
+
+        right = QVBoxLayout()
+        right.setSpacing(10)
+        badge = QLabel("ALEGERE FIXATĂ PENTRU AZI")
+        badge.setObjectName("Kicker")
+        right.addWidget(badge)
+
+        title = QLabel(movie.title + (f" ({movie.year})" if movie.year else ""))
+        title.setWordWrap(True)
+        title.setStyleSheet("font-size:30px; font-weight:800;")
+        right.addWidget(title)
+
+        meta = []
+        if movie.imdb_rating is not None:
+            meta.append(f"IMDb {movie.imdb_rating:.1f}")
+        if movie.runtime_min:
+            meta.append(f"{movie.runtime_min} min")
+        if movie.genres:
+            meta.append(", ".join(movie.genres[:4]))
+        info = QLabel(" • ".join(meta) or "Metadate limitate")
+        info.setObjectName("Muted")
+        info.setWordWrap(True)
+        right.addWidget(info)
+
+        note = QLabel("CineCalendar păstrează filmul ales până îl schimbi, îl marchezi văzut sau începe o zi nouă.")
+        note.setWordWrap(True)
+        right.addWidget(note)
+
+        actions = QHBoxLayout()
+        change = QPushButton("Alege alt film")
+        change.clicked.connect(self.clear_chosen_decision)
+        actions.addWidget(change)
+        seen = QPushButton("L-am văzut deja")
+        seen.clicked.connect(lambda _checked=False, mid=movie.id: self.feedback(mid, "seen"))
+        actions.addWidget(seen)
+        if movie.imdb_id:
+            imdb = QPushButton("IMDb")
+            imdb.clicked.connect(
+                lambda _checked=False, iid=movie.imdb_id:
+                QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))
+            )
+            actions.addWidget(imdb)
+        actions.addStretch(1)
+        right.addLayout(actions)
+        right.addStretch(1)
+        main.addLayout(right, 1)
+        return box
 
     def page_today(self):
         page, content = self.page_shell(
             "Ce văd acum?",
             "Un singur răspuns, ales în principal din ratingurile tale. Calendarul este doar context secundar.",
         )
+        chosen = self._chosen_movie_today()
+        if chosen is not None:
+            content.addWidget(self.chosen_decision_card(chosen))
+            content.addStretch(1)
+            return page
+
         total, rated, cand = self.catalog_count()
         if cand <= 0:
             w = self.card(); wl = QVBoxLayout(w)

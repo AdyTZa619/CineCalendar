@@ -28,9 +28,9 @@ def test_romance_is_not_globally_excluded_when_legacy_switch_is_off():
     assert penalty == 0.0
 
 
-def test_service_forces_legacy_romance_setting_off():
+def test_service_has_no_legacy_romance_exclusion_setting():
     source = inspect.getsource(service_module.CineCalendarService._defaults)
-    assert 'set_setting("exclude_romance", False)' in source
+    assert 'set_setting("exclude_romance"' not in source
 
 
 def test_premium_startup_installs_daily_genre_ui_patch():
