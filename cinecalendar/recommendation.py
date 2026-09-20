@@ -329,7 +329,8 @@ class RecommendationEngine:
         when = when or date.today(); exclude_ids = exclude_ids or set(); profile = get_profile(self.db)
         with self.db.tx() as con:
             con.execute("UPDATE recommendation_history SET ignored=1 WHERE ignored=0 AND action IS NULL AND context_date < ?", (when.isoformat(),))
-        exclude_romance = bool(self.db.get_setting("exclude_romance", True))
+        # Romance is never globally excluded; the personal model decides naturally from ratings.
+        exclude_romance = False
         context = self._run_context()
         candidates = []
         for row in self._candidate_rows(when, candidate_limit):
