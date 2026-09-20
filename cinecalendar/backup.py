@@ -461,10 +461,12 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
                 continue
             movie_id = movie_map[int(old_movie)]
             existing = con.execute(
-                "SELECT rating,date_rated,source,imported_at,updated_at FROM ratings WHERE movie_id=?",
+                "SELECT id,rating,date_rated,source,imported_at,updated_at FROM ratings WHERE movie_id=?",
                 (movie_id,),
             ).fetchone()
             if mode == "merge" and existing is not None and not _backup_row_is_newer(existing, rating, "updated_at", "date_rated"):
+                if rating.get("id") is not None:
+                    rating_map[int(rating["id"])] = int(existing["id"])
                 stats["conflicts_skipped"] += 1
                 continue
             con.execute(
