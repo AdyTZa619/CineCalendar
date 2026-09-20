@@ -526,7 +526,11 @@ class CineCalendarWindow(QMainWindow):
                 f"Wikidata/Wikipedia completate: {result.wikimedia_enriched}\n\n"
                 f"Complete: {result.after.complete:,}/{result.after.total:,} "
                 f"({result.after.completion_percent:.1f}%)\n"
-                f"Încă incomplete: {result.after.incomplete:,}.",
+                f"Încă incomplete: {result.after.incomplete:,}."
+                + (
+                    "\n\nEtape temporar indisponibile:\n- " + "\n- ".join(result.stage_errors)
+                    if result.stage_errors else ""
+                ),
             )
             if self.current_page in {"ratings", "profile", "romanian_list"}:
                 self.show_page(self.current_page)
