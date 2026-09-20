@@ -63,6 +63,10 @@ class ScoreBreakdown:
     evidence: float = 0.0
     startability: float = 0.0
     trust_audit: dict = field(default_factory=dict)
+    why_not: str = ""
+    score_factors: dict[str, float] = field(default_factory=dict)
+    taste_shift: float = 0.0
+    content_profile: str = "movie"
 
 @dataclass
 class Recommendation:
