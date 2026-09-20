@@ -86,11 +86,11 @@ def test_exaltation_is_active_sep13_and_not_passion_direct():
 def test_2026_autumn_equinox_calendar_day():
     assert seasonal_turning_dates(2026)['autumn_equinox']==date(2026,9,23)
 
-def test_romance_filter():
+def test_romance_is_never_globally_filtered():
     hard=Movie(title='Love',genres=['Drama','Romance'],semantic={'romance':1})
-    assert romance_policy(hard,True)[0] is False
+    ok,pen,_=romance_policy(hard,True);assert ok and pen==0
     secondary=Movie(title='War and Love',genres=['Drama','Romance','War'],semantic={'romance':.5,'war':1,'history':.8})
-    ok,pen,_=romance_policy(secondary,True);assert ok and pen>0
+    ok,pen,_=romance_policy(secondary,True);assert ok and pen==0
 
 def test_rated_titles_never_candidates(tmp_path):
     db=dbtmp(tmp_path);p=tmp_path/'r.csv';write_ratings(p,[row('tt0000001','9','Seen Film','2000','History, War')]);import_imdb_csv(db,p);build_profile(db)
