@@ -1,9 +1,9 @@
 {
-  "version": "3.9.8",
-  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.8/CineCalendar-3.9.8-Premium-Windows-x64.zip",
-  "sha256": "325bf9e08a23eb9fcd569d6047a45439aaac2fec7fbba53fa3c916edfaaf7d5c",
-  "notes": "Rollback temporar: 3.9.9 a introdus o regresie în reconcilierea ratingurilor IMDb. Stable revine la 3.9.8 până la publicarea corecției 3.9.10.",
-  "publishedAt": "2026-09-20T12:55:00Z",
+  "version": "3.9.10",
+  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v3.9.10/CineCalendar-3.9.10-Premium-Windows-x64.zip",
+  "sha256": "f03b482e16f603e390bf298fdd98330c93151c18ac00570782e1b30520ed2981",
+  "notes": "CineCalendar 3.9.10 corectează regresia introdusă de 3.9.8/3.9.9 în sincronizarea ratingurilor IMDb.\r\n\r\nSursa corectă:\r\n- exportul IMDb importat rămâne baza istorică canonică;\r\n- sincronizarea profilului public este doar un updater incremental pentru ratinguri noi/modificate și un mecanism de legare a identităților;\r\n- aplicația nu mai șterge ratinguri valide din export doar pentru că endpointul public returnează alt IMDb ID.\r\n\r\nDuplicate:\r\n- dacă profilul public returnează alt IMDb ID pentru același titlu/an/rating/data deja existent în export, intrarea publică este legată de filmul exportat, nu creată ca al doilea rating;\r\n- duplicatele public-sync deja create de versiunile anterioare sunt reparate automat;\r\n- dacă 3.9.9 a șters ratingul de pe filmul exportat, 3.9.10 mută ratingul înapoi pe înregistrarea locală bogată în metadate atunci când potrivirea este unică și sigură;\r\n- aliasul dintre ID-ul public și ID-ul canonic local este memorat pentru sincronizările următoare;\r\n- filmele distincte cu același titlu/an rămân separate când nu există dovadă suficientă că sunt aceeași intrare.\r\n\r\nMetadate:\r\n- filmul canonic păstrează IMDb rating, voturi, genuri, regizor, durată și poster deja existente;\r\n- titlurile cu adevărat noi adăugate prin profilul public primesc în continuare completare best-effort de metadate.\r\n\r\nSiguranță:\r\n- sincronizarea respectă din nou baseline-ul exportului 05.09.2026;\r\n- ratingurile istorice de dinainte de baseline pot confirma/actualiza un rând existent, dar nu pot crea duplicate istorice noi;\r\n- ratingurile manuale nu sunt afectate;\r\n- referințele din watchlist, feedback, istoric recomandări și auditul de încredere sunt mutate pe filmul canonic când se repară un duplicat.\r\n\r\nCazul Jana:\r\n- exportul inițial valid conținea Jana (2004) cu tt1861356 și metadatele complete;\r\n- public sync a introdus separat tt4568192, fără metadatele locale, ceea ce a produs cele două rânduri văzute în Ratinguri;\r\n- 3.9.10 păstrează rândul exportat cu metadatele lui și elimină duplicatul public-sync prin reconciliere, fără să șteargă istoricul exportat.",
+  "publishedAt": "2026-09-20T12:59:31.2841228Z",
   "channel": "stable",
   "package": "onedir-zip"
 }
