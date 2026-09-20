@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
+from .recommendation_outcomes_v42 import reconcile_recommendation_outcomes
 from .decision_action_patch import (
     clear_today_choice,
     current_today_choice_state,
@@ -89,7 +90,9 @@ def record_watch_event(
                ) VALUES(?,?,?,?,?,?,?,?)""",
             (movie_id, now, event_context_date, "watch_success_v3", final_score, 0, action, exposure_id),
         )
-        return int(cur.lastrowid)
+        event_id = int(cur.lastrowid)
+    reconcile_recommendation_outcomes(db)
+    return event_id
 
 
 def _startability_reason(rec) -> str:
