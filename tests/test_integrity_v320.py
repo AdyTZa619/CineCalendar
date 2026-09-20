@@ -76,7 +76,7 @@ def _trust_exposure(db: Database, movie_id: int, status: str = "trusted") -> int
         return history_id
 
 
-def test_v4_database_migrates_to_canonical_v5(tmp_path):
+def test_v4_database_migrates_to_canonical_v6(tmp_path):
     path = tmp_path / "upgrade.db"
     con = sqlite3.connect(path)
     try:
@@ -97,10 +97,14 @@ def test_v4_database_migrates_to_canonical_v5(tmp_path):
         trust = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_trust_audit'"
         ).fetchone()
-    assert SCHEMA_VERSION == 5
-    assert current == 5
+        provenance = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_provenance'"
+        ).fetchone()
+    assert SCHEMA_VERSION == 6
+    assert current == 6
     assert "exposure_history_id" in columns
     assert trust is not None
+    assert provenance is not None
 
 
 def test_watch_events_link_to_exact_exposure_and_exposure_stays_immutable(tmp_path):
