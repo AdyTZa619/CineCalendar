@@ -1,29 +1,41 @@
-CineCalendar 4.0.1 corectează biblioteca de ratinguri și completarea metadatelor.
+CineCalendar 4.0.2 întărește biblioteca personală, statisticile și Smart Watchlist.
 
-Ratinguri IMDb:
-- ordinea implicită este „Cele mai recente”, cu ultimul rating acordat afișat primul;
-- este reparată eroarea internă de sortare pentru acest mod;
-- în tabel, titlul principal este titlul original al filmului când este disponibil;
-- titlul localizat rămâne în date și poate fi găsit în căutare.
+Bibliotecă / Ratinguri:
+- buton nou „Repară biblioteca”;
+- o singură operație sincronizează profilul IMDb, repară duplicatele, completează metadatele și recalculează profilul de gust;
+- afișează sănătatea bibliotecii: câte titluri sunt complete și câte mai au lipsuri;
+- arată separat lipsurile de gen, regizor, durată, rating IMDb și poster;
+- filtre noi pentru ratinguri: Azi, ultimele 7 zile, ultimele 30 zile și anul curent;
+- titlul original rămâne titlul principal;
+- ultimul rating acordat rămâne implicit primul.
 
 Metadate:
-- completarea automată nu mai verifică doar filmele create de sincronizarea publică IMDb;
-- sunt verificate toate filmele evaluate care au IMDb ID și cărora le lipsesc câmpuri;
-- sunt completate best-effort genul, regizorul, durata, ratingul IMDb, numărul de voturi și posterul;
-- sunt incluse explicit cazurile în care lipsește numai regizorul sau numai posterul;
-- până la 5.000 de titluri evaluate cu metadate incomplete pot fi reparate într-o sincronizare, suficient pentru biblioteca personală curentă;
-- dacă interogarea IMDb cu credite eșuează, datele de bază sunt păstrate și regizorii sunt reîncercați separat.
+- ordine de completare: IMDb -> TMDb (dacă există token) -> Wikidata/Wikipedia;
+- TMDb verifică acum și gen, regizor, țară și durată, nu doar poster/overview;
+- TMDb nu mai șterge metadate bune dacă răspunsul lui are un câmp gol;
+- fallback-ul Wikidata poate completa acum și genurile, pe lângă regizor, țară, durată și poster;
+- fallback-urile sunt aplicate numai titlurilor evaluate care chiar au câmpuri lipsă.
 
-Interfață:
-- pagina Ratinguri are buton „Sincronizează + completează” pentru a porni manual sincronizarea și repararea metadatelor;
-- căutarea continuă să includă atât titlul original, cât și titlul localizat.
+Statistici:
+- Taste Hub recalculează profilul la deschidere, astfel încât valorile să nu rămână stale după sincronizare;
+- afișează procentul de metadate esențiale complete și numărul real de titluri fără gen/regizor;
+- statisticile existente pentru genuri, regizori, țări, decenii și afinități rămân disponibile.
 
-Siguranță:
-- baza istorică din exportul IMDb rămâne canonică;
-- reconcilierea duplicatelor din 3.9.10 rămâne activă;
-- Smart Watchlist și „Următoarele 5” din 4.0.0 nu sunt modificate.
+Smart Watchlist:
+- „Prioritar” / „Vreau să-l văd curând” persistent;
+- titlurile prioritare primesc un boost controlat, dar nu sar peste filtrele de calitate;
+- filtre după durată: <=90 min, 91-120 min, >120 min;
+- filtre separate pentru filme, scurtmetraje și documentare;
+- buton „Alege-mi unul acum” folosește primul rezultat valid din coada personală;
+- scoaterea unui film din Watchlist curăță și prioritatea lui.
+
+Recomandări:
+- motorul de scor validat nu a fost modificat arbitrar;
+- interfața folosește acum explicația bogată calculată deja de motor;
+- când ALS are dovezi, explicația poate include filme concrete din ratingurile tale și notele acordate;
+- diversificarea existentă și ponderarea de recență rămân active.
 
 Validare:
-- teste de regresie pentru ordinea cronologică a ratingurilor;
-- test pentru preferarea titlului original;
-- test pentru completarea regizorului lipsă pe un rating canonic provenit din exportul IMDb.
+- teste noi pentru sănătatea bibliotecii și pipeline-ul de reparare;
+- teste pentru prioritate Watchlist și filtrele de durată/tip;
+- păstrează testele pentru duplicate, titlu original, sortare și metadata backfill.
