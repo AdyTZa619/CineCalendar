@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from .library_repair import rated_library_health
 from .metadata_provenance import metadata_sources_for_movie
 from .profile import build_profile, get_profile
+from .recommendation_outcomes_v42 import recommendation_performance
 from .util import json_loads
 
 
@@ -828,6 +829,67 @@ def install_library_ui(window_cls) -> None:
             cap = QLabel(label); cap.setObjectName("Muted"); cap.setWordWrap(True); lay.addWidget(cap)
             metrics.addWidget(card, i // 4, i % 4)
         metric_wrap = QFrame(); metric_wrap.setLayout(metrics); content.addWidget(metric_wrap)
+
+        try:
+            perf = recommendation_performance(self.db)
+        except Exception:
+            perf = None
+        if perf is not None:
+            box = QFrame(); box.setObjectName("PremiumCard")
+            pl = QVBoxLayout(box); pl.setContentsMargins(18,16,18,16); pl.setSpacing(8)
+            ph = QLabel("Performanța reală a recomandărilor")
+            ph.setObjectName("SectionTitle"); pl.addWidget(ph)
+            desc = QLabel(
+                "Măsoară traseul recomandat → ales → pornit → văzut → nota ta reală. "
+                "Predicția este comparată cu ratingul IMDb pe care îl dai ulterior."
+            )
+            desc.setObjectName("Muted"); desc.setWordWrap(True); pl.addWidget(desc)
+
+            pg = QGridLayout(); pg.setHorizontalSpacing(12); pg.setVerticalSpacing(8)
+            perf_values = [
+                (f"{perf.chosen:,}", "alese"),
+                (f"{perf.start_rate*100:.0f}%", "pornite din cele alese"),
+                (f"{perf.watched_rate*100:.0f}%", "confirmate văzute"),
+                (f"{perf.rated_outcomes:,}", "cu rating ulterior"),
+                (f"{perf.mae:.2f}" if perf.mae is not None else "—", "eroare medie predicție"),
+                (f"{perf.within_one*100:.0f}%" if perf.within_one is not None else "—", "predicții la ±1 punct"),
+                (f"{perf.liked_rate*100:.0f}%" if perf.rated_outcomes else "—", "recomandări notate ≥8"),
+                (f"{perf.bias:+.2f}" if perf.bias is not None else "—", "bias estimat − real"),
+            ]
+            for idx, (value, caption) in enumerate(perf_values):
+                card = QFrame(); card.setObjectName("Card")
+                lay = QVBoxLayout(card); lay.setContentsMargins(12,10,12,10)
+                val = QLabel(value); val.setObjectName("MetricValue"); lay.addWidget(val)
+                cap = QLabel(caption); cap.setObjectName("Muted"); cap.setWordWrap(True); lay.addWidget(cap)
+                pg.addWidget(card, idx // 4, idx % 4)
+            pl.addLayout(pg)
+
+            if perf.recent:
+                recent_title = QLabel("Rezultate recente")
+                recent_title.setObjectName("BodyStrong"); pl.addWidget(recent_title)
+                recent_table = QTableWidget(0, 6)
+                recent_table.setHorizontalHeaderLabels(["Titlu","Data","Poziție","Status","Estimat","Real"])
+                recent_table.setEditTriggers(QTableWidget.NoEditTriggers)
+                recent_table.setSelectionBehavior(QTableWidget.SelectRows)
+                recent_table.verticalHeader().setVisible(False)
+                recent_table.setRowCount(len(perf.recent))
+                for i, row in enumerate(perf.recent):
+                    values = [
+                        row["title"],
+                        row["context_date"],
+                        str(row["rank"] or "—"),
+                        row["status"],
+                        f"{row['predicted']:.1f}" if row["predicted"] is not None else "—",
+                        f"{row['actual']}/10" if row["actual"] is not None else "—",
+                    ]
+                    for j, value in enumerate(values):
+                        recent_table.setItem(i, j, QTableWidgetItem(str(value)))
+                recent_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+                for col in range(1, 6):
+                    recent_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+                recent_table.setMaximumHeight(300)
+                pl.addWidget(recent_table)
+            content.addWidget(box)
 
         brain = getattr(self.s.recommender, "personalization_v41", None)
         if brain is not None:
