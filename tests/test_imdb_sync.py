@@ -371,3 +371,40 @@ def test_public_sync_metadata_backfill_fills_sparse_profile_rows(tmp_path: Path)
     assert float(row["imdb_rating"]) == 4.5
     assert int(row["num_votes"]) == 16
     assert row["poster_url"] == "https://m.media-amazon.com/images/M/jana.jpg"
+
+
+def test_full_profile_marks_existing_csv_rating_as_live_confirmed(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    now = "2026-05-23T00:00:00+00:00"
+    with db.tx() as con:
+        cur = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt1861356","jana|jana|2004|movie","Jana","Jana","jana","jana",
+                2004,"Movie","[]","[]","imdb_csv",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(cur.lastrowid),5,"2026-05-23","imdb",now,now),
+        )
+
+    result = sync_public_ratings(
+        db,
+        URL,
+        baseline_date=None,
+        session=session_for(payload([
+            ("tt1861356","Jana",5,"2026-05-23",2004),
+        ])),
+    )
+    assert result.removed_ratings == []
+    with db.connect() as con:
+        source = con.execute(
+            """SELECT r.source FROM ratings r JOIN movies m ON m.id=r.movie_id
+               WHERE m.imdb_id='tt1861356'"""
+        ).fetchone()[0]
+    assert source == "imdb_public_sync"
