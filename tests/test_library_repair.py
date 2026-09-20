@@ -110,3 +110,38 @@ def test_repair_pipeline_recalculates_health_and_profile(tmp_path, monkeypatch):
             "SELECT value_json FROM user_profile WHERE profile_key='main'"
         ).fetchone()
     assert profile is not None
+
+
+def test_repair_pipeline_continues_when_profile_sync_is_unavailable(tmp_path, monkeypatch):
+    db = Database(tmp_path / "fail-open.db")
+    _rated_movie(db, complete=True)
+
+    def broken_sync(*_args, **_kwargs):
+        raise RuntimeError("IMDb temporar indisponibil")
+
+    monkeypatch.setattr("cinecalendar.library_repair.sync_public_ratings", broken_sync)
+    monkeypatch.setattr(
+        "cinecalendar.library_repair.backfill_public_rating_metadata",
+        lambda _db, limit=5000: 0,
+    )
+
+    class FakeOpenProvider:
+        def __init__(self, _db):
+            self.db = _db
+
+        def enrich_by_imdb(self, movie):
+            return movie
+
+    monkeypatch.setattr(
+        "cinecalendar.library_repair.OpenMovieMetadataProvider",
+        FakeOpenProvider,
+    )
+
+    result = repair_rated_library(
+        db,
+        profile_url="https://www.imdb.com/user/ur123/ratings/",
+        limit=10,
+    )
+    assert result.after.complete == 1
+    assert result.stage_errors
+    assert result.stage_errors[0].startswith("Sincronizare IMDb:")
