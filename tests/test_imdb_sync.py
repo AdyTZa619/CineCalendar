@@ -179,11 +179,13 @@ def test_full_profile_sync_imports_pre_baseline_ratings(tmp_path: Path):
         assert tuple(row) == ("tt1000100", 10, "2020-01-02")
 
 
-def test_ui_sync_uses_full_public_profile_history():
+def test_ui_sync_respects_export_baseline():
     root = Path(__file__).resolve().parents[1]
     ui = (root / "cinecalendar" / "qt_ui.py").read_text(encoding="utf-8")
     sync_block = ui[ui.index("def sync_imdb_public"):ui.index("def manual_rating")]
-    assert "baseline_date=None" in sync_block
+    assert 'imdb_public_sync_baseline' in sync_block
+    assert "baseline_date=baseline" in sync_block
+    assert "baseline_date=None" not in sync_block
 
 
 def test_public_sync_sends_required_imdb_web_headers():
@@ -199,18 +201,19 @@ def test_public_sync_sends_required_imdb_web_headers():
         assert "application/graphql+json" in headers["Accept"]
 
 
-def test_full_profile_prunes_stale_csv_rating_with_same_title_year(tmp_path: Path):
+def test_exported_rating_stays_canonical_when_public_profile_uses_other_id(tmp_path: Path):
     db = Database(tmp_path / "test.db")
     now = "2026-05-23T00:00:00+00:00"
     with db.tx() as con:
         old = con.execute(
             """INSERT INTO movies(
                 imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
-                year,title_type,genres_json,directors_json,source,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                year,title_type,runtime_min,genres_json,directors_json,imdb_rating,num_votes,
+                source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 "tt1861356","jana|jana|2004|movie","Jana","Jana","jana","jana",
-                2004,"Movie","[\"Action\",\"Drama\"]","[\"Shaji Kailas\"]",
+                2004,"Movie",135,'["Action","Drama"]','["Shaji Kailas"]',3.3,1000,
                 "imdb_csv",now,now,
             ),
         )
@@ -223,22 +226,26 @@ def test_full_profile_prunes_stale_csv_rating_with_same_title_year(tmp_path: Pat
     result = sync_public_ratings(
         db,
         URL,
-        baseline_date=None,
+        baseline_date="2026-09-05",
         session=session_for(payload([
             ("tt4568192","Jana",5,"2026-05-23",2004),
         ])),
     )
 
-    assert result.removed_ratings == [("Jana", 5, "tt1861356")]
+    assert result.new_ratings == []
+    assert result.removed_ratings == []
     with db.connect() as con:
         rows = con.execute(
-            """SELECT m.imdb_id,r.rating,r.source
-               FROM ratings r JOIN movies m ON m.id=r.movie_id
-               ORDER BY m.imdb_id"""
+            """SELECT m.imdb_id,r.rating,r.source,m.imdb_rating,m.directors_json
+               FROM ratings r JOIN movies m ON m.id=r.movie_id"""
         ).fetchall()
+        aliases = con.execute(
+            "SELECT value_json FROM settings WHERE key='imdb_public_id_aliases'"
+        ).fetchone()[0]
     assert [tuple(row) for row in rows] == [
-        ("tt4568192", 5, "imdb_public_sync"),
+        ("tt1861356", 5, "imdb", 3.3, '["Shaji Kailas"]'),
     ]
+    assert "tt4568192" in aliases and "tt1861356" in aliases
 
 
 def test_full_profile_keeps_two_distinct_same_title_year_movies_if_both_are_live(tmp_path: Path):
@@ -300,7 +307,7 @@ def test_full_profile_never_prunes_manual_rating(tmp_path: Path):
     assert manual is not None and int(manual[0]) == 7
 
 
-def test_empty_remote_profile_does_not_wipe_existing_imdb_history(tmp_path: Path):
+def test_empty_remote_profile_never_deletes_export_history(tmp_path: Path):
     db = Database(tmp_path / "test.db")
     now = "2026-01-01T00:00:00+00:00"
     with db.tx() as con:
@@ -320,13 +327,13 @@ def test_empty_remote_profile_does_not_wipe_existing_imdb_history(tmp_path: Path
             (int(cur.lastrowid),8,"2026-01-01","imdb",now,now),
         )
 
-    with pytest.raises(RuntimeError):
-        sync_public_ratings(
-            db,
-            URL,
-            baseline_date=None,
-            session=session_for(payload([])),
-        )
+    result = sync_public_ratings(
+        db,
+        URL,
+        baseline_date="2026-09-05",
+        session=session_for(payload([])),
+    )
+    assert result.removed_ratings == []
     with db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 1
 
@@ -373,7 +380,7 @@ def test_public_sync_metadata_backfill_fills_sparse_profile_rows(tmp_path: Path)
     assert row["poster_url"] == "https://m.media-amazon.com/images/M/jana.jpg"
 
 
-def test_full_profile_marks_existing_csv_rating_as_live_confirmed(tmp_path: Path):
+def test_existing_csv_rating_keeps_export_provenance_when_live_confirmed(tmp_path: Path):
     db = Database(tmp_path / "test.db")
     now = "2026-05-23T00:00:00+00:00"
     with db.tx() as con:
@@ -407,4 +414,113 @@ def test_full_profile_marks_existing_csv_rating_as_live_confirmed(tmp_path: Path
             """SELECT r.source FROM ratings r JOIN movies m ON m.id=r.movie_id
                WHERE m.imdb_id='tt1861356'"""
         ).fetchone()[0]
-    assert source == "imdb_public_sync"
+    assert source == "imdb"
+
+
+def test_existing_public_sync_duplicate_is_repaired_into_export_row(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    now = "2026-05-23T00:00:00+00:00"
+    with db.tx() as con:
+        canonical = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,runtime_min,genres_json,directors_json,imdb_rating,num_votes,
+                source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt1861356","jana|jana|2004|movie","Jana","Jana","jana","jana",
+                2004,"Movie",135,'["Action","Drama"]','["Shaji Kailas"]',3.3,1000,
+                "imdb_csv",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(canonical.lastrowid),5,"2026-05-23","imdb",now,now),
+        )
+        duplicate = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt4568192","jana|jana|2004|movie","Jana","Jana","jana","jana",
+                2004,"Movie","[]","[]","imdb_public_sync",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(duplicate.lastrowid),5,"2026-05-23","imdb_public_sync",now,now),
+        )
+
+    result = sync_public_ratings(
+        db,
+        URL,
+        baseline_date="2026-09-05",
+        session=session_for(payload([
+            ("tt4568192","Jana",5,"2026-05-23",2004),
+        ])),
+    )
+    assert len(result.reconciled_duplicates) == 1
+    with db.connect() as con:
+        rated = con.execute(
+            """SELECT m.imdb_id,r.rating,m.imdb_rating,m.directors_json
+               FROM ratings r JOIN movies m ON m.id=r.movie_id
+               WHERE m.title='Jana'"""
+        ).fetchall()
+    assert [tuple(row) for row in rated] == [
+        ("tt1861356",5,3.3,'["Shaji Kailas"]'),
+    ]
+
+
+def test_399_deleted_export_rating_is_restored_to_rich_export_movie(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    now = "2026-05-23T00:00:00+00:00"
+    with db.tx() as con:
+        con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,runtime_min,genres_json,directors_json,imdb_rating,num_votes,
+                source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt1861356","jana|jana|2004|movie","Jana","Jana","jana","jana",
+                2004,"Movie",135,'["Action","Drama"]','["Shaji Kailas"]',3.3,1000,
+                "imdb_csv",now,now,
+            ),
+        )
+        duplicate = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt4568192","jana|jana|2004|movie","Jana","Jana","jana","jana",
+                2004,"Movie","[]","[]","imdb_public_sync",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(duplicate.lastrowid),5,"2026-05-23","imdb_public_sync",now,now),
+        )
+
+    result = sync_public_ratings(
+        db,
+        URL,
+        baseline_date="2026-09-05",
+        session=session_for(payload([
+            ("tt4568192","Jana",5,"2026-05-23",2004),
+        ])),
+    )
+    assert len(result.reconciled_duplicates) == 1
+    with db.connect() as con:
+        rows = con.execute(
+            """SELECT m.imdb_id,r.rating,m.imdb_rating,m.directors_json
+               FROM ratings r JOIN movies m ON m.id=r.movie_id
+               WHERE m.title='Jana'"""
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("tt1861356",5,3.3,'["Shaji Kailas"]'),
+    ]
