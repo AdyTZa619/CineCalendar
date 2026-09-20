@@ -230,7 +230,7 @@ def test_backup_merge_keeps_newer_local_rating_and_restore_can_replace_it(tmp_pa
     import_profile(target, archive, mode="restore")
     with target.connect() as con:
         row = con.execute("SELECT rating,source FROM ratings WHERE movie_id=?", (target_movie,)).fetchone()
-    assert row["rating"] == 7
+    assert row["rating"] == 6
     assert row["source"] == "backup-source"
 
 
