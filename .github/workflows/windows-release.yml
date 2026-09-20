@@ -55,6 +55,7 @@ jobs:
             'cinecalendar\open_metadata.py',
             'cinecalendar\updater.py',
             'scripts\benchmark_engine_v3.py',
+            'scripts\benchmark_v431.py',
             'scripts\backtest_recommendations.py',
             'UPDATE_NOTES.txt'
           )
@@ -87,6 +88,11 @@ jobs:
         env:
           PYTHONPATH: .
         run: python scripts/benchmark_engine_v3.py
+
+      - name: Benchmark 4.3.1 history and learning cache
+        env:
+          PYTHONPATH: .
+        run: python scripts/benchmark_v431.py
 
       - name: Build fast portable folder
         shell: pwsh

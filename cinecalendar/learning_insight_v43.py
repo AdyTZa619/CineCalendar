@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 import math
 import re
 import threading
+import time
 
 from .util import clamp, json_loads, normalize_text
 
 
-LEARNING_INSIGHT_VERSION = "learning-insight-v4.3.0"
+LEARNING_INSIGHT_VERSION = "learning-insight-v4.3.1"
 CALIBRATION_SETTING = "learning_insight_v43_calibration"
 SEMANTIC_SETTING = "learning_insight_v43_semantic"
 
@@ -51,14 +53,14 @@ def _words(text: str) -> list[str]:
     ]
 
 
-def text_signature_from_values(overview: str, keywords: list[str]) -> dict[str, float]:
-    """Compact semantic signature without a heavyweight model.
-
-    Keywords get stronger weight. Overview unigrams/bigrams are capped so very long synopses do
-    not dominate the profile. The learned layer later applies IDF/support shrinkage.
-    """
+@lru_cache(maxsize=16384)
+def _cached_text_signature(
+    overview: str,
+    keywords: tuple[str, ...],
+) -> tuple[tuple[str, float], ...]:
+    """Build one immutable semantic signature for reuse across recommendation rounds."""
     weights: dict[str, float] = {}
-    for raw in list(keywords or [])[:30]:
+    for raw in keywords[:30]:
         phrase = normalize_text(str(raw or "")).casefold().strip()
         if not phrase:
             continue
@@ -78,7 +80,28 @@ def text_signature_from_values(overview: str, keywords: list[str]) -> dict[str, 
         if a == b:
             continue
         weights[f"bg:{a}_{b}"] = min(1.0, 0.50 + 0.10 * math.log1p(count))
-    return weights
+    return tuple(sorted(weights.items()))
+
+
+def text_signature_from_values(overview: str, keywords: list[str]) -> dict[str, float]:
+    """Compact cached semantic signature without a heavyweight model.
+
+    The cache key is the actual synopsis + keyword tuple, so edited metadata naturally invalidates
+    the cached entry without needing a separate purge step.
+    """
+    key_overview = str(overview or "")
+    key_keywords = tuple(str(x or "") for x in list(keywords or [])[:30])
+    return dict(_cached_text_signature(key_overview, key_keywords))
+
+
+def text_signature_cache_info() -> dict[str, int]:
+    info = _cached_text_signature.cache_info()
+    return {
+        "hits": int(info.hits),
+        "misses": int(info.misses),
+        "maxsize": int(info.maxsize or 0),
+        "currsize": int(info.currsize),
+    }
 
 
 def text_signature(movie) -> dict[str, float]:
@@ -261,13 +284,18 @@ class PredictionCalibratorV43:
             self._status = status
             self._token = token
 
-    def status(self) -> dict:
+    def prepare(self) -> None:
         self._ensure()
+
+    def status(self, *, ensure: bool = True) -> dict:
+        if ensure:
+            self._ensure()
         with self._lock:
             return dict(self._status)
 
-    def apply(self, movie, score) -> dict:
-        self._ensure()
+    def apply(self, movie, score, *, ensure: bool = True) -> dict:
+        if ensure:
+            self._ensure()
         raw = float(getattr(score, "predicted_rating", 0.0) or 0.0)
         if raw <= 0:
             return {"approved": False, "raw": raw, "calibrated": raw, "correction": 0.0}
@@ -318,6 +346,7 @@ class TextSemanticBrainV43:
         with self.db.connect() as con:
             row = con.execute(
                 """SELECT COUNT(*),COALESCE(MAX(r.updated_at),''),
+                          COALESCE(MAX(m.updated_at),''),
                           SUM(CASE WHEN length(COALESCE(m.overview,''))>20
                                     OR COALESCE(m.keywords_json,'[]') NOT IN ('','[]')
                                    THEN 1 ELSE 0 END)
@@ -327,7 +356,8 @@ class TextSemanticBrainV43:
             LEARNING_INSIGHT_VERSION,
             int(row[0] or 0),
             str(row[1] or ""),
-            int(row[2] or 0),
+            str(row[2] or ""),
+            int(row[3] or 0),
         )
 
     def _rows(self) -> list[_RatedText]:
@@ -473,8 +503,12 @@ class TextSemanticBrainV43:
             self._status = status
             self._token = token
 
-    def status(self) -> dict:
+    def prepare(self) -> None:
         self._ensure()
+
+    def status(self, *, ensure: bool = True) -> dict:
+        if ensure:
+            self._ensure()
         with self._lock:
             return dict(self._status)
 
@@ -486,8 +520,9 @@ class TextSemanticBrainV43:
             return token[3:].replace("_", " ")
         return token.split(":", 1)[-1].replace("_", " ")
 
-    def apply(self, movie, score) -> dict:
-        self._ensure()
+    def apply(self, movie, score, *, ensure: bool = True) -> dict:
+        if ensure:
+            self._ensure()
         signature = text_signature(movie)
         affinity, evidence = self._affinity(signature, self._model)
         approved = bool(self._status.get("approved"))
@@ -520,6 +555,23 @@ class LearningInsightBrainV43:
         self.db = db
         self.calibrator = PredictionCalibratorV43(db)
         self.semantic = TextSemanticBrainV43(db)
+        self._prepare_ms = deque(maxlen=128)
+        self._enhance_ms = deque(maxlen=512)
+
+    @staticmethod
+    def _timing_summary(samples) -> dict[str, float | int]:
+        values = sorted(float(x) for x in samples)
+        if not values:
+            return {"count": 0, "last_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0}
+        def percentile(p: float) -> float:
+            idx = min(len(values) - 1, max(0, int(math.ceil(len(values) * p)) - 1))
+            return values[idx]
+        return {
+            "count": len(values),
+            "last_ms": round(float(samples[-1]), 3),
+            "p50_ms": round(percentile(.50), 3),
+            "p95_ms": round(percentile(.95), 3),
+        }
 
     def state_token(self) -> tuple:
         return (
@@ -528,16 +580,34 @@ class LearningInsightBrainV43:
             self.semantic.state_token(),
         )
 
-    def status(self) -> dict:
+    def prepare(self) -> None:
+        started = time.perf_counter()
+        self.semantic.prepare()
+        self.calibrator.prepare()
+        self._prepare_ms.append((time.perf_counter() - started) * 1000.0)
+
+    def runtime_status(self) -> dict:
         return {
-            "version": LEARNING_INSIGHT_VERSION,
-            "calibration": self.calibrator.status(),
-            "semantic": self.semantic.status(),
+            "prepare": self._timing_summary(self._prepare_ms),
+            "enhance": self._timing_summary(self._enhance_ms),
+            "semantic_signature_cache": text_signature_cache_info(),
         }
 
-    def enhance(self, rec, *, mode: str = "decide") -> None:
-        semantic = self.semantic.apply(rec.movie, rec.score)
-        calibration = self.calibrator.apply(rec.movie, rec.score)
+    def status(self) -> dict:
+        self.prepare()
+        return {
+            "version": LEARNING_INSIGHT_VERSION,
+            "calibration": self.calibrator.status(ensure=False),
+            "semantic": self.semantic.status(ensure=False),
+            "runtime": self.runtime_status(),
+        }
+
+    def enhance(self, rec, *, mode: str = "decide", prepared: bool = False) -> None:
+        if not prepared:
+            self.prepare()
+        started = time.perf_counter()
+        semantic = self.semantic.apply(rec.movie, rec.score, ensure=False)
+        calibration = self.calibrator.apply(rec.movie, rec.score, ensure=False)
 
         if mode == "surprise":
             s = rec.score
@@ -559,6 +629,8 @@ class LearningInsightBrainV43:
                         )
                     )
                     s.score_factors["explorare controlată"] = shift
+
+        self._enhance_ms.append((time.perf_counter() - started) * 1000.0)
 
         # Activation state is exposed in Taste Hub; score_factors keeps only numeric influences.
 
@@ -593,8 +665,11 @@ def learning_insight_engine_class(base_cls: type) -> type:
                 runtime_max=runtime_max,
                 runtime_min=runtime_min,
             )
+            if recs:
+                # One model freshness check per recommendation round, not once per Top-3 item.
+                self.learning_insight_v43.prepare()
             for rec in recs:
-                self.learning_insight_v43.enhance(rec, mode=mode)
+                self.learning_insight_v43.enhance(rec, mode=mode, prepared=True)
             # Only reorders the exact shortlist returned by the validated lower stack.
             recs.sort(
                 key=lambda r: (

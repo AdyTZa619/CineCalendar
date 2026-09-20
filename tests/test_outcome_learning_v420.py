@@ -104,8 +104,8 @@ def _rating(db: Database, movie_id: int, rating: int, day: str) -> None:
 
 
 def test_schema_v8_keeps_prediction_snapshot_and_outcome_table(tmp_path):
-    db = Database(tmp_path / "schema-v8.db")
-    assert SCHEMA_VERSION == 8
+    db = Database(tmp_path / "schema-v9.db")
+    assert SCHEMA_VERSION == 9
     with db.connect() as con:
         hist = {row[1] for row in con.execute("PRAGMA table_info(recommendation_history)")}
         tables = {

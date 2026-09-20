@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
-# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v8 through
+# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v9 through
 # idempotent Python helpers so an interrupted ALTER TABLE can be resumed safely.
 MIGRATIONS: dict[int, str] = {
 1: r'''
@@ -207,6 +207,18 @@ CREATE TABLE IF NOT EXISTS recommendation_explanations(
   contributions_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL
 );
+''',
+9: r'''
+CREATE INDEX IF NOT EXISTS ix_rec_hist_root_context_id
+  ON recommendation_history(context_date,id DESC) WHERE action IS NULL;
+CREATE INDEX IF NOT EXISTS ix_rec_hist_exposure_action_id
+  ON recommendation_history(exposure_history_id,action,id DESC);
+CREATE INDEX IF NOT EXISTS ix_rec_trust_engine_history
+  ON recommendation_trust_audit(engine_version,history_id);
+CREATE INDEX IF NOT EXISTS ix_rec_outcome_engine_context
+  ON recommendation_outcomes(engine_version,context_date);
+CREATE INDEX IF NOT EXISTS ix_rec_outcome_context
+  ON recommendation_outcomes(context_date);
 '''
 }
 
@@ -511,6 +523,29 @@ class Database:
             )"""
         )
 
+    def _apply_v9(self, con: sqlite3.Connection) -> None:
+        # Read-path indexes for 4.3 history/dashboard workloads. They do not change scoring data.
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_rec_hist_root_context_id
+               ON recommendation_history(context_date,id DESC) WHERE action IS NULL"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_rec_hist_exposure_action_id
+               ON recommendation_history(exposure_history_id,action,id DESC)"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_rec_trust_engine_history
+               ON recommendation_trust_audit(engine_version,history_id)"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_rec_outcome_engine_context
+               ON recommendation_outcomes(engine_version,context_date)"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_rec_outcome_context
+               ON recommendation_outcomes(context_date)"""
+        )
+
     def connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -572,6 +607,7 @@ class Database:
                 (6, self._apply_v6),
                 (7, self._apply_v7),
                 (8, self._apply_v8),
+                (9, self._apply_v9),
             ):
                 con.execute("BEGIN IMMEDIATE")
                 try:

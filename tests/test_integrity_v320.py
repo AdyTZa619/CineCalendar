@@ -76,7 +76,7 @@ def _trust_exposure(db: Database, movie_id: int, status: str = "trusted") -> int
         return history_id
 
 
-def test_v4_database_migrates_to_canonical_v8(tmp_path):
+def test_v4_database_migrates_to_canonical_v9(tmp_path):
     path = tmp_path / "upgrade.db"
     con = sqlite3.connect(path)
     try:
@@ -100,8 +100,8 @@ def test_v4_database_migrates_to_canonical_v8(tmp_path):
         provenance = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_provenance'"
         ).fetchone()
-    assert SCHEMA_VERSION == 8
-    assert current == 8
+    assert SCHEMA_VERSION == 9
+    assert current == 9
     assert "exposure_history_id" in columns
     assert trust is not None
     assert provenance is not None
