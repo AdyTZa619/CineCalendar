@@ -829,6 +829,57 @@ def install_library_ui(window_cls) -> None:
             metrics.addWidget(card, i // 4, i % 4)
         metric_wrap = QFrame(); metric_wrap.setLayout(metrics); content.addWidget(metric_wrap)
 
+        brain = getattr(self.s.recommender, "personalization_v41", None)
+        if brain is not None:
+            try:
+                p41 = brain.status()
+                q41 = dict(p41.get("quality_gate") or {})
+                evolution = list(brain.taste_evolution(10))
+            except Exception:
+                p41, q41, evolution = {}, {}, []
+
+            card = QFrame(); card.setObjectName("PremiumCard")
+            pl = QVBoxLayout(card); pl.setContentsMargins(18, 16, 18, 16); pl.setSpacing(7)
+            ph = QLabel("Personalizare 4.1 • evoluția gustului")
+            ph.setObjectName("SectionTitle"); pl.addWidget(ph)
+            gate_text = (
+                "ACTIVĂ — rerankingul temporal a trecut quality-gate-ul local."
+                if q41.get("approved")
+                else "PROTEJATĂ — explicațiile sunt active, dar rerankingul temporal nu primește voie să modifice scorul până nu demonstrează câștig."
+            )
+            gate = QLabel(gate_text); gate.setWordWrap(True)
+            gate.setObjectName("BodyStrong" if q41.get("approved") else "Muted")
+            pl.addWidget(gate)
+            if q41:
+                stats = QLabel(
+                    f"Holdout: {int(q41.get('holdout_count',0) or 0)} • "
+                    f"MAE bază: {q41.get('baseline_mae','—')} • MAE 4.1: {q41.get('model_mae','—')} • "
+                    f"câștig: {float(q41.get('mae_gain',0.0) or 0.0)*100:+.2f}%"
+                )
+                stats.setObjectName("Muted"); stats.setWordWrap(True); pl.addWidget(stats)
+
+            content_profiles = dict(p41.get("content_profiles") or {})
+            if content_profiles:
+                cp = QLabel(
+                    "Profiluri separate: " + " • ".join(
+                        f"{name}: {float(st.get('mean',0.0)):.2f}/10 ({int(st.get('count',0))}), trend {float(st.get('trend',0.0)):+.2f}"
+                        for name, st in sorted(content_profiles.items())
+                    )
+                )
+                cp.setObjectName("Muted"); cp.setWordWrap(True); pl.addWidget(cp)
+
+            if evolution:
+                eh2 = QLabel("Cele mai clare schimbări recente")
+                eh2.setObjectName("BodyStrong"); pl.addWidget(eh2)
+                for item in evolution[:8]:
+                    feature = str(item.get("feature") or "").replace(":", " → ", 1)
+                    trend = float(item.get("trend", 0.0) or 0.0)
+                    line = QLabel(
+                        f"{feature}: {trend:+.2f} puncte • {int(item.get('count',0))} ratinguri"
+                    )
+                    line.setObjectName("Muted"); line.setWordWrap(True); pl.addWidget(line)
+            content.addWidget(card)
+
         explain = QFrame(); explain.setObjectName("PremiumCard")
         el = QVBoxLayout(explain); el.setContentsMargins(18, 16, 18, 16); el.setSpacing(6)
         eh = QLabel("Cum se citesc valorile")
