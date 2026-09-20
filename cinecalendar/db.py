@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
-# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v6 through
+# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v7 through
 # idempotent Python helpers so an interrupted ALTER TABLE can be resumed safely.
 MIGRATIONS: dict[int, str] = {
 1: r'''
@@ -171,6 +171,32 @@ CREATE TABLE IF NOT EXISTS metadata_provenance(
   PRIMARY KEY(movie_id,field)
 );
 CREATE INDEX IF NOT EXISTS ix_metadata_provenance_provider ON metadata_provenance(provider);
+''',
+7: r'''
+ALTER TABLE recommendation_history ADD COLUMN predicted_rating REAL;
+ALTER TABLE recommendation_history ADD COLUMN confidence REAL;
+CREATE TABLE IF NOT EXISTS recommendation_outcomes(
+  exposure_history_id INTEGER PRIMARY KEY REFERENCES recommendation_history(id) ON DELETE CASCADE,
+  movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  rank_position INTEGER,
+  context_date TEXT NOT NULL,
+  slot TEXT NOT NULL,
+  chosen_at TEXT,
+  playback_at TEXT,
+  watched_at TEXT,
+  rating_id INTEGER REFERENCES ratings(id) ON DELETE SET NULL,
+  actual_rating INTEGER,
+  rating_date TEXT,
+  predicted_rating REAL,
+  confidence REAL,
+  final_score REAL,
+  engine_version TEXT,
+  absolute_error REAL,
+  resolved_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_rec_outcome_movie ON recommendation_outcomes(movie_id);
+CREATE INDEX IF NOT EXISTS ix_rec_outcome_rating_date ON recommendation_outcomes(rating_date);
 '''
 }
 
@@ -277,11 +303,15 @@ class Database:
         hist_cols = self._columns(con, "recommendation_history")
         if "exposure_history_id" not in hist_cols:
             return True
+        if "predicted_rating" not in hist_cols or "confidence" not in hist_cols:
+            return True
         if not self._table_exists(con, "recommendation_runs"):
             return True
         if not self._table_exists(con, "recommendation_trust_audit"):
             return True
         if not self._table_exists(con, "metadata_provenance"):
+            return True
+        if not self._table_exists(con, "recommendation_outcomes"):
             return True
         return False
 
@@ -419,6 +449,43 @@ class Database:
             "CREATE INDEX IF NOT EXISTS ix_metadata_provenance_provider ON metadata_provenance(provider)"
         )
 
+    def _apply_v7(self, con: sqlite3.Connection) -> None:
+        hist_cols = self._columns(con, "recommendation_history")
+        if "predicted_rating" not in hist_cols:
+            con.execute("ALTER TABLE recommendation_history ADD COLUMN predicted_rating REAL")
+        hist_cols = self._columns(con, "recommendation_history")
+        if "confidence" not in hist_cols:
+            con.execute("ALTER TABLE recommendation_history ADD COLUMN confidence REAL")
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS recommendation_outcomes(
+              exposure_history_id INTEGER PRIMARY KEY
+                REFERENCES recommendation_history(id) ON DELETE CASCADE,
+              movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+              rank_position INTEGER,
+              context_date TEXT NOT NULL,
+              slot TEXT NOT NULL,
+              chosen_at TEXT,
+              playback_at TEXT,
+              watched_at TEXT,
+              rating_id INTEGER REFERENCES ratings(id) ON DELETE SET NULL,
+              actual_rating INTEGER,
+              rating_date TEXT,
+              predicted_rating REAL,
+              confidence REAL,
+              final_score REAL,
+              engine_version TEXT,
+              absolute_error REAL,
+              resolved_at TEXT,
+              updated_at TEXT NOT NULL
+            )"""
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS ix_rec_outcome_movie ON recommendation_outcomes(movie_id)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS ix_rec_outcome_rating_date ON recommendation_outcomes(rating_date)"
+        )
+
     def connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -478,6 +545,7 @@ class Database:
                 (4, self._apply_v4),
                 (5, self._apply_v5),
                 (6, self._apply_v6),
+                (7, self._apply_v7),
             ):
                 con.execute("BEGIN IMMEDIATE")
                 try:
