@@ -204,9 +204,20 @@ def add_manual_rating(db: Database, title: str, year: int | None, rating: int, i
     with db.tx() as con:
         movie = con.execute("SELECT * FROM movies WHERE imdb_id=?", (imdb_id,)).fetchone() if imdb_id else None
         if movie is None:
-            movie = con.execute("SELECT * FROM movies WHERE identity_key=? ORDER BY id LIMIT 1", (ident,)).fetchone()
+            if imdb_id:
+                movie = con.execute(
+                    "SELECT * FROM movies WHERE imdb_id IS NULL AND identity_key=? ORDER BY id LIMIT 1",
+                    (ident,),
+                ).fetchone()
+            else:
+                movie = con.execute(
+                    "SELECT * FROM movies WHERE identity_key=? ORDER BY id LIMIT 1",
+                    (ident,),
+                ).fetchone()
         if movie is None:
-            movie = _fallback_movie(con,title,original_title,year,title_type)
+            movie = _fallback_movie(
+                con,title,original_title,year,title_type,incoming_imdb_id=imdb_id
+            )
         if movie is None:
             cur = con.execute("""INSERT INTO movies(imdb_id,identity_key,title,original_title,title_norm,original_title_norm,year,title_type,genres_json,source,created_at,updated_at)
                                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
