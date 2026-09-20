@@ -152,7 +152,7 @@ class OpenMovieMetadataProvider:
     def enrich_by_imdb(self, movie: Movie) -> Movie:
         if not movie.imdb_id:
             return movie
-        key = f"movie:{movie.imdb_id}"
+        key = f"movie:v2:{movie.imdb_id}"
         payload = self._cached(key)
         if payload is None:
             try:
