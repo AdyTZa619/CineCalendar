@@ -100,7 +100,7 @@ def enrich_library(db: Database, token: str, limit: int = 100, progress=None, *,
             WHERE m.imdb_id IS NOT NULL AND TRIM(m.imdb_id)!=''
               {rated_clause}
               AND (
-                   m.overview IS NULL OR TRIM(m.overview)='' OR m.tmdb_id IS NULL
+                   m.overview IS NULL OR TRIM(m.overview)=''
                    OR m.poster_url IS NULL OR TRIM(m.poster_url)=''
                    OR m.runtime_min IS NULL
                    OR TRIM(COALESCE(m.genres_json,'')) IN ('','[]')
