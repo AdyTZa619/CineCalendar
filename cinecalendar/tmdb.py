@@ -47,12 +47,20 @@ class TmdbProvider:
         movie.original_title=details.get("original_title") or movie.original_title
         movie.overview=details.get("overview") or movie.overview
         movie.runtime_min=details.get("runtime") or movie.runtime_min
-        movie.countries=[x.get("name","") for x in details.get("production_countries",[]) if x.get("name")]
-        movie.genres=[x.get("name","") for x in details.get("genres",[]) if x.get("name")] or movie.genres
+        countries=[x.get("name","") for x in details.get("production_countries",[]) if x.get("name")]
+        if countries:
+            movie.countries=countries
+        genres=[x.get("name","") for x in details.get("genres",[]) if x.get("name")]
+        if genres:
+            movie.genres=genres
         credits=details.get("credits",{}).get("crew",[])
-        movie.directors=[x.get("name","") for x in credits if x.get("job")=="Director" and x.get("name")]
+        directors=[x.get("name","") for x in credits if x.get("job")=="Director" and x.get("name")]
+        if directors:
+            movie.directors=directors
         kws=details.get("keywords",{}).get("keywords",[]) or details.get("keywords",{}).get("results",[])
-        movie.keywords=[x.get("name","") for x in kws if x.get("name")]
+        keywords=[x.get("name","") for x in kws if x.get("name")]
+        if keywords:
+            movie.keywords=keywords
         poster=details.get("poster_path"); movie.poster_url=(IMG_BASE+poster) if poster else movie.poster_url
         movie.semantic=extract_semantic(movie)
         with self.db.tx() as con:
