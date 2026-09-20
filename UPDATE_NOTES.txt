@@ -1,27 +1,28 @@
-CineCalendar 3.9.9 repară reconcilierea completă dintre exporturile IMDb vechi și profilul public IMDb curent.
+CineCalendar 3.9.10 corectează regresia introdusă de 3.9.8/3.9.9 în sincronizarea ratingurilor IMDb.
 
-Ratinguri IMDb:
-- profilul public complet este acum sursa de adevăr pentru ratingurile provenite din IMDb;
-- după o sincronizare completă, ratingurile vechi din CSV care nu mai există pe profilul public sunt eliminate automat din istoricul local;
-- ratingurile manuale nu sunt șterse de această reconciliere;
-- o scădere suspect de mare sau un răspuns gol de la IMDb nu poate provoca ștergeri masive: sincronizarea se oprește fără modificări;
-- ratingurile confirmate live primesc sursa imdb_public_sync chiar dacă nota și data nu s-au schimbat;
-- după orice import CSV manual sau automat, profilul public este reverificat pentru ca un export vechi să nu reintroducă intrări stale.
+Sursa corectă:
+- exportul IMDb importat rămâne baza istorică canonică;
+- sincronizarea profilului public este doar un updater incremental pentru ratinguri noi/modificate și un mecanism de legare a identităților;
+- aplicația nu mai șterge ratinguri valide din export doar pentru că endpointul public returnează alt IMDb ID.
 
-Identitate filme:
-- două filme IMDb diferite cu același titlu și același an nu mai sunt combinate după nume/an;
-- regula este aplicată la importul CSV de ratinguri, importul de catalog și adăugarea manuală cu IMDb ID;
-- o asociere după titlu/an este permisă pentru un IMDb ID nou doar dacă înregistrarea locală nu are încă IMDb ID.
+Duplicate:
+- dacă profilul public returnează alt IMDb ID pentru același titlu/an/rating/data deja existent în export, intrarea publică este legată de filmul exportat, nu creată ca al doilea rating;
+- duplicatele public-sync deja create de versiunile anterioare sunt reparate automat;
+- dacă 3.9.9 a șters ratingul de pe filmul exportat, 3.9.10 mută ratingul înapoi pe înregistrarea locală bogată în metadate atunci când potrivirea este unică și sigură;
+- aliasul dintre ID-ul public și ID-ul canonic local este memorat pentru sincronizările următoare;
+- filmele distincte cu același titlu/an rămân separate când nu există dovadă suficientă că sunt aceeași intrare.
 
 Metadate:
-- filmele descoperite numai prin sincronizarea profilului IMDb primesc automat, best-effort, rating IMDb, număr de voturi, durată, genuri, poster și credite de regie atunci când endpointul public le oferă;
-- schema live pentru metadate IMDb este verificată în gate-ul de release.
+- filmul canonic păstrează IMDb rating, voturi, genuri, regizor, durată și poster deja existente;
+- titlurile cu adevărat noi adăugate prin profilul public primesc în continuare completare best-effort de metadate.
 
-Cazul care a expus problema:
-- în profilul public curent există Jana (2004) cu IMDb ID tt4568192;
-- vechiul tt1861356 provenea din istoricul CSV local și nu mai există în ratingurile profilului public curent;
-- 3.9.9 îl elimină automat din lista Ratinguri la prima sincronizare completă, păstrând filmul ca titlu de catalog fără rating.
+Siguranță:
+- sincronizarea respectă din nou baseline-ul exportului 05.09.2026;
+- ratingurile istorice de dinainte de baseline pot confirma/actualiza un rând existent, dar nu pot crea duplicate istorice noi;
+- ratingurile manuale nu sunt afectate;
+- referințele din watchlist, feedback, istoric recomandări și auditul de încredere sunt mutate pe filmul canonic când se repară un duplicat.
 
-Build:
-- testele includ reconciliere stale, protecția ratingurilor manuale, două filme cu același titlu/an și completarea metadatelor publice;
-- gate-ul live IMDb, benchmark-ul, build-ul Windows și smoke launch-ul trebuie să treacă înainte de Stable.
+Cazul Jana:
+- exportul inițial valid conținea Jana (2004) cu tt1861356 și metadatele complete;
+- public sync a introdus separat tt4568192, fără metadatele locale, ceea ce a produs cele două rânduri văzute în Ratinguri;
+- 3.9.10 păstrează rândul exportat cu metadatele lui și elimină duplicatul public-sync prin reconciliere, fără să șteargă istoricul exportat.
