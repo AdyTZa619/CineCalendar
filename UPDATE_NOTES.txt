@@ -1,28 +1,63 @@
-CineCalendar 4.2.1 – Outcome Backup Integrity
+CineCalendar 4.3.0 – Learning Insight
 
-Prioritate:
-- protejează complet datele introduse în 4.2 înainte de următoarele schimbări majore de recomandare.
+Obiectiv:
+- folosește rezultatele reale din 4.2 pentru a îmbunătăți predicțiile fără să înlocuiască shortlist-ul validat;
+- explică și păstrează exact de ce un film a fost recomandat;
+- face performanța motorului comparabilă pe perioade și versiuni.
 
-Backup profil v3:
-- Export profil include acum recommendation_outcomes;
-- recommendation_history păstrează predicted_rating și confidence;
-- Restore reconstruiește corect relațiile outcome → exposure → movie → rating;
-- ID-urile interne sunt remapate în baza restaurată, nu copiate mecanic;
-- în modul Merge, un outcome din backup este legat de ratingul local mai nou dacă acel rating câștigă conflictul;
-- backupurile profil v1 și v2 rămân compatibile la import;
-- profilul exportat urcă la format v3;
-- recommendation_outcomes intră și în numărătoarea din manifest.
+1. Calibrare automată după ratingurile reale
+- folosește recommendation_outcomes cu predicted_rating + actual_rating;
+- construiește corecții globale, pe tip de conținut și pe zona notei estimate;
+- validarea este cronologică: train pe rezultatele mai vechi, holdout pe cele mai noi;
+- are nevoie de minimum 30 outcome-uri măsurabile;
+- se activează numai dacă MAE sau procentul la ±1 punct se îmbunătățește;
+- corecția notei este plafonată la ±0,70;
+- influența asupra ordinii este foarte mică și plafonată;
+- nu poate introduce un film nou în Top 3, doar poate reordona shortlist-ul deja acceptat.
 
-Fereastra validă de măsurare:
-- dashboard-ul de performanță folosește numai expuneri care aveau predicted_rating salvat la momentul recomandării;
-- outcome-urile legacy fără snapshot de predicție nu mai intră în choice-rate, MAE, bias, Top 1/Top 3 sau lista de rezultate recente;
-- Taste Hub afișează explicit data de la care există date măsurabile;
-- dacă încă nu există o recomandare 4.2+ măsurabilă, interfața explică faptul că statisticile vor începe după primul snapshot valid.
+2. Semantică text mai profundă, dar ușoară
+- analizează local synopsis + keywords;
+- folosește tokeni, expresii de două cuvinte, suport și IDF;
+- nu adaugă un model AI mare în executabil;
+- cere minimum 120 ratinguri cu text și holdout de minimum 24;
+- semnalul se activează numai dacă îmbunătățește MAE față de baza cronologică;
+- influența finală este plafonată la ±0,009 din scor.
 
-Motiv:
-- CineCalendar 4.2 a introdus outcome learning; fără acest patch, Export profil / Restore putea pierde outcome-urile și snapshoturile de predicție chiar dacă backupul SQLite al updaterului rămânea sigur.
+3. Explorare controlată
+- modul „Surprinde-mă” poate favoriza foarte ușor noutatea;
+- numai dacă filmul are predicție, încredere și calitate suficiente;
+- bonus maxim 0,006;
+- funcționează exclusiv în shortlist-ul deja validat, fără candidați noi injectați.
 
-Siguranță:
-- schema SQLite rămâne v7;
-- motorul de recomandări, Personalizarea 4.1 și scoring-ul nu sunt modificate;
-- schimbarea este limitată la backup/restore și la delimitarea corectă a statisticilor 4.2.
+4. „De ce A și nu B?”
+- alternativele din „Ce văd acum?” explică direct de ce alegerea #1 este înainte;
+- compară nota estimată, încrederea și factorii principali;
+- nu inventează motive dacă diferența este foarte mică.
+
+5. Istoric complet al recomandărilor
+- pagina Istoric este refăcută;
+- filtre: perioadă, status, motor și căutare;
+- coloane: dată, titlu, poziție, estimare, potrivire, încredere, motor, status, nota reală, eroare și context;
+- dublu-click deschide detaliile expunerii;
+- pentru recomandările 4.3+ se păstrează motivul exact, compromisurile, factorii și contribuțiile existente în momentul afișării;
+- expunerile vechi rămân vizibile, dar aplicația spune explicit când explicația exactă nu exista în versiunea respectivă.
+
+6. Dashboard pe perioade și versiuni
+- Taste Hub poate filtra performanța pe: toată perioada / 30 zile / 90 zile / anul curent;
+- poate filtra pe versiunea motorului;
+- afișează comparație compactă între versiunile care au date;
+- outcome-urile se reconciliază o singură dată la deschiderea dashboard-ului, nu pentru fiecare versiune.
+
+7. Persistență și integritate
+- schema SQLite urcă la v8;
+- noua tabelă recommendation_explanations păstrează snapshotul explicației per expunere;
+- Profile Backup urcă la v4 și include recommendation_explanations;
+- importul profilelor v1/v2/v3 rămâne compatibil;
+- restore remapează snapshoturile la noile history_id-uri;
+- backupul pre-migration, quick_check, last-good snapshot și rollback rămân neschimbate.
+
+8. Producție
+- stack-ul devine production-stack-v4.3.0;
+- Learning Insight este compus peste Availability Guard + Context 3.5 + Personalizare 4.1;
+- Quality Manager 3.7 rămâne protecția generală anti-regresie;
+- 4.3 își mai aplică propriile quality-gate-uri locale pentru calibrare și semantică.
