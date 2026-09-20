@@ -557,8 +557,7 @@ class LearningInsightBrainV43:
                     )
                     s.score_factors["explorare controlată"] = shift
 
-        rec.score.score_factors["calibrare activă"] = 1.0 if calibration.get("approved") else 0.0
-        rec.score.score_factors["semantică fină activă"] = 1.0 if semantic.get("approved") else 0.0
+        # Activation state is exposed in Taste Hub; score_factors keeps only numeric influences.
 
 
 def learning_insight_engine_class(base_cls: type) -> type:
