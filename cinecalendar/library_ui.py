@@ -969,6 +969,7 @@ def install_library_ui(window_cls) -> None:
                         recent_limit=1,
                         since_date=perf_since,
                         engine_version=version_name,
+                        reconcile=False,
                     )
                 except Exception:
                     continue
