@@ -78,9 +78,14 @@ def reconcile_recommendation_outcomes(db) -> int:
                       COALESCE(NULLIF(date_rated,''),updated_at,imported_at,'') AS rating_date
                FROM ratings"""
         ).fetchall()
+    skipped_ids = {
+        int(row["exposure_history_id"])
+        for row in rows
+        if str(row["final_action"] or "") == "skip_today"
+    }
     rows = [
         row for row in rows
-        if str(row["final_action"] or "") != "skip_today"
+        if int(row["exposure_history_id"]) not in skipped_ids
     ]
     ratings = {int(row["movie_id"]): row for row in rating_rows}
 
@@ -110,6 +115,13 @@ def reconcile_recommendation_outcomes(db) -> int:
 
     changed = 0
     with db.tx() as con:
+        if skipped_ids:
+            marks = ",".join("?" for _ in skipped_ids)
+            cur = con.execute(
+                f"DELETE FROM recommendation_outcomes WHERE exposure_history_id IN ({marks})",
+                tuple(sorted(skipped_ids)),
+            )
+            changed += int(cur.rowcount or 0)
         for row in rows:
             movie_id = int(row["movie_id"])
             rating = ratings.get(movie_id)
