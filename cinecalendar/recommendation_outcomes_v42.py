@@ -216,8 +216,10 @@ def recommendation_performance(
     recent_limit: int = 12,
     since_date: str | None = None,
     engine_version: str = "",
+    reconcile: bool = True,
 ) -> RecommendationPerformance:
-    reconcile_recommendation_outcomes(db)
+    if reconcile:
+        reconcile_recommendation_outcomes(db)
 
     exposure_where = [
         "h.action IS NULL",
