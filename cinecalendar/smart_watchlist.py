@@ -7,7 +7,7 @@ from .models import Recommendation
 from .profile import get_profile
 from .recommendation import row_to_movie
 from .recommender_v11 import ALS_WEIGHT, CONTENT_WEIGHT
-from .util import clamp
+from .util import clamp, json_loads
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,28 @@ def _known_future(row: dict, when: date) -> bool:
         pass
     release = str(row.get("release_date") or "")[:10]
     return bool(len(release) >= 10 and release > when.isoformat())
+
+
+def pinned_watchlist_ids(db) -> set[int]:
+    raw = db.get_setting("watchlist_pinned_movie_ids", []) or []
+    out: set[int] = set()
+    for value in raw:
+        try:
+            out.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def set_watchlist_pinned(db, movie_id: int, pinned: bool) -> bool:
+    ids = pinned_watchlist_ids(db)
+    mid = int(movie_id)
+    if pinned:
+        ids.add(mid)
+    else:
+        ids.discard(mid)
+    db.set_setting("watchlist_pinned_movie_ids", sorted(ids))
+    return mid in ids
 
 
 def remove_from_watchlist(db, movie_id: int) -> bool:
