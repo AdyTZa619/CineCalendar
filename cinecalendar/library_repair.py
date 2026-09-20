@@ -116,7 +116,7 @@ def _missing_rows(db, limit: int):
         ).fetchall()
 
 
-def remaining_metadata_gaps(db, limit: int = 50) -> tuple[str, ...]:
+def remaining_metadata_gaps(db, limit: int = 5000) -> tuple[str, ...]:
     with db.connect() as con:
         rows = con.execute(
             """SELECT m.title,m.original_title,m.imdb_id,m.runtime_min,m.imdb_rating,
@@ -282,7 +282,7 @@ def repair_rated_library(
     progress("Recalculez statisticile și profilul de gust…")
     build_profile(db)
     after = rated_library_health(db)
-    remaining = remaining_metadata_gaps(db, limit=50)
+    remaining = remaining_metadata_gaps(db, limit=5000)
     return LibraryRepairResult(
         before=before,
         after=after,
