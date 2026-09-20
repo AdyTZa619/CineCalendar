@@ -356,8 +356,7 @@ def backfill_public_rating_metadata(
                  AND m.imdb_id IS NOT NULL
                  AND (
                      m.imdb_rating IS NULL OR m.runtime_min IS NULL OR
-                     m.genres_json='[]' OR
-                     m.poster_url IS NULL OR TRIM(m.poster_url)=''
+                     m.genres_json='[]'
                  )
                ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC
                LIMIT ?""",
