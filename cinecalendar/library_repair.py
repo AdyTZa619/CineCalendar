@@ -8,6 +8,7 @@ import requests
 
 from .catalog import repair_rated_metadata_from_official_datasets
 from .imdb_sync import backfill_public_rating_metadata, sync_public_ratings
+from .metadata_consistency_v41 import audit_metadata_consistency
 from .models import Movie
 from .open_metadata import OpenMovieMetadataProvider
 from .profile import build_profile
@@ -49,6 +50,7 @@ class LibraryRepairResult:
     imdb_dataset_genres: int = 0
     imdb_dataset_runtime: int = 0
     remaining_gaps: tuple[str, ...] = ()
+    consistency_issues: tuple[str, ...] = ()
     stage_errors: tuple[str, ...] = ()
 
     @property
@@ -283,6 +285,7 @@ def repair_rated_library(
     build_profile(db)
     after = rated_library_health(db)
     remaining = remaining_metadata_gaps(db, limit=5000)
+    consistency = audit_metadata_consistency(db, limit=5000)
     return LibraryRepairResult(
         before=before,
         after=after,
@@ -299,5 +302,6 @@ def repair_rated_library(
         imdb_dataset_genres=int(dataset_result.get("genres_filled", 0) or 0),
         imdb_dataset_runtime=int(dataset_result.get("runtime_filled", 0) or 0),
         remaining_gaps=remaining,
+        consistency_issues=consistency.issues,
         stage_errors=tuple(stage_errors),
     )
