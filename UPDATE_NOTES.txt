@@ -1,29 +1,25 @@
-CineCalendar 3.9.7 repară complet fluxul „Ratinguri IMDb” + „Filme RO • Cronologie”.
+CineCalendar 3.9.8 finalizează remedierea problemelor rămase după 3.9.7.
 
-IMDb:
-- profilurile publice IMDb moderne cu ID p.* sunt rezolvate corect la ID-ul intern ur* înainte de citirea ratingurilor;
-- verificarea live pe profilul configurat citește 2.444 ratinguri publice;
-- sincronizarea completă importă întreg istoricul, inclusiv ratingurile vechi, și actualizează notele schimbate fără duplicate;
-- importul complet rulează atomic într-o singură tranzacție SQLite, fără mii de commit-uri separate;
-- butonul „Sincronizează IMDb acum” funcționează și dacă sincronizarea automată este dezactivată;
-- pagina Ratinguri arată explicit ultima sincronizare reușită, ultima eroare și faptul că tabelul vizibil este limitat la ultimele 500 de intrări.
+Recomandări:
+- elimină complet excluderea globală și penalizarea specială pentru Romance;
+- genurile sunt tratate normal de profilul personal și de ratingurile utilizatorului;
+- opțiunea veche „Exclude Romance” a fost eliminată din Setări.
 
-Filme RO • Cronologie:
-- cele 233 de titluri sunt identificate întâi prin IMDb ID, apoi sunt folosite ratingurile și posterele;
-- filmele absente din catalogul local filtrat sunt căutate în datasetul IMDb complet din cache și, dacă este necesar, prin serviciul public IMDb Suggestion;
-- potrivirea suportă variante bilingve, mici diferențe de scriere și titluri fără an, cu protecție contra remake-urilor greșite;
-- legăturile IMDb găsite sunt persistate local, iar verificările costisitoare sunt memorate;
-- după o sincronizare IMDb, cronologia se reevaluează automat astfel încât filmele deja notate să apară VĂZUTE;
-- interfața afișează separat câte titluri sunt identificate în IMDb și câte au poster.
+„Ce văd acum?”:
+- „Aleg filmul ăsta” fixează acum efectiv alegerea pentru ziua curentă;
+- filmul ales rămâne afișat după schimbarea paginii sau repornirea aplicației;
+- alegerea se eliberează când utilizatorul cere alt film, îl marchează văzut sau începe o zi nouă.
 
 Postere:
-- fallback-ul nu se mai oprește la primele 48 de titluri;
-- sunt încercate IMDb primary image, IMDb Suggestion, Wikidata și Wikimedia;
-- URL-urile de poster defecte sunt memorate și nu sunt refolosite la nesfârșit;
-- fișierele cache invalide sunt eliminate;
-- descărcările simultane sunt limitate pentru a evita blocaje și curse pe cache;
-- dacă sursele externe sunt indisponibile, procesul se oprește rapid în loc să aștepte inutil sute de timeout-uri.
+- încărcarea posterelor folosește o coadă centrală;
+- maximum 6 descărcări rulează simultan;
+- cererile duplicate pentru același poster sunt reunite într-o singură descărcare;
+- cache-ul existent este folosit imediat, iar imaginile invalide sunt eliminate.
 
-Build:
-- workflow-ul Windows folosește Actions compatibile Node 24;
-- testele automate, benchmark-ul, build-ul PyInstaller și smoke launch-ul trebuie să treacă înainte de publicarea Stable.
+Release / stabilitate:
+- verificarea live a profilului public IMDb este acum un gate obligatoriu, cu până la 3 încercări;
+- un build Stable nu mai poate fi publicat dacă sincronizarea live IMDb este stricată;
+- actions/upload-artifact este actualizat la v7 / Node 24;
+- textul din Setări descrie corect updaterul Stable activ și sursele reale de metadata.
+
+Toate remediile au teste de regresie dedicate.
