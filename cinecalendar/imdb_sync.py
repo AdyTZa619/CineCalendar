@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 import requests
 
 from .db import Database
+from .models import Movie
+from .semantic import extract_semantic
 from .util import identity_key, json_dumps, normalize_text, utcnow_iso
 
 
@@ -56,6 +58,34 @@ query CineCalendarUserRatings($userId: ID!, $first: Int!, $after: String) {
 }
 """
 
+_TITLE_METADATA_QUERY = """
+query CineCalendarTitleMetadata($ids: [ID!]!) {
+  titles(ids: $ids) {
+    id
+    runtime { seconds }
+    ratingsSummary { aggregateRating voteCount }
+    genres { genres { text } }
+    primaryImage { url }
+    principalCredits(first: 8) {
+      category { id text }
+      credits { name { nameText { text } } }
+    }
+  }
+}
+"""
+
+_TITLE_METADATA_CORE_QUERY = """
+query CineCalendarTitleMetadataCore($ids: [ID!]!) {
+  titles(ids: $ids) {
+    id
+    runtime { seconds }
+    ratingsSummary { aggregateRating voteCount }
+    genres { genres { text } }
+    primaryImage { url }
+  }
+}
+"""
+
 
 @dataclass(frozen=True)
 class RemoteRating:
@@ -74,6 +104,7 @@ class SyncResult:
     new_ratings: list[tuple[str, int]] = field(default_factory=list)
     changed_ratings: list[tuple[str, int, int]] = field(default_factory=list)
     removed_ratings: list[tuple[str, int, str]] = field(default_factory=list)
+    metadata_enriched: int = 0
     unchanged: int = 0
     stopped_at_baseline: bool = False
 
@@ -280,6 +311,174 @@ def fetch_public_ratings(
     if not out and malformed_total:
         raise RuntimeError("IMDb nu a returnat niciun rating valid.")
     return out
+
+
+def _metadata_payload(
+    client: requests.Session,
+    ids: list[str],
+    *,
+    timeout: int = 20,
+) -> dict[str, Any]:
+    try:
+        return _graphql_post(
+            client,
+            _TITLE_METADATA_QUERY,
+            {"ids": ids},
+            timeout=timeout,
+        )
+    except RuntimeError:
+        # Credits are less stable than core title fields. Never let one optional
+        # field prevent rating metadata from being filled.
+        return _graphql_post(
+            client,
+            _TITLE_METADATA_CORE_QUERY,
+            {"ids": ids},
+            timeout=timeout,
+        )
+
+
+def backfill_public_rating_metadata(
+    db: Database,
+    *,
+    limit: int = 120,
+    timeout: int = 20,
+    session: requests.Session | None = None,
+) -> int:
+    """Best-effort metadata fill for titles first discovered through profile sync."""
+    with db.connect() as con:
+        rows = con.execute(
+            """SELECT m.id,m.imdb_id,m.title,m.original_title,m.year,m.title_type,
+                      m.runtime_min,m.genres_json,m.directors_json,m.imdb_rating,
+                      m.num_votes,m.poster_url
+               FROM movies m
+               JOIN ratings r ON r.movie_id=m.id
+               WHERE r.source='imdb_public_sync'
+                 AND m.imdb_id IS NOT NULL
+                 AND (
+                     m.imdb_rating IS NULL OR m.runtime_min IS NULL OR
+                     m.genres_json='[]' OR m.directors_json='[]' OR
+                     m.poster_url IS NULL OR TRIM(m.poster_url)=''
+                 )
+               ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC
+               LIMIT ?""",
+            (max(1, int(limit)),),
+        ).fetchall()
+    if not rows:
+        return 0
+
+    by_imdb = {str(row["imdb_id"]): row for row in rows}
+    client = session or requests.Session()
+    enriched = 0
+    now = utcnow_iso()
+
+    for start in range(0, len(by_imdb), 60):
+        ids = list(by_imdb)[start:start + 60]
+        try:
+            payload = _metadata_payload(client, ids, timeout=timeout)
+        except RuntimeError:
+            continue
+        items = (payload.get("data") or {}).get("titles") or []
+        if not isinstance(items, list):
+            continue
+
+        with db.tx() as con:
+            for meta in items:
+                if not isinstance(meta, dict):
+                    continue
+                iid = str(meta.get("id") or "")
+                row = by_imdb.get(iid)
+                if row is None:
+                    continue
+
+                rating_summary = meta.get("ratingsSummary") or {}
+                try:
+                    imdb_rating = (
+                        float(rating_summary.get("aggregateRating"))
+                        if rating_summary.get("aggregateRating") is not None else None
+                    )
+                except (TypeError, ValueError):
+                    imdb_rating = None
+                try:
+                    num_votes = (
+                        int(rating_summary.get("voteCount"))
+                        if rating_summary.get("voteCount") is not None else None
+                    )
+                except (TypeError, ValueError):
+                    num_votes = None
+
+                runtime = meta.get("runtime") or {}
+                try:
+                    runtime_min = (
+                        int(round(int(runtime.get("seconds")) / 60))
+                        if runtime.get("seconds") is not None else None
+                    )
+                except (TypeError, ValueError):
+                    runtime_min = None
+
+                genres: list[str] = []
+                for genre_row in ((meta.get("genres") or {}).get("genres") or []):
+                    if isinstance(genre_row, dict):
+                        value = str(genre_row.get("text") or "").strip()
+                        if value and value not in genres:
+                            genres.append(value)
+
+                directors: list[str] = []
+                for group in meta.get("principalCredits") or []:
+                    if not isinstance(group, dict):
+                        continue
+                    category = group.get("category") or {}
+                    category_id = str(category.get("id") or "").lower()
+                    category_text = str(category.get("text") or "").lower()
+                    if category_id != "director" and "director" not in category_text:
+                        continue
+                    for credit in group.get("credits") or []:
+                        name = ((credit or {}).get("name") or {}).get("nameText") or {}
+                        value = str(name.get("text") or "").strip()
+                        if value and value not in directors:
+                            directors.append(value)
+
+                poster_url = str(((meta.get("primaryImage") or {}).get("url") or "")).strip() or None
+                use_genres = genres if genres else None
+                use_directors = directors if directors else None
+
+                movie = Movie(
+                    id=int(row["id"]),
+                    imdb_id=iid,
+                    title=str(row["title"] or ""),
+                    original_title=str(row["original_title"] or row["title"] or ""),
+                    year=int(row["year"]) if row["year"] is not None else None,
+                    title_type=str(row["title_type"] or "Movie"),
+                    runtime_min=runtime_min or row["runtime_min"],
+                    genres=genres,
+                    directors=directors,
+                    imdb_rating=imdb_rating,
+                    num_votes=num_votes,
+                    poster_url=poster_url,
+                )
+                semantic = extract_semantic(movie)
+
+                con.execute(
+                    """UPDATE movies SET
+                         runtime_min=COALESCE(runtime_min,?),
+                         genres_json=CASE WHEN genres_json='[]' AND ?!='[]' THEN ? ELSE genres_json END,
+                         directors_json=CASE WHEN directors_json='[]' AND ?!='[]' THEN ? ELSE directors_json END,
+                         imdb_rating=COALESCE(imdb_rating,?),
+                         num_votes=COALESCE(num_votes,?),
+                         poster_url=COALESCE(NULLIF(poster_url,''),?),
+                         semantic_json=CASE WHEN semantic_json='{}' THEN ? ELSE semantic_json END,
+                         updated_at=?
+                       WHERE id=?""",
+                    (
+                        runtime_min,
+                        json_dumps(use_genres or []), json_dumps(use_genres or []),
+                        json_dumps(use_directors or []), json_dumps(use_directors or []),
+                        imdb_rating, num_votes, poster_url,
+                        json_dumps(semantic), now, int(row["id"]),
+                    ),
+                )
+                if any((runtime_min, use_genres, use_directors, imdb_rating, num_votes, poster_url)):
+                    enriched += 1
+    return enriched
 
 
 _IMDB_RATING_SOURCES = ("imdb", "imdb_public_sync", "imdb_csv")
