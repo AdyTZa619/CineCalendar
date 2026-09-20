@@ -75,7 +75,7 @@ jobs:
         run: |
           $ok = $false
           for ($attempt = 1; $attempt -le 3; $attempt++) {
-            python -c "from cinecalendar.imdb_sync import fetch_public_ratings,DEFAULT_PROFILE_URL; rows=fetch_public_ratings(DEFAULT_PROFILE_URL,timeout=20); print('LIVE_IMDB_RATINGS',len(rows)); print('JANA_LIVE',[(r.imdb_id,r.title,r.year,r.rating,r.date_rated) for r in rows if r.imdb_id in {'tt1861356','tt4568192'}]); assert len(rows) >= 2000, len(rows)"
+            python -c "from cinecalendar.imdb_sync import fetch_public_ratings,DEFAULT_PROFILE_URL; rows=fetch_public_ratings(DEFAULT_PROFILE_URL,timeout=20); print('LIVE_IMDB_RATINGS',len(rows)); assert len(rows) >= 2000, len(rows)"
             if ($LASTEXITCODE -eq 0) { $ok = $true; break }
             Write-Warning "IMDb live gate attempt $attempt failed."
             Start-Sleep -Seconds (5 * $attempt)
