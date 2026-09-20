@@ -106,6 +106,24 @@ def download_official_imdb_recommender_datasets(cache_dir: str|Path, progress: C
     return basics, ratings, crew, names
 
 
+def _refresh_if_stale(path: Path, max_age_hours: int, progress: Callable[[str], None], label: str) -> bool:
+    """Remove an old cached dataset so the next download gets current IMDb metadata."""
+    if not path.exists():
+        return False
+    try:
+        age_seconds = max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return False
+    if age_seconds <= max(1, int(max_age_hours)) * 3600:
+        return False
+    progress(
+        f"{label}: copia locală are {age_seconds / 3600:.0f} h; descarc versiunea IMDb actuală."
+    )
+    path.unlink(missing_ok=True)
+    path.with_suffix(path.suffix + ".part").unlink(missing_ok=True)
+    return True
+
+
 def download_official_imdb_metadata_datasets(
     cache_dir: str | Path,
     progress: Callable[[str], None] | None = None,
@@ -123,6 +141,13 @@ def download_official_imdb_metadata_datasets(
         for path in (basics, crew, names):
             path.unlink(missing_ok=True)
             path.with_suffix(path.suffix + ".part").unlink(missing_ok=True)
+    else:
+        # IMDb refreshes these datasets regularly. A forever-cache would keep recently
+        # corrected directors/titles stale even though IMDb already shows the new data.
+        _refresh_if_stale(basics, 36, progress, "IMDb title.basics")
+        if need_directors:
+            _refresh_if_stale(crew, 36, progress, "IMDb title.crew")
+            _refresh_if_stale(names, 36, progress, "IMDb name.basics")
 
     _download_stream(IMDB_DATASET_URLS["basics"], basics, progress, "IMDb title.basics", force=False)
     if not _valid_gzip_tsv(
