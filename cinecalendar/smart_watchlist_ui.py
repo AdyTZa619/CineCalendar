@@ -4,6 +4,7 @@ from datetime import date
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -16,7 +17,13 @@ from PySide6.QtWidgets import (
 
 from .qt_ui import WorkerThread
 from .recommendation import row_to_movie
-from .smart_watchlist import rank_watchlist, remove_from_watchlist, watchlist_entries
+from .smart_watchlist import (
+    pinned_watchlist_ids,
+    rank_watchlist,
+    remove_from_watchlist,
+    set_watchlist_pinned,
+    watchlist_entries,
+)
 
 
 def _clear_layout(layout) -> None:
@@ -52,6 +59,60 @@ def install_smart_watchlist_ui(window_cls) -> None:
         layout.addWidget(text)
         return box
 
+    def _filters_card(self):
+        box = QFrame()
+        box.setObjectName("PremiumCard")
+        row = QHBoxLayout(box)
+        row.setContentsMargins(16, 12, 16, 12)
+
+        row.addWidget(QLabel("Durată"))
+        runtime = QComboBox()
+        for label, key in (
+            ("Orice", "all"),
+            ("≤ 90 min", "short"),
+            ("91–120 min", "medium"),
+            ("> 120 min", "long"),
+        ):
+            runtime.addItem(label, key)
+        wanted_runtime = str(self.db.get_setting("watchlist_runtime_filter", "all") or "all")
+        idx = runtime.findData(wanted_runtime)
+        runtime.setCurrentIndex(idx if idx >= 0 else 0)
+        row.addWidget(runtime)
+
+        row.addWidget(QLabel("Tip"))
+        content_type = QComboBox()
+        for label, key in (
+            ("Toate", "all"),
+            ("Filme", "movie"),
+            ("Scurtmetraje", "short"),
+            ("Documentare", "documentary"),
+        ):
+            content_type.addItem(label, key)
+        wanted_type = str(self.db.get_setting("watchlist_type_filter", "all") or "all")
+        idx = content_type.findData(wanted_type)
+        content_type.setCurrentIndex(idx if idx >= 0 else 0)
+        row.addWidget(content_type)
+        row.addStretch(1)
+
+        def changed():
+            self.db.set_setting("watchlist_runtime_filter", str(runtime.currentData() or "all"))
+            self.db.set_setting("watchlist_type_filter", str(content_type.currentData() or "all"))
+            self.show_page("watchlist")
+
+        runtime.currentIndexChanged.connect(lambda _i: changed())
+        content_type.currentIndexChanged.connect(lambda _i: changed())
+        return box
+
+    def _toggle_pin(self, movie_id: int):
+        ids = pinned_watchlist_ids(self.db)
+        new_state = int(movie_id) not in ids
+        set_watchlist_pinned(self.db, int(movie_id), new_state)
+        self.set_status(
+            "Marcat «Vreau să-l văd curând»." if new_state else "Prioritatea din Watchlist a fost scoasă.",
+            False,
+        )
+        self.show_page("watchlist")
+
     def _remove(self, movie_id: int):
         try:
             removed = remove_from_watchlist(self.db, int(movie_id))
@@ -81,7 +142,8 @@ def install_smart_watchlist_ui(window_cls) -> None:
         right = QVBoxLayout()
         right.setSpacing(7)
         head = QHBoxLayout()
-        title = QLabel(f"{index}. {movie.title}" + (f" ({movie.year})" if movie.year else ""))
+        display_title = movie.original_title or movie.title
+        title = QLabel(f"{index}. {display_title}" + (f" ({movie.year})" if movie.year else ""))
         title.setObjectName("CardTitle")
         title.setWordWrap(True)
         head.addWidget(title, 1)
@@ -134,6 +196,11 @@ def install_smart_watchlist_ui(window_cls) -> None:
             play.clicked.connect(lambda _checked=False, m=movie: self.watch_now(m))
             actions.addWidget(play)
 
+        pinned = int(movie.id) in pinned_watchlist_ids(self.db)
+        pin = QPushButton("Prioritar" if not pinned else "Prioritar ✓")
+        pin.clicked.connect(lambda _checked=False, mid=movie.id: _toggle_pin(self, int(mid)))
+        actions.addWidget(pin)
+
         remove = QPushButton("Scoate")
         remove.clicked.connect(lambda _checked=False, mid=movie.id: _remove(self, int(mid)))
         actions.addWidget(remove)
@@ -150,7 +217,7 @@ def install_smart_watchlist_ui(window_cls) -> None:
         layout = QHBoxLayout(box)
         layout.setContentsMargins(15, 12, 15, 12)
 
-        text = movie.title + (f" ({movie.year})" if movie.year else "")
+        text = (movie.original_title or movie.title) + (f" ({movie.year})" if movie.year else "")
         if row.get("is_rated"):
             text += "  •  deja evaluat"
         title = QLabel(text)
@@ -164,6 +231,11 @@ def install_smart_watchlist_ui(window_cls) -> None:
             date_label.setObjectName("Muted")
             layout.addWidget(date_label)
 
+        pinned = int(movie.id) in pinned_watchlist_ids(self.db)
+        pin = QPushButton("Prioritar ✓" if pinned else "Prioritar")
+        pin.clicked.connect(lambda _checked=False, mid=movie.id: _toggle_pin(self, int(mid)))
+        layout.addWidget(pin)
+
         remove = QPushButton("Scoate")
         remove.clicked.connect(lambda _checked=False, mid=movie.id: _remove(self, int(mid)))
         layout.addWidget(remove)
@@ -174,6 +246,7 @@ def install_smart_watchlist_ui(window_cls) -> None:
         if content is None or self.current_page != "watchlist":
             return
         _clear_layout(content)
+        content.addWidget(_filters_card(self))
 
         summary = QFrame()
         summary.setObjectName("HeroCard")
@@ -197,6 +270,17 @@ def install_smart_watchlist_ui(window_cls) -> None:
         recs = list(result.recommendations)
         if recs:
             self.record_once(recs, date.today(), "watchlist_next")
+            quick = QHBoxLayout()
+            choose_now = QPushButton("Alege-mi unul acum")
+            choose_now.setProperty("accent", True)
+            first = recs[0]
+            choose_now.clicked.connect(
+                lambda _checked=False, mid=first.movie.id, r=first:
+                self.choose_decision(int(mid), getattr(r, "exposure_history_id", None))
+            )
+            quick.addWidget(choose_now)
+            quick.addStretch(1)
+            sl.addLayout(quick)
             title = QLabel("Următoarele 5")
             title.setObjectName("SectionTitle")
             content.addWidget(title)
@@ -241,6 +325,7 @@ def install_smart_watchlist_ui(window_cls) -> None:
         if content is None or self.current_page != "watchlist":
             return
         _clear_layout(content)
+        content.addWidget(_filters_card(self))
         warning = QFrame()
         warning.setObjectName("PremiumCard")
         wl = QVBoxLayout(warning)
@@ -264,6 +349,7 @@ def install_smart_watchlist_ui(window_cls) -> None:
             "Filmele salvate de tine, cu o coadă «Următoarele 5» ordonată de motorul personal.",
         )
         self.smart_watchlist_content = content
+        content.addWidget(_filters_card(self))
         content.addWidget(_loading_card(self))
 
         worker = getattr(self, "smart_watchlist_worker", None)
@@ -276,6 +362,8 @@ def install_smart_watchlist_ui(window_cls) -> None:
                 date.today(),
                 5,
                 getattr(self, "decision_mode", "decide"),
+                runtime_bucket=str(self.db.get_setting("watchlist_runtime_filter", "all") or "all"),
+                content_type=str(self.db.get_setting("watchlist_type_filter", "all") or "all"),
             ),
             self,
         )
