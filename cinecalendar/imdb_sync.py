@@ -73,12 +73,13 @@ class SyncResult:
     fetched: int = 0
     new_ratings: list[tuple[str, int]] = field(default_factory=list)
     changed_ratings: list[tuple[str, int, int]] = field(default_factory=list)
+    removed_ratings: list[tuple[str, int, str]] = field(default_factory=list)
     unchanged: int = 0
     stopped_at_baseline: bool = False
 
     @property
     def changed(self) -> bool:
-        return bool(self.new_ratings or self.changed_ratings)
+        return bool(self.new_ratings or self.changed_ratings or self.removed_ratings)
 
 
 def user_id_from_profile_url(url: str) -> str:
@@ -281,10 +282,99 @@ def fetch_public_ratings(
     return out
 
 
+_IMDB_RATING_SOURCES = ("imdb", "imdb_public_sync", "imdb_csv")
+
+
+def _manual_identity_candidate(con, item: RemoteRating):
+    """Reconcile only against an unbound/manual row, never a different IMDb title."""
+    original = item.original_title or item.title
+    ident = identity_key(item.title, original, item.year, item.title_type)
+    row = con.execute(
+        """SELECT * FROM movies
+           WHERE imdb_id IS NULL AND identity_key=?
+           ORDER BY id LIMIT 1""",
+        (ident,),
+    ).fetchone()
+    if row is not None:
+        return row
+    tn = normalize_text(item.title)
+    on = normalize_text(original)
+    return con.execute(
+        """SELECT * FROM movies
+           WHERE imdb_id IS NULL
+             AND year IS ?
+             AND LOWER(COALESCE(title_type,''))=LOWER(?)
+             AND (title_norm IN (?,?) OR original_title_norm IN (?,?))
+           ORDER BY id LIMIT 1""",
+        (item.year, item.title_type, tn, on, tn, on),
+    ).fetchone()
+
+
+def _prune_stale_imdb_ratings_with_con(con, live_ids: set[str], result: SyncResult) -> None:
+    """Make a successful full public-profile sync authoritative for IMDb-derived ratings."""
+    local_count = int(
+        con.execute(
+            """SELECT COUNT(*)
+               FROM ratings r
+               JOIN movies m ON m.id=r.movie_id
+               WHERE r.source IN (?,?,?) AND m.imdb_id IS NOT NULL""",
+            _IMDB_RATING_SOURCES,
+        ).fetchone()[0]
+    )
+    # An unexpected empty remote profile must never wipe a populated local history.
+    if not live_ids and local_count:
+        raise RuntimeError(
+            "IMDb a returnat 0 ratinguri pentru un profil care are ratinguri IMDb locale; "
+            "reconcilierea a fost anulată pentru protecția datelor."
+        )
+
+    con.execute("CREATE TEMP TABLE IF NOT EXISTS _cc_live_imdb_ids(imdb_id TEXT PRIMARY KEY)")
+    con.execute("DELETE FROM _cc_live_imdb_ids")
+    if live_ids:
+        con.executemany(
+            "INSERT OR IGNORE INTO _cc_live_imdb_ids(imdb_id) VALUES(?)",
+            ((iid,) for iid in sorted(live_ids)),
+        )
+
+    stale = con.execute(
+        """SELECT r.id,m.title,r.rating,m.imdb_id
+           FROM ratings r
+           JOIN movies m ON m.id=r.movie_id
+           WHERE r.source IN (?,?,?)
+             AND m.imdb_id IS NOT NULL
+             AND NOT EXISTS(
+                 SELECT 1 FROM _cc_live_imdb_ids live WHERE live.imdb_id=m.imdb_id
+             )
+           ORDER BY r.id""",
+        _IMDB_RATING_SOURCES,
+    ).fetchall()
+    result.removed_ratings.extend(
+        (str(row["title"]), int(row["rating"]), str(row["imdb_id"]))
+        for row in stale
+    )
+    if stale:
+        con.execute(
+            """DELETE FROM ratings
+               WHERE id IN (
+                   SELECT r.id
+                   FROM ratings r
+                   JOIN movies m ON m.id=r.movie_id
+                   WHERE r.source IN (?,?,?)
+                     AND m.imdb_id IS NOT NULL
+                     AND NOT EXISTS(
+                         SELECT 1 FROM _cc_live_imdb_ids live WHERE live.imdb_id=m.imdb_id
+                     )
+               )""",
+            _IMDB_RATING_SOURCES,
+        )
+
+
 def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> None:
     original = item.original_title or item.title
     ident = identity_key(item.title, original, item.year, item.title_type)
     movie = con.execute("SELECT * FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
+    if movie is None:
+        movie = _manual_identity_candidate(con, item)
     if movie is None:
         cur = con.execute(
             """INSERT INTO movies(imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
@@ -300,10 +390,11 @@ def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> N
     else:
         movie_id = int(movie["id"])
         con.execute(
-            """UPDATE movies SET title=?,original_title=?,title_norm=?,original_title_norm=?,
-               year=COALESCE(?,year),title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
+            """UPDATE movies SET imdb_id=COALESCE(imdb_id,?),title=?,original_title=?,
+               title_norm=?,original_title_norm=?,year=COALESCE(?,year),
+               title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
             (
-                item.title, original, normalize_text(item.title), normalize_text(original),
+                item.imdb_id, item.title, original, normalize_text(item.title), normalize_text(original),
                 item.year, item.title_type, now, movie_id,
             ),
         )
@@ -370,10 +461,26 @@ def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | 
                             continue
             _upsert_with_con(con, item, result, now)
 
+        # baseline_date=None means we fetched the complete public profile. In that
+        # mode the remote list is the source of truth, so stale rows from an old
+        # CSV/export are removed instead of living forever as duplicate ratings.
+        if cutoff is None:
+            _prune_stale_imdb_ratings_with_con(
+                con,
+                {item.imdb_id for item in items},
+                result,
+            )
+
         con.execute(
             """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
                ON CONFLICT(key) DO UPDATE SET
                  value_json=excluded.value_json,updated_at=excluded.updated_at""",
             ("imdb_public_sync_last_success", json_dumps(now), now),
+        )
+        con.execute(
+            """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
+               ON CONFLICT(key) DO UPDATE SET
+                 value_json=excluded.value_json,updated_at=excluded.updated_at""",
+            ("imdb_public_sync_last_count", json_dumps(len(items)), now),
         )
     return result
