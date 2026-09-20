@@ -169,7 +169,7 @@ def test_ambiguous_legacy_action_is_reported_not_guessed(tmp_path):
     assert audit["by_status"]["backfill"]["stremio_attempts"] == 0
 
 
-def test_profile_backup_v2_is_compact_complete_and_idempotent(tmp_path):
+def test_profile_backup_v3_is_compact_complete_and_idempotent(tmp_path):
     source = Database(tmp_path / "source.db")
     user_movie = _movie(source, "tt9500001", "User Movie")
     unused_catalog_movie = _movie(source, "tt9500002", "Unused Catalog Movie")
@@ -200,7 +200,7 @@ def test_profile_backup_v2_is_compact_complete_and_idempotent(tmp_path):
     archive = export_profile(source, tmp_path / "profile.zip")
     with zipfile.ZipFile(archive, "r") as fh:
         payload = json.loads(fh.read("profile.json").decode("utf-8"))
-    assert payload["version"] == 2
+    assert payload["version"] == 3
     assert payload["app_version"] == __version__
     exported_movies = payload["tables"]["movies"]
     assert {row["id"] for row in exported_movies} == {user_movie}
@@ -210,6 +210,7 @@ def test_profile_backup_v2_is_compact_complete_and_idempotent(tmp_path):
     assert "tmdb_token" not in setting_keys
     assert "chosen_for_today_v1" not in setting_keys
     assert len(payload["tables"]["recommendation_trust_audit"]) == 1
+    assert len(payload["tables"]["recommendation_outcomes"]) == 1
 
     restored = Database(tmp_path / "restored.db")
     import_profile(restored, archive)
@@ -221,6 +222,7 @@ def test_profile_backup_v2_is_compact_complete_and_idempotent(tmp_path):
             "history": con.execute("SELECT COUNT(*) FROM recommendation_history").fetchone()[0],
             "runs": con.execute("SELECT COUNT(*) FROM recommendation_runs").fetchone()[0],
             "trust": con.execute("SELECT COUNT(*) FROM recommendation_trust_audit").fetchone()[0],
+            "outcomes": con.execute("SELECT COUNT(*) FROM recommendation_outcomes").fetchone()[0],
         }
         linked = con.execute(
             """SELECT child.exposure_history_id,parent.id
@@ -231,7 +233,7 @@ def test_profile_backup_v2_is_compact_complete_and_idempotent(tmp_path):
         trust_history = con.execute(
             "SELECT history_id FROM recommendation_trust_audit LIMIT 1"
         ).fetchone()[0]
-    assert counts_before == {"movies": 1, "ratings": 1, "feedback": 1, "history": 2, "runs": 1, "trust": 1}
+    assert counts_before == {"movies": 1, "ratings": 1, "feedback": 1, "history": 2, "runs": 1, "trust": 1, "outcomes": 1}
     assert linked is not None and int(linked[0]) == int(linked[1]) == int(trust_history)
 
     import_profile(restored, archive)
@@ -243,6 +245,7 @@ def test_profile_backup_v2_is_compact_complete_and_idempotent(tmp_path):
             "history": con.execute("SELECT COUNT(*) FROM recommendation_history").fetchone()[0],
             "runs": con.execute("SELECT COUNT(*) FROM recommendation_runs").fetchone()[0],
             "trust": con.execute("SELECT COUNT(*) FROM recommendation_trust_audit").fetchone()[0],
+            "outcomes": con.execute("SELECT COUNT(*) FROM recommendation_outcomes").fetchone()[0],
         }
     assert counts_after == counts_before
 
