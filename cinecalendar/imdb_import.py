@@ -72,8 +72,16 @@ def validate_imdb_csv(path: str | Path) -> tuple[dict[str,str], int]:
     return headers, count
 
 
-def _fallback_movie(con, title: str, original: str, year: int | None, title_type: str):
+def _fallback_movie(con, title: str, original: str, year: int | None, title_type: str,
+                    incoming_imdb_id: str | None = None):
     tn=normalize_text(title); on=normalize_text(original or title)
+    if incoming_imdb_id:
+        return con.execute("""SELECT * FROM movies
+            WHERE imdb_id IS NULL
+              AND year IS ? AND LOWER(COALESCE(title_type,''))=LOWER(?)
+              AND (title_norm IN (?,?) OR original_title_norm IN (?,?))
+            ORDER BY CASE WHEN title_norm=? THEN 0 WHEN original_title_norm=? THEN 1 ELSE 2 END, id
+            LIMIT 1""", (year,title_type,tn,on,tn,on,tn,tn)).fetchone()
     return con.execute("""SELECT * FROM movies
         WHERE year IS ? AND LOWER(COALESCE(title_type,''))=LOWER(?)
           AND (title_norm IN (?,?) OR original_title_norm IN (?,?))
@@ -114,12 +122,25 @@ def import_imdb_csv(db: Database, path: str | Path) -> ImportResult:
                 if imdb_id:
                     movie = con.execute("SELECT * FROM movies WHERE imdb_id=?", (imdb_id,)).fetchone()
                 if movie is None:
-                    # Robust fallback; year+type keeps remakes separate. Try exact title+original first, then
-                    # a title-only identity so a manual entry can reconcile even when IMDb later supplies
-                    # a different Original Title.
-                    movie = con.execute("SELECT * FROM movies WHERE identity_key=? ORDER BY id LIMIT 1", (ident,)).fetchone()
+                    # If IMDb supplied an ID, only reconcile by title/year against an
+                    # unbound manual row. Never collapse two distinct IMDb titles that
+                    # happen to share the same title and year (e.g. Jana (2004)).
+                    if imdb_id:
+                        movie = con.execute(
+                            """SELECT * FROM movies
+                               WHERE imdb_id IS NULL AND identity_key=?
+                               ORDER BY id LIMIT 1""",
+                            (ident,),
+                        ).fetchone()
+                    else:
+                        movie = con.execute(
+                            "SELECT * FROM movies WHERE identity_key=? ORDER BY id LIMIT 1",
+                            (ident,),
+                        ).fetchone()
                     if movie is None:
-                        movie = _fallback_movie(con,title,original,year,title_type)
+                        movie = _fallback_movie(
+                            con,title,original,year,title_type,incoming_imdb_id=imdb_id
+                        )
                 genres = split_csvish(get("genres")) if "genres" in headers else []
                 directors = split_csvish(get("directors")) if "directors" in headers else []
                 imdb_rating = to_float(get("imdb_rating")) if "imdb_rating" in headers else None
