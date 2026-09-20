@@ -62,72 +62,79 @@ def recommendation_history_rows(
         where.append("COALESCE(a.engine_version,'')=?")
         params.append(str(engine_version))
 
+    status_filter = "WHERE row_status=?" if status else ""
+    if status:
+        params.append(str(status))
+    params.append(max(1, int(limit)))
+
     sql = f"""
-        SELECT
-            h.id AS history_id,
-            h.movie_id,
-            h.recommended_at,
-            h.context_date,
-            h.slot,
-            h.final_score,
-            h.ignored,
-            h.predicted_rating,
-            h.confidence,
-            COALESCE(NULLIF(m.original_title,''),m.title) AS display_title,
-            m.imdb_id,
-            a.rank_position,
-            a.engine_version,
-            a.trust_status,
-            a.support_labels,
-            o.chosen_at,
-            o.playback_at,
-            o.watched_at,
-            o.actual_rating,
-            o.rating_date,
-            o.absolute_error,
-            e.personal_reason,
-            e.why_not,
-            e.score_factors_json,
-            e.contributions_json,
-            (
-                SELECT ev.action
-                FROM recommendation_history ev
-                WHERE ev.exposure_history_id=h.id
-                  AND ev.action IS NOT NULL
-                ORDER BY ev.id DESC
-                LIMIT 1
-            ) AS latest_action
-        FROM recommendation_history h
-        JOIN movies m ON m.id=h.movie_id
-        LEFT JOIN recommendation_trust_audit a ON a.history_id=h.id
-        LEFT JOIN recommendation_outcomes o ON o.exposure_history_id=h.id
-        LEFT JOIN recommendation_explanations e ON e.history_id=h.id
-        WHERE {' AND '.join(where)}
-        ORDER BY h.id DESC
+        WITH base AS (
+            SELECT
+                h.id AS history_id,
+                h.movie_id,
+                h.recommended_at,
+                h.context_date,
+                h.slot,
+                h.final_score,
+                h.ignored,
+                h.predicted_rating,
+                h.confidence,
+                COALESCE(NULLIF(m.original_title,''),m.title) AS display_title,
+                m.imdb_id,
+                a.rank_position,
+                a.engine_version,
+                a.trust_status,
+                a.support_labels,
+                o.chosen_at,
+                o.playback_at,
+                o.watched_at,
+                o.actual_rating,
+                o.rating_date,
+                o.absolute_error,
+                e.personal_reason,
+                e.why_not,
+                e.score_factors_json,
+                e.contributions_json,
+                (
+                    SELECT ev.action
+                    FROM recommendation_history ev
+                    WHERE ev.exposure_history_id=h.id
+                      AND ev.action IS NOT NULL
+                    ORDER BY ev.id DESC
+                    LIMIT 1
+                ) AS latest_action
+            FROM recommendation_history h
+            JOIN movies m ON m.id=h.movie_id
+            LEFT JOIN recommendation_trust_audit a ON a.history_id=h.id
+            LEFT JOIN recommendation_outcomes o ON o.exposure_history_id=h.id
+            LEFT JOIN recommendation_explanations e ON e.history_id=h.id
+            WHERE {' AND '.join(where)}
+        ),
+        classified AS (
+            SELECT
+                base.*,
+                CASE
+                    WHEN actual_rating IS NOT NULL THEN 'rated'
+                    WHEN watched_at IS NOT NULL AND watched_at<>'' THEN 'watched'
+                    WHEN playback_at IS NOT NULL AND playback_at<>'' THEN 'started'
+                    WHEN chosen_at IS NOT NULL AND chosen_at<>'' THEN 'chosen'
+                    WHEN COALESCE(latest_action,'')='skip_today' THEN 'skipped'
+                    WHEN COALESCE(ignored,0)<>0 THEN 'ignored'
+                    ELSE 'shown'
+                END AS row_status
+            FROM base
+        )
+        SELECT *
+        FROM classified
+        {status_filter}
+        ORDER BY history_id DESC
         LIMIT ?
     """
-    params.append(max(1, int(limit)))
     with db.connect() as con:
         rows = con.execute(sql, tuple(params)).fetchall()
 
     out = []
     for row in rows:
-        if row["actual_rating"] is not None:
-            state = "rated"
-        elif row["watched_at"]:
-            state = "watched"
-        elif row["playback_at"]:
-            state = "started"
-        elif row["chosen_at"]:
-            state = "chosen"
-        elif str(row["latest_action"] or "") == "skip_today":
-            state = "skipped"
-        elif int(row["ignored"] or 0):
-            state = "ignored"
-        else:
-            state = "shown"
-        if status and state != status:
-            continue
         out.append({
             "history_id": int(row["history_id"]),
             "movie_id": int(row["movie_id"]),
@@ -143,7 +150,7 @@ def recommendation_history_rows(
             "engine_version": str(row["engine_version"] or ""),
             "trust_status": str(row["trust_status"] or ""),
             "supports": json_loads(row["support_labels"], []) or [],
-            "status": state,
+            "status": str(row["row_status"] or "shown"),
             "actual_rating": int(row["actual_rating"]) if row["actual_rating"] is not None else None,
             "rating_date": str(row["rating_date"] or ""),
             "absolute_error": float(row["absolute_error"]) if row["absolute_error"] is not None else None,
