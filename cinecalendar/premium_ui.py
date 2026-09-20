@@ -295,6 +295,12 @@ class PremiumDecisionWindow(DecisionWindow):
 
     def human_reason(self, rec: Recommendation) -> str:
         m, s = rec.movie, rec.score
+        # Later engines already compute evidence-rich explanations, including concrete
+        # rated-film examples from ALS when available. Prefer that over a generic UI summary.
+        detailed = str(getattr(s, "personal_reason", "") or "").strip()
+        if detailed:
+            return detailed
+
         pieces = []
         if m.genres:
             pieces.append("mixul " + " / ".join(m.genres[:2]))
