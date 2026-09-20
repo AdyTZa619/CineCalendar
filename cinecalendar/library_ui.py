@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, QUrl
@@ -18,7 +19,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .profile import get_profile
+from .library_repair import rated_library_health
+from .profile import build_profile, get_profile
 from .util import json_loads
 
 
@@ -171,7 +173,7 @@ def install_library_ui(window_cls) -> None:
             "Ratinguri IMDb",
             "Toată biblioteca ta de ratinguri, fără limita veche de 500. Caută, filtrează și sortează local.",
             [
-                ("Sincronizează + completează", lambda: self.sync_imdb_public(silent=False), True),
+                ("Repară biblioteca", self.repair_library, True),
                 ("Import IMDb ratings.csv", self.import_ratings, False),
                 ("Adaugă rating", self.manual_rating, False),
             ],
@@ -182,9 +184,18 @@ def install_library_ui(window_cls) -> None:
 
         summary = QFrame(); summary.setObjectName("PremiumCard")
         sl = QVBoxLayout(summary); sl.setContentsMargins(18, 16, 18, 16); sl.setSpacing(8)
-        sh = QLabel(f"{len(rows):,} ratinguri în biblioteca personală")
+        health = rated_library_health(self.db)
+        sh = QLabel(
+            f"{len(rows):,} ratinguri • {health.complete:,} cu metadate esențiale complete "
+            f"({health.completion_percent:.1f}%)"
+        )
         sh.setObjectName("SectionTitle"); sl.addWidget(sh)
-        sd = QLabel("Dublu-click pe un film pentru pagina IMDb. Filtrele nu modifică ratingurile; doar organizează afișarea.")
+        sd = QLabel(
+            "Lipsuri: "
+            f"{health.missing_genres} gen • {health.missing_directors} regizor • "
+            f"{health.missing_runtime} durată • {health.missing_imdb_rating} rating IMDb • "
+            f"{health.missing_poster} poster. Dublu-click pe un film pentru pagina IMDb."
+        )
         sd.setObjectName("Muted"); sd.setWordWrap(True); sl.addWidget(sd)
         content.addWidget(summary)
 
@@ -217,8 +228,15 @@ def install_library_ui(window_cls) -> None:
             sort_combo.addItem(label, key)
         grid.addWidget(sort_combo, 1, 2)
 
+        date_filter = QComboBox()
+        date_filter.addItem("Oricând", "all")
+        date_filter.addItem("Ultimele 7 zile", "7d")
+        date_filter.addItem("Ultimele 30 zile", "30d")
+        date_filter.addItem("Anul acesta", "year")
+        grid.addWidget(date_filter, 1, 3)
+
         reset = QPushButton("Resetează")
-        grid.addWidget(reset, 1, 3)
+        grid.addWidget(reset, 2, 3)
         content.addWidget(controls)
 
         count_label = QLabel("")
@@ -259,11 +277,22 @@ def install_library_ui(window_cls) -> None:
             query = search.text().strip().casefold()
             wanted_rating = rating_filter.currentData()
             wanted_genre = str(genre_filter.currentData() or "")
+            period = str(date_filter.currentData() or "all")
+            today = date.today()
+            cutoff = None
+            if period == "7d":
+                cutoff = (today - timedelta(days=6)).isoformat()
+            elif period == "30d":
+                cutoff = (today - timedelta(days=29)).isoformat()
+            elif period == "year":
+                cutoff = date(today.year, 1, 1).isoformat()
             selected = []
             for row in rows:
                 if wanted_rating is not None and int(row["user_rating"]) != int(wanted_rating):
                     continue
                 if wanted_genre and wanted_genre not in row["genres"]:
+                    continue
+                if cutoff and (not row["date_rated"] or row["date_rated"][:10] < cutoff):
                     continue
                 if query:
                     haystack = " | ".join(
@@ -323,16 +352,23 @@ def install_library_ui(window_cls) -> None:
         rating_filter.currentIndexChanged.connect(lambda _i: render())
         genre_filter.currentIndexChanged.connect(lambda _i: render())
         sort_combo.currentIndexChanged.connect(lambda _i: render())
+        date_filter.currentIndexChanged.connect(lambda _i: render())
 
         def reset_filters():
-            search.clear(); rating_filter.setCurrentIndex(0); genre_filter.setCurrentIndex(0); sort_combo.setCurrentIndex(0); render()
+            search.clear()
+            rating_filter.setCurrentIndex(0)
+            genre_filter.setCurrentIndex(0)
+            sort_combo.setCurrentIndex(0)
+            date_filter.setCurrentIndex(0)
+            render()
 
         reset.clicked.connect(reset_filters)
         render()
         return page
 
     def page_profile(self):
-        profile = get_profile(self.db)
+        # Recalculate on opening so statistics never remain stale after a sync/repair.
+        profile = build_profile(self.db)
         page, content = self.page_shell(
             "Taste Hub",
             "Profilul calculat din ratingurile tale. Acum poți vedea toate semnalele, le poți căuta, filtra și sorta.",
@@ -342,12 +378,16 @@ def install_library_ui(window_cls) -> None:
         mean = float(profile.get("global_mean_rating", 0) or 0)
         delta = profile.get("mean_user_minus_imdb")
         version = int(profile.get("version", 0) or 0)
+        health = rated_library_health(self.db)
 
         metrics = QGridLayout(); metrics.setHorizontalSpacing(12); metrics.setVerticalSpacing(12)
         metric_values = [
             (f"{rated:,}", "ratinguri analizate"),
-            (f"{mean:.2f}", "media ta ponderată"),
-            (f"{float(delta):+.2f}" if delta is not None else "—", "tu vs IMDb"),
+            (f"{mean:.2f}/10", "media ta ponderată"),
+            (f"{float(delta):+.2f}" if delta is not None else "fără bază IMDb", "tu vs IMDb"),
+            (f"{health.completion_percent:.1f}%", "metadate esențiale complete"),
+            (f"{health.missing_genres}", "fără gen"),
+            (f"{health.missing_directors}", "fără regizor"),
             (f"v{version}", "versiune profil gust"),
         ]
         for i, (value, label) in enumerate(metric_values):
@@ -355,7 +395,7 @@ def install_library_ui(window_cls) -> None:
             lay = QVBoxLayout(card); lay.setContentsMargins(18, 16, 18, 16)
             val = QLabel(value); val.setObjectName("MetricValue"); lay.addWidget(val)
             cap = QLabel(label); cap.setObjectName("Muted"); cap.setWordWrap(True); lay.addWidget(cap)
-            metrics.addWidget(card, 0, i)
+            metrics.addWidget(card, i // 4, i % 4)
         metric_wrap = QFrame(); metric_wrap.setLayout(metrics); content.addWidget(metric_wrap)
 
         explain = QFrame(); explain.setObjectName("PremiumCard")
