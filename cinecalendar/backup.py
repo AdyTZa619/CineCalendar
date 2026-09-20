@@ -10,7 +10,7 @@ from .db import Database
 from .util import utcnow_iso
 
 
-PROFILE_VERSION = 2
+PROFILE_VERSION = 3
 MAX_PROFILE_JSON_BYTES = 250 * 1024 * 1024
 _TRANSIENT_OR_SECRET_SETTINGS = {
     "tmdb_token",
@@ -36,6 +36,7 @@ def _referenced_movie_ids(con) -> list[int]:
            UNION SELECT movie_id FROM watchlist
            UNION SELECT movie_id FROM recommendation_history
            UNION SELECT movie_id FROM recommendation_trust_audit
+           UNION SELECT movie_id FROM recommendation_outcomes
            ORDER BY movie_id"""
     ).fetchall()
     return [int(row[0]) for row in rows]
@@ -86,6 +87,9 @@ def export_profile(db: Database, path: str | Path) -> Path:
             )
             payload["tables"]["recommendation_trust_audit"] = _rows(
                 con, "SELECT * FROM recommendation_trust_audit ORDER BY id"
+            )
+            payload["tables"]["recommendation_outcomes"] = _rows(
+                con, "SELECT * FROM recommendation_outcomes ORDER BY exposure_history_id"
             )
             payload["tables"]["watchlist"] = _rows(con, "SELECT * FROM watchlist ORDER BY movie_id")
         finally:
@@ -230,14 +234,26 @@ def _restore_history(con, rows: list[dict], movie_map: dict[int, int]) -> dict[i
         else:
             cur = con.execute(
                 """INSERT INTO recommendation_history(
-                       movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id
-                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                       movie_id,recommended_at,context_date,slot,final_score,ignored,action,exposure_history_id,
+                       predicted_rating,confidence
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
                     movie_id, row.get("recommended_at"), row.get("context_date"), row.get("slot", "today"),
                     row.get("final_score"), int(row.get("ignored") or 0), row.get("action"), parent_id,
+                    row.get("predicted_rating"), row.get("confidence"),
                 ),
             )
             new_id = int(cur.lastrowid)
+        # Profile v3 preserves the immutable prediction snapshot. When merging into an
+        # exposure restored by an older profile, only fill values that are still missing.
+        if row.get("predicted_rating") is not None or row.get("confidence") is not None:
+            con.execute(
+                """UPDATE recommendation_history SET
+                       predicted_rating=COALESCE(predicted_rating,?),
+                       confidence=COALESCE(confidence,?)
+                   WHERE id=?""",
+                (row.get("predicted_rating"), row.get("confidence"), new_id),
+            )
         if row.get("id") is not None:
             old_id = int(row["id"])
             mapping[old_id] = new_id
@@ -288,6 +304,86 @@ def _restore_trust(con, rows: list[dict], movie_map: dict[int, int], history_map
     return restored
 
 
+def _restore_outcomes(
+    con,
+    rows: list[dict],
+    movie_map: dict[int, int],
+    history_map: dict[int, int],
+    rating_map: dict[int, int],
+    mode: str,
+) -> int:
+    restored = 0
+    for row in rows:
+        old_exposure = row.get("exposure_history_id")
+        old_movie = row.get("movie_id")
+        if old_exposure is None or old_movie is None:
+            continue
+        exposure_id = history_map.get(int(old_exposure))
+        movie_id = movie_map.get(int(old_movie))
+        if exposure_id is None or movie_id is None:
+            continue
+        old_rating = row.get("rating_id")
+        rating_id = rating_map.get(int(old_rating)) if old_rating is not None else None
+        existing = con.execute(
+            "SELECT * FROM recommendation_outcomes WHERE exposure_history_id=?",
+            (exposure_id,),
+        ).fetchone()
+        if (
+            mode == "merge"
+            and existing is not None
+            and not _backup_row_is_newer(existing, row, "updated_at", "resolved_at", "rating_date")
+        ):
+            continue
+        con.execute(
+            """INSERT INTO recommendation_outcomes(
+                   exposure_history_id,movie_id,rank_position,context_date,slot,
+                   chosen_at,playback_at,watched_at,rating_id,actual_rating,rating_date,
+                   predicted_rating,confidence,final_score,engine_version,absolute_error,
+                   resolved_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(exposure_history_id) DO UPDATE SET
+                   movie_id=excluded.movie_id,
+                   rank_position=excluded.rank_position,
+                   context_date=excluded.context_date,
+                   slot=excluded.slot,
+                   chosen_at=excluded.chosen_at,
+                   playback_at=excluded.playback_at,
+                   watched_at=excluded.watched_at,
+                   rating_id=excluded.rating_id,
+                   actual_rating=excluded.actual_rating,
+                   rating_date=excluded.rating_date,
+                   predicted_rating=excluded.predicted_rating,
+                   confidence=excluded.confidence,
+                   final_score=excluded.final_score,
+                   engine_version=excluded.engine_version,
+                   absolute_error=excluded.absolute_error,
+                   resolved_at=excluded.resolved_at,
+                   updated_at=excluded.updated_at""",
+            (
+                exposure_id,
+                movie_id,
+                row.get("rank_position"),
+                row.get("context_date") or "",
+                row.get("slot") or "",
+                row.get("chosen_at"),
+                row.get("playback_at"),
+                row.get("watched_at"),
+                rating_id,
+                row.get("actual_rating"),
+                row.get("rating_date"),
+                row.get("predicted_rating"),
+                row.get("confidence"),
+                row.get("final_score"),
+                row.get("engine_version"),
+                row.get("absolute_error"),
+                row.get("resolved_at"),
+                row.get("updated_at") or utcnow_iso(),
+            ),
+        )
+        restored += 1
+    return restored
+
+
 def _load_payload(path: Path) -> dict:
     with zipfile.ZipFile(path, "r") as archive:
         try:
@@ -315,7 +411,7 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
     path = Path(path)
     payload = _load_payload(path)
     version = int(payload.get("version") or 0)
-    if payload.get("format") != "CineCalendarProfile" or version not in {1, PROFILE_VERSION}:
+    if payload.get("format") != "CineCalendarProfile" or version not in {1, 2, PROFILE_VERSION}:
         raise ValueError("Backup incompatibil.")
     tables = payload.get("tables", {}) or {}
     if not isinstance(tables, dict):
@@ -328,10 +424,12 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
         "feedback": 0,
         "history": 0,
         "trust": 0,
+        "outcomes": 0,
         "conflicts_skipped": 0,
     }
     with db.tx() as con:
         if mode == "restore":
+            con.execute("DELETE FROM recommendation_outcomes")
             con.execute("DELETE FROM recommendation_trust_audit")
             con.execute("DELETE FROM recommendation_history")
             con.execute("DELETE FROM recommendation_runs")
@@ -354,6 +452,7 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
                 movie_map[int(movie["id"])] = new_id
         stats["movies"] = len(movie_map)
 
+        rating_map: dict[int, int] = {}
         for rating in tables.get("ratings", []):
             if not isinstance(rating, dict):
                 continue
@@ -379,6 +478,12 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
                     rating.get("imported_at") or utcnow_iso(), rating.get("updated_at") or utcnow_iso(),
                 ),
             )
+            restored_rating = con.execute(
+                "SELECT id FROM ratings WHERE movie_id=?",
+                (movie_id,),
+            ).fetchone()
+            if rating.get("id") is not None and restored_rating is not None:
+                rating_map[int(rating["id"])] = int(restored_rating["id"])
             stats["ratings"] += 1
 
         for feedback in tables.get("feedback", []):
@@ -450,6 +555,14 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
             movie_map,
             history_map,
             run_map,
+        )
+        stats["outcomes"] = _restore_outcomes(
+            con,
+            list(tables.get("recommendation_outcomes", [])),
+            movie_map,
+            history_map,
+            rating_map,
+            mode,
         )
 
     from .profile import build_profile
