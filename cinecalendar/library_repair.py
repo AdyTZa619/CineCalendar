@@ -41,6 +41,7 @@ class LibraryRepairResult:
     tmdb_enriched: int = 0
     wikimedia_enriched: int = 0
     wikimedia_failed: int = 0
+    stage_errors: tuple[str, ...] = ()
 
     @property
     def fixed_titles(self) -> int:
@@ -141,20 +142,30 @@ def repair_rated_library(
     progress = progress or (lambda _message: None)
     before = rated_library_health(db)
     new_ratings = changed_ratings = duplicates = 0
+    stage_errors: list[str] = []
 
     if profile_url.strip():
         progress("Sincronizez ratingurile și repar identitățile duplicate…")
-        sync = sync_public_ratings(
-            db,
-            profile_url.strip(),
-            baseline_date=baseline_date,
-        )
-        new_ratings = len(sync.new_ratings)
-        changed_ratings = len(sync.changed_ratings)
-        duplicates = len(sync.reconciled_duplicates)
+        try:
+            sync = sync_public_ratings(
+                db,
+                profile_url.strip(),
+                baseline_date=baseline_date,
+            )
+            new_ratings = len(sync.new_ratings)
+            changed_ratings = len(sync.changed_ratings)
+            duplicates = len(sync.reconciled_duplicates)
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
+            stage_errors.append(f"Sincronizare IMDb: {str(exc)[:180]}")
+            progress("Sincronizarea profilului IMDb nu este disponibilă; continui repararea din datele locale.")
 
     progress("Completez metadatele din IMDb…")
-    imdb_enriched = backfill_public_rating_metadata(db, limit=limit)
+    try:
+        imdb_enriched = backfill_public_rating_metadata(db, limit=limit)
+    except (requests.RequestException, RuntimeError, ValueError) as exc:
+        imdb_enriched = 0
+        stage_errors.append(f"Metadate IMDb: {str(exc)[:180]}")
+        progress("Metadatele IMDb nu sunt disponibile; continui cu fallback-urile.")
 
     tmdb_enriched = 0
     token = str(db.get_setting("tmdb_token", "") or "").strip()
@@ -169,8 +180,9 @@ def repair_rated_library(
                 rated_only=True,
             )
             tmdb_enriched = int(tmdb_result.get("enriched", 0) or 0)
-        except (requests.RequestException, RuntimeError, ValueError):
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             tmdb_enriched = 0
+            stage_errors.append(f"TMDb: {str(exc)[:180]}")
 
     progress("Aplic fallback Wikidata/Wikipedia pentru câmpurile rămase…")
     provider = OpenMovieMetadataProvider(db)
@@ -217,4 +229,5 @@ def repair_rated_library(
         tmdb_enriched=tmdb_enriched,
         wikimedia_enriched=wikimedia_enriched,
         wikimedia_failed=wikimedia_failed,
+        stage_errors=tuple(stage_errors),
     )
