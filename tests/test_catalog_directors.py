@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import gzip
+import os
+import time
 from cinecalendar.db import Database
-from cinecalendar.catalog import import_imdb_datasets, repair_rated_metadata_from_official_datasets
+from cinecalendar.catalog import _refresh_if_stale, import_imdb_datasets, repair_rated_metadata_from_official_datasets
 from cinecalendar.util import json_loads
 
 
@@ -92,3 +94,24 @@ def test_rated_metadata_repair_has_no_minimum_vote_threshold(tmp_path):
     assert json_loads(row['directors_json'], []) == ['Director Din IMDb']
     assert provenance['directors'] == 'imdb_dataset'
     assert provenance['original_title'] == 'imdb_dataset'
+
+
+def test_stale_official_metadata_cache_is_invalidated(tmp_path):
+    path = tmp_path / "title.crew.tsv.gz"
+    gzwrite(path, "tconst\tdirectors\twriters\n")
+    old = time.time() - 48 * 3600
+    os.utime(path, (old, old))
+    messages = []
+
+    assert _refresh_if_stale(path, 36, messages.append, "IMDb title.crew") is True
+    assert not path.exists()
+    assert any("versiunea IMDb actuală" in msg for msg in messages)
+
+
+def test_recent_official_metadata_cache_is_reused(tmp_path):
+    path = tmp_path / "title.crew.tsv.gz"
+    gzwrite(path, "tconst\tdirectors\twriters\n")
+    messages = []
+
+    assert _refresh_if_stale(path, 36, messages.append, "IMDb title.crew") is False
+    assert path.exists()
