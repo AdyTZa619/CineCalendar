@@ -50,11 +50,19 @@ def reconcile_recommendation_outcomes(db) -> int:
                    audit.engine_version,
                    MIN(CASE WHEN ev.action='chosen' THEN ev.recommended_at END) AS chosen_at,
                    MIN(CASE WHEN ev.action='playback_confirmed' THEN ev.recommended_at END) AS playback_at,
-                   MIN(CASE WHEN ev.action='watched' THEN ev.recommended_at END) AS watched_at
+                   MIN(CASE WHEN ev.action='watched' THEN ev.recommended_at END) AS watched_at,
+                   (
+                       SELECT ev2.action
+                       FROM recommendation_history ev2
+                       WHERE ev2.exposure_history_id=root.id
+                         AND ev2.action IN ('chosen','skip_today','playback_confirmed','watched')
+                       ORDER BY ev2.id DESC
+                       LIMIT 1
+                   ) AS final_action
                FROM recommendation_history root
                LEFT JOIN recommendation_history ev
                  ON ev.exposure_history_id=root.id
-                AND ev.action IN ('chosen','playback_confirmed','watched')
+                AND ev.action IN ('chosen','skip_today','playback_confirmed','watched')
                LEFT JOIN recommendation_trust_audit audit
                  ON audit.history_id=root.id
                WHERE root.action IS NULL
@@ -70,6 +78,10 @@ def reconcile_recommendation_outcomes(db) -> int:
                       COALESCE(NULLIF(date_rated,''),updated_at,imported_at,'') AS rating_date
                FROM ratings"""
         ).fetchall()
+    rows = [
+        row for row in rows
+        if str(row["final_action"] or "") != "skip_today"
+    ]
     ratings = {int(row["movie_id"]): row for row in rating_rows}
 
     # One real IMDb rating may close at most one recommendation exposure. If the same film was
