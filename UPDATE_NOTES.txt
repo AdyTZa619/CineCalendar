@@ -1,25 +1,27 @@
-CineCalendar 3.9.8 finalizează remedierea problemelor rămase după 3.9.7.
+CineCalendar 3.9.9 repară reconcilierea completă dintre exporturile IMDb vechi și profilul public IMDb curent.
 
-Recomandări:
-- elimină complet excluderea globală și penalizarea specială pentru Romance;
-- genurile sunt tratate normal de profilul personal și de ratingurile utilizatorului;
-- opțiunea veche „Exclude Romance” a fost eliminată din Setări.
+Ratinguri IMDb:
+- profilul public complet este acum sursa de adevăr pentru ratingurile provenite din IMDb;
+- după o sincronizare completă, ratingurile vechi din CSV care nu mai există pe profilul public sunt eliminate automat din istoricul local;
+- ratingurile manuale nu sunt șterse de această reconciliere;
+- o scădere suspect de mare sau un răspuns gol de la IMDb nu poate provoca ștergeri masive: sincronizarea se oprește fără modificări;
+- ratingurile confirmate live primesc sursa imdb_public_sync chiar dacă nota și data nu s-au schimbat;
+- după orice import CSV manual sau automat, profilul public este reverificat pentru ca un export vechi să nu reintroducă intrări stale.
 
-„Ce văd acum?”:
-- „Aleg filmul ăsta” fixează acum efectiv alegerea pentru ziua curentă;
-- filmul ales rămâne afișat după schimbarea paginii sau repornirea aplicației;
-- alegerea se eliberează când utilizatorul cere alt film, îl marchează văzut sau începe o zi nouă.
+Identitate filme:
+- două filme IMDb diferite cu același titlu și același an nu mai sunt combinate după nume/an;
+- regula este aplicată la importul CSV de ratinguri, importul de catalog și adăugarea manuală cu IMDb ID;
+- o asociere după titlu/an este permisă pentru un IMDb ID nou doar dacă înregistrarea locală nu are încă IMDb ID.
 
-Postere:
-- încărcarea posterelor folosește o coadă centrală;
-- maximum 6 descărcări rulează simultan;
-- cererile duplicate pentru același poster sunt reunite într-o singură descărcare;
-- cache-ul existent este folosit imediat, iar imaginile invalide sunt eliminate.
+Metadate:
+- filmele descoperite numai prin sincronizarea profilului IMDb primesc automat, best-effort, rating IMDb, număr de voturi, durată, genuri, poster și credite de regie atunci când endpointul public le oferă;
+- schema live pentru metadate IMDb este verificată în gate-ul de release.
 
-Release / stabilitate:
-- verificarea live a profilului public IMDb este acum un gate obligatoriu, cu până la 3 încercări;
-- un build Stable nu mai poate fi publicat dacă sincronizarea live IMDb este stricată;
-- actions/upload-artifact este actualizat la v7 / Node 24;
-- textul din Setări descrie corect updaterul Stable activ și sursele reale de metadata.
+Cazul care a expus problema:
+- în profilul public curent există Jana (2004) cu IMDb ID tt4568192;
+- vechiul tt1861356 provenea din istoricul CSV local și nu mai există în ratingurile profilului public curent;
+- 3.9.9 îl elimină automat din lista Ratinguri la prima sincronizare completă, păstrând filmul ca titlu de catalog fără rating.
 
-Toate remediile au teste de regresie dedicate.
+Build:
+- testele includ reconciliere stale, protecția ratingurilor manuale, două filme cu același titlu/an și completarea metadatelor publice;
+- gate-ul live IMDb, benchmark-ul, build-ul Windows și smoke launch-ul trebuie să treacă înainte de Stable.

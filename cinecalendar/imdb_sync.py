@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 import requests
 
 from .db import Database
+from .models import Movie
+from .semantic import extract_semantic
 from .util import identity_key, json_dumps, normalize_text, utcnow_iso
 
 
@@ -56,6 +58,34 @@ query CineCalendarUserRatings($userId: ID!, $first: Int!, $after: String) {
 }
 """
 
+_TITLE_METADATA_QUERY = """
+query CineCalendarTitleMetadata($ids: [ID!]!) {
+  titles(ids: $ids) {
+    id
+    runtime { seconds }
+    ratingsSummary { aggregateRating voteCount }
+    genres { genres { text } }
+    primaryImage { url }
+    principalCredits(first: 8) {
+      category { id text }
+      credits { name { nameText { text } } }
+    }
+  }
+}
+"""
+
+_TITLE_METADATA_CORE_QUERY = """
+query CineCalendarTitleMetadataCore($ids: [ID!]!) {
+  titles(ids: $ids) {
+    id
+    runtime { seconds }
+    ratingsSummary { aggregateRating voteCount }
+    genres { genres { text } }
+    primaryImage { url }
+  }
+}
+"""
+
 
 @dataclass(frozen=True)
 class RemoteRating:
@@ -73,12 +103,14 @@ class SyncResult:
     fetched: int = 0
     new_ratings: list[tuple[str, int]] = field(default_factory=list)
     changed_ratings: list[tuple[str, int, int]] = field(default_factory=list)
+    removed_ratings: list[tuple[str, int, str]] = field(default_factory=list)
+    metadata_enriched: int = 0
     unchanged: int = 0
     stopped_at_baseline: bool = False
 
     @property
     def changed(self) -> bool:
-        return bool(self.new_ratings or self.changed_ratings)
+        return bool(self.new_ratings or self.changed_ratings or self.removed_ratings)
 
 
 def user_id_from_profile_url(url: str) -> str:
@@ -281,10 +313,271 @@ def fetch_public_ratings(
     return out
 
 
+def _metadata_payload(
+    client: requests.Session,
+    ids: list[str],
+    *,
+    timeout: int = 20,
+) -> dict[str, Any]:
+    try:
+        return _graphql_post(
+            client,
+            _TITLE_METADATA_QUERY,
+            {"ids": ids},
+            timeout=timeout,
+        )
+    except RuntimeError:
+        # Credits are less stable than core title fields. Never let one optional
+        # field prevent rating metadata from being filled.
+        return _graphql_post(
+            client,
+            _TITLE_METADATA_CORE_QUERY,
+            {"ids": ids},
+            timeout=timeout,
+        )
+
+
+def backfill_public_rating_metadata(
+    db: Database,
+    *,
+    limit: int = 120,
+    timeout: int = 20,
+    session: requests.Session | None = None,
+) -> int:
+    """Best-effort metadata fill for titles first discovered through profile sync."""
+    with db.connect() as con:
+        rows = con.execute(
+            """SELECT m.id,m.imdb_id,m.title,m.original_title,m.year,m.title_type,
+                      m.runtime_min,m.genres_json,m.directors_json,m.imdb_rating,
+                      m.num_votes,m.poster_url
+               FROM movies m
+               JOIN ratings r ON r.movie_id=m.id
+               WHERE r.source='imdb_public_sync'
+                 AND m.imdb_id IS NOT NULL
+                 AND (
+                     m.imdb_rating IS NULL OR m.runtime_min IS NULL OR
+                     m.genres_json='[]'
+                 )
+               ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC
+               LIMIT ?""",
+            (max(1, int(limit)),),
+        ).fetchall()
+    if not rows:
+        return 0
+
+    by_imdb = {str(row["imdb_id"]): row for row in rows}
+    client = session or requests.Session()
+    enriched = 0
+    now = utcnow_iso()
+
+    for start in range(0, len(by_imdb), 60):
+        ids = list(by_imdb)[start:start + 60]
+        try:
+            payload = _metadata_payload(client, ids, timeout=timeout)
+        except RuntimeError:
+            continue
+        items = (payload.get("data") or {}).get("titles") or []
+        if not isinstance(items, list):
+            continue
+
+        with db.tx() as con:
+            for meta in items:
+                if not isinstance(meta, dict):
+                    continue
+                iid = str(meta.get("id") or "")
+                row = by_imdb.get(iid)
+                if row is None:
+                    continue
+
+                rating_summary = meta.get("ratingsSummary") or {}
+                try:
+                    imdb_rating = (
+                        float(rating_summary.get("aggregateRating"))
+                        if rating_summary.get("aggregateRating") is not None else None
+                    )
+                except (TypeError, ValueError):
+                    imdb_rating = None
+                try:
+                    num_votes = (
+                        int(rating_summary.get("voteCount"))
+                        if rating_summary.get("voteCount") is not None else None
+                    )
+                except (TypeError, ValueError):
+                    num_votes = None
+
+                runtime = meta.get("runtime") or {}
+                try:
+                    runtime_min = (
+                        int(round(int(runtime.get("seconds")) / 60))
+                        if runtime.get("seconds") is not None else None
+                    )
+                except (TypeError, ValueError):
+                    runtime_min = None
+
+                genres: list[str] = []
+                for genre_row in ((meta.get("genres") or {}).get("genres") or []):
+                    if isinstance(genre_row, dict):
+                        value = str(genre_row.get("text") or "").strip()
+                        if value and value not in genres:
+                            genres.append(value)
+
+                directors: list[str] = []
+                for group in meta.get("principalCredits") or []:
+                    if not isinstance(group, dict):
+                        continue
+                    category = group.get("category") or {}
+                    category_id = str(category.get("id") or "").lower()
+                    category_text = str(category.get("text") or "").lower()
+                    if category_id != "director" and "director" not in category_text:
+                        continue
+                    for credit in group.get("credits") or []:
+                        name = ((credit or {}).get("name") or {}).get("nameText") or {}
+                        value = str(name.get("text") or "").strip()
+                        if value and value not in directors:
+                            directors.append(value)
+
+                poster_url = str(((meta.get("primaryImage") or {}).get("url") or "")).strip() or None
+                use_genres = genres if genres else None
+                use_directors = directors if directors else None
+
+                movie = Movie(
+                    id=int(row["id"]),
+                    imdb_id=iid,
+                    title=str(row["title"] or ""),
+                    original_title=str(row["original_title"] or row["title"] or ""),
+                    year=int(row["year"]) if row["year"] is not None else None,
+                    title_type=str(row["title_type"] or "Movie"),
+                    runtime_min=runtime_min or row["runtime_min"],
+                    genres=genres,
+                    directors=directors,
+                    imdb_rating=imdb_rating,
+                    num_votes=num_votes,
+                    poster_url=poster_url,
+                )
+                semantic = extract_semantic(movie)
+
+                con.execute(
+                    """UPDATE movies SET
+                         runtime_min=COALESCE(runtime_min,?),
+                         genres_json=CASE WHEN genres_json='[]' AND ?!='[]' THEN ? ELSE genres_json END,
+                         directors_json=CASE WHEN directors_json='[]' AND ?!='[]' THEN ? ELSE directors_json END,
+                         imdb_rating=COALESCE(imdb_rating,?),
+                         num_votes=COALESCE(num_votes,?),
+                         poster_url=COALESCE(NULLIF(poster_url,''),?),
+                         semantic_json=CASE WHEN semantic_json='{}' THEN ? ELSE semantic_json END,
+                         updated_at=?
+                       WHERE id=?""",
+                    (
+                        runtime_min,
+                        json_dumps(use_genres or []), json_dumps(use_genres or []),
+                        json_dumps(use_directors or []), json_dumps(use_directors or []),
+                        imdb_rating, num_votes, poster_url,
+                        json_dumps(semantic), now, int(row["id"]),
+                    ),
+                )
+                if any((runtime_min, use_genres, use_directors, imdb_rating, num_votes, poster_url)):
+                    enriched += 1
+    return enriched
+
+
+_IMDB_RATING_SOURCES = ("imdb", "imdb_public_sync", "imdb_csv")
+
+
+def _manual_identity_candidate(con, item: RemoteRating):
+    """Reconcile only against an unbound/manual row, never a different IMDb title."""
+    original = item.original_title or item.title
+    ident = identity_key(item.title, original, item.year, item.title_type)
+    row = con.execute(
+        """SELECT * FROM movies
+           WHERE imdb_id IS NULL AND identity_key=?
+           ORDER BY id LIMIT 1""",
+        (ident,),
+    ).fetchone()
+    if row is not None:
+        return row
+    tn = normalize_text(item.title)
+    on = normalize_text(original)
+    return con.execute(
+        """SELECT * FROM movies
+           WHERE imdb_id IS NULL
+             AND year IS ?
+             AND LOWER(COALESCE(title_type,''))=LOWER(?)
+             AND (title_norm IN (?,?) OR original_title_norm IN (?,?))
+           ORDER BY id LIMIT 1""",
+        (item.year, item.title_type, tn, on, tn, on),
+    ).fetchone()
+
+
+def _prune_stale_imdb_ratings_with_con(con, live_ids: set[str], result: SyncResult) -> None:
+    """Make a successful full public-profile sync authoritative for IMDb-derived ratings."""
+    local_count = int(
+        con.execute(
+            """SELECT COUNT(*)
+               FROM ratings r
+               JOIN movies m ON m.id=r.movie_id
+               WHERE r.source IN (?,?,?) AND m.imdb_id IS NOT NULL""",
+            _IMDB_RATING_SOURCES,
+        ).fetchone()[0]
+    )
+    # An unexpected empty remote profile must never wipe a populated local history.
+    if not live_ids and local_count:
+        raise RuntimeError(
+            "IMDb a returnat 0 ratinguri pentru un profil care are ratinguri IMDb locale; "
+            "reconcilierea a fost anulată pentru protecția datelor."
+        )
+    if local_count >= 100 and live_ids and len(live_ids) < local_count * 0.5:
+        raise RuntimeError(
+            f"IMDb a returnat doar {len(live_ids)} din {local_count} ratinguri IMDb locale; "
+            "scăderea este prea mare pentru o ștergere automată sigură."
+        )
+
+    con.execute("CREATE TEMP TABLE IF NOT EXISTS _cc_live_imdb_ids(imdb_id TEXT PRIMARY KEY)")
+    con.execute("DELETE FROM _cc_live_imdb_ids")
+    if live_ids:
+        con.executemany(
+            "INSERT OR IGNORE INTO _cc_live_imdb_ids(imdb_id) VALUES(?)",
+            ((iid,) for iid in sorted(live_ids)),
+        )
+
+    stale = con.execute(
+        """SELECT r.id,m.title,r.rating,m.imdb_id
+           FROM ratings r
+           JOIN movies m ON m.id=r.movie_id
+           WHERE r.source IN (?,?,?)
+             AND m.imdb_id IS NOT NULL
+             AND NOT EXISTS(
+                 SELECT 1 FROM _cc_live_imdb_ids live WHERE live.imdb_id=m.imdb_id
+             )
+           ORDER BY r.id""",
+        _IMDB_RATING_SOURCES,
+    ).fetchall()
+    result.removed_ratings.extend(
+        (str(row["title"]), int(row["rating"]), str(row["imdb_id"]))
+        for row in stale
+    )
+    if stale:
+        con.execute(
+            """DELETE FROM ratings
+               WHERE id IN (
+                   SELECT r.id
+                   FROM ratings r
+                   JOIN movies m ON m.id=r.movie_id
+                   WHERE r.source IN (?,?,?)
+                     AND m.imdb_id IS NOT NULL
+                     AND NOT EXISTS(
+                         SELECT 1 FROM _cc_live_imdb_ids live WHERE live.imdb_id=m.imdb_id
+                     )
+               )""",
+            _IMDB_RATING_SOURCES,
+        )
+
+
 def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> None:
     original = item.original_title or item.title
     ident = identity_key(item.title, original, item.year, item.title_type)
     movie = con.execute("SELECT * FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
+    if movie is None:
+        movie = _manual_identity_candidate(con, item)
     if movie is None:
         cur = con.execute(
             """INSERT INTO movies(imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
@@ -300,15 +593,16 @@ def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> N
     else:
         movie_id = int(movie["id"])
         con.execute(
-            """UPDATE movies SET title=?,original_title=?,title_norm=?,original_title_norm=?,
-               year=COALESCE(?,year),title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
+            """UPDATE movies SET imdb_id=COALESCE(imdb_id,?),title=?,original_title=?,
+               title_norm=?,original_title_norm=?,year=COALESCE(?,year),
+               title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
             (
-                item.title, original, normalize_text(item.title), normalize_text(original),
+                item.imdb_id, item.title, original, normalize_text(item.title), normalize_text(original),
                 item.year, item.title_type, now, movie_id,
             ),
         )
 
-    old = con.execute("SELECT rating,date_rated FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
+    old = con.execute("SELECT rating,date_rated,source FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
     if old is None:
         con.execute(
             "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
@@ -323,9 +617,14 @@ def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> N
         )
         result.changed_ratings.append((item.title, previous, item.rating))
     else:
-        if item.date_rated and str(old["date_rated"] or "") != item.date_rated:
+        if (
+            (item.date_rated and str(old["date_rated"] or "") != item.date_rated)
+            or str(old["source"] or "") != "imdb_public_sync"
+        ):
             con.execute(
-                "UPDATE ratings SET date_rated=?,source=?,imported_at=?,updated_at=? WHERE movie_id=?",
+                """UPDATE ratings
+                   SET date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=?
+                   WHERE movie_id=?""",
                 (item.date_rated, "imdb_public_sync", now, now, movie_id),
             )
         result.unchanged += 1
@@ -370,10 +669,26 @@ def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | 
                             continue
             _upsert_with_con(con, item, result, now)
 
+        # baseline_date=None means we fetched the complete public profile. In that
+        # mode the remote list is the source of truth, so stale rows from an old
+        # CSV/export are removed instead of living forever as duplicate ratings.
+        if cutoff is None:
+            _prune_stale_imdb_ratings_with_con(
+                con,
+                {item.imdb_id for item in items},
+                result,
+            )
+
         con.execute(
             """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
                ON CONFLICT(key) DO UPDATE SET
                  value_json=excluded.value_json,updated_at=excluded.updated_at""",
             ("imdb_public_sync_last_success", json_dumps(now), now),
+        )
+        con.execute(
+            """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
+               ON CONFLICT(key) DO UPDATE SET
+                 value_json=excluded.value_json,updated_at=excluded.updated_at""",
+            ("imdb_public_sync_last_count", json_dumps(len(items)), now),
         )
     return result

@@ -152,11 +152,28 @@ def import_catalog_csv(db: Database, path: str|Path) -> dict:
                 num_votes=to_int(g("num_votes")),release_date=g("release_date").strip() or None,poster_url=g("poster_url").strip() or None,source="catalog_csv")
             movie.semantic=extract_semantic(movie)
             existing=con.execute("SELECT id FROM movies WHERE imdb_id=?",(imdb_id,)).fetchone() if imdb_id else None
-            if not existing: existing=con.execute("SELECT id FROM movies WHERE identity_key=? ORDER BY id LIMIT 1",(ident,)).fetchone()
+            if not existing:
+                if imdb_id:
+                    existing=con.execute(
+                        "SELECT id FROM movies WHERE imdb_id IS NULL AND identity_key=? ORDER BY id LIMIT 1",
+                        (ident,),
+                    ).fetchone()
+                else:
+                    existing=con.execute(
+                        "SELECT id FROM movies WHERE identity_key=? ORDER BY id LIMIT 1",
+                        (ident,),
+                    ).fetchone()
             if not existing:
                 tn,on=normalize_text(title),normalize_text(original)
-                existing=con.execute("""SELECT id FROM movies WHERE year IS ? AND LOWER(COALESCE(title_type,''))=LOWER(?)
-                    AND (title_norm IN (?,?) OR original_title_norm IN (?,?)) ORDER BY id LIMIT 1""",(year,typ,tn,on,tn,on)).fetchone()
+                if imdb_id:
+                    existing=con.execute("""SELECT id FROM movies WHERE imdb_id IS NULL AND year IS ?
+                        AND LOWER(COALESCE(title_type,''))=LOWER(?)
+                        AND (title_norm IN (?,?) OR original_title_norm IN (?,?)) ORDER BY id LIMIT 1""",
+                        (year,typ,tn,on,tn,on)).fetchone()
+                else:
+                    existing=con.execute("""SELECT id FROM movies WHERE year IS ? AND LOWER(COALESCE(title_type,''))=LOWER(?)
+                        AND (title_norm IN (?,?) OR original_title_norm IN (?,?)) ORDER BY id LIMIT 1""",
+                        (year,typ,tn,on,tn,on)).fetchone()
             vals=(imdb_id,ident,title,original,normalize_text(title),normalize_text(original),year,typ,movie.runtime_min,json_dumps(movie.genres),json_dumps(movie.directors),json_dumps(movie.countries),movie.overview,
                   json_dumps(movie.keywords),json_dumps(movie.semantic),movie.imdb_rating,movie.num_votes,movie.release_date,movie.poster_url,"catalog_csv",now)
             if existing:
