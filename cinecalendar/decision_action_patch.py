@@ -8,6 +8,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 from .recommendation import row_to_movie
+from .recommendation_outcomes_v42 import reconcile_recommendation_outcomes
 from .trust_audit import (
     ensure_trust_audit_schema,
     resolve_exposure_history_id,
@@ -79,7 +80,9 @@ def record_decision_action(
                ) VALUES(?,?,?,?,?,?,?,?)""",
             (movie_id, now, event_context_date, "decision_action", final_score, ignored, action, exposure_id),
         )
-        return int(cur.lastrowid)
+        event_id = int(cur.lastrowid)
+    reconcile_recommendation_outcomes(db)
+    return event_id
 
 
 def set_today_choice(
