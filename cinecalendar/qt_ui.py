@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
-import threading
 import webbrowser
 from datetime import date, datetime
 from pathlib import Path
@@ -125,6 +124,11 @@ class CineCalendarWindow(QMainWindow):
         self.current_page = "today"
         self.worker: WorkerThread | None = None
         self.poster_threads: list[WorkerThread] = []
+        self._poster_queue: list[tuple[str, str, Path]] = []
+        self._poster_waiters: dict[str, list[tuple[QLabel, Any]]] = {}
+        self._poster_enqueued: set[str] = set()
+        self._poster_active = 0
+        self._poster_limit = 6
         self.setWindowTitle(f"CineCalendar {APP_VERSION}")
         self.resize(1440, 900); self.setMinimumSize(1100, 700)
         self._set_icon()
@@ -281,61 +285,118 @@ class CineCalendarWindow(QMainWindow):
             ib=QPushButton("Deschide IMDb"); ib.clicked.connect(lambda _,iid=m.imdb_id:QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))); buttons.addWidget(ib,2,2)
         right.addLayout(buttons); main.addLayout(right,1); return box
 
-    def load_poster_async(self,label:QLabel,url:str,key:str,on_failure=None):
-        cache=self.s.paths.cache/"posters"; cache.mkdir(parents=True,exist_ok=True)
-        path=cache/(hashlib.sha256((key+url).encode()).hexdigest()+".jpg")
-        semaphore=getattr(self,"_poster_download_semaphore",None)
-        if semaphore is None:
-            semaphore=threading.BoundedSemaphore(6)
-            self._poster_download_semaphore=semaphore
+    def _apply_poster_pixmap(self, label: QLabel, pixmap: QPixmap) -> None:
+        try:
+            label.setPixmap(
+                pixmap.scaled(
+                    label.size(),
+                    Qt.KeepAspectRatioByExpanding,
+                    Qt.SmoothTransformation,
+                )
+            )
+            label.setText("")
+        except RuntimeError:
+            # The page/card was rebuilt while the queued image was loading.
+            pass
 
-        def fn(progress):
-            if path.exists():
-                return str(path)
-            with semaphore:
-                if path.exists():
-                    return str(path)
-                r=requests.get(
-                    url,
+    def _finish_poster_request(self, request_id: str, path: Path | None, error: str | None) -> None:
+        waiters = self._poster_waiters.pop(request_id, [])
+        self._poster_enqueued.discard(request_id)
+        self._poster_active = max(0, self._poster_active - 1)
+
+        pixmap = QPixmap(str(path)) if path is not None and path.exists() else QPixmap()
+        if not pixmap.isNull():
+            for label, _on_failure in waiters:
+                self._apply_poster_pixmap(label, pixmap)
+        else:
+            if path is not None:
+                try:
+                    path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            message = error or "Imagine invalidă sau coruptă."
+            for _label, on_failure in waiters:
+                if callable(on_failure):
+                    try:
+                        on_failure(message)
+                    except Exception:
+                        self.s.log.exception("poster failure callback failed")
+
+        QTimer.singleShot(0, self._pump_poster_queue)
+
+    def _pump_poster_queue(self) -> None:
+        while self._poster_active < self._poster_limit and self._poster_queue:
+            request_id, url, path = self._poster_queue.pop(0)
+            self._poster_active += 1
+
+            def fn(progress, request_url=url, request_path=path):
+                if request_path.exists():
+                    return str(request_path)
+                response = requests.get(
+                    request_url,
                     timeout=15,
                     headers={
                         "User-Agent":"CineCalendar/3.9",
                         "Accept":"image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
                     },
                 )
-                r.raise_for_status()
-                content_type=str(r.headers.get("Content-Type") or "").lower()
+                response.raise_for_status()
+                content_type = str(response.headers.get("Content-Type") or "").lower()
                 if content_type and not content_type.startswith("image/"):
-                    raise ValueError(f"URL-ul posterului nu a returnat o imagine ({content_type}).")
-                if len(r.content) < 512:
+                    raise ValueError(
+                        f"URL-ul posterului nu a returnat o imagine ({content_type})."
+                    )
+                if len(response.content) < 512:
                     raise ValueError("Imaginea posterului este goală sau prea mică.")
-                tmp=Path(str(path)+f".{threading.get_ident()}.part")
+                tmp = Path(str(request_path) + ".part")
                 try:
-                    tmp.write_bytes(r.content)
-                    tmp.replace(path)
+                    tmp.write_bytes(response.content)
+                    tmp.replace(request_path)
                 finally:
                     tmp.unlink(missing_ok=True)
-            return str(path)
+                return str(request_path)
 
-        w=WorkerThread(fn,self); self.poster_threads.append(w)
-        def done(p):
-            pm=QPixmap(p)
-            if not pm.isNull():
-                try:
-                    label.setPixmap(pm.scaled(label.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation))
-                    label.setText("")
-                except RuntimeError:
-                    # Page was rebuilt while this asynchronous poster was loading.
-                    pass
-            else:
-                try: Path(p).unlink(missing_ok=True)
-                except Exception: pass
-                if callable(on_failure): on_failure("Imagine invalidă sau coruptă.")
-            if w in self.poster_threads:self.poster_threads.remove(w)
-        def failed(message):
-            if w in self.poster_threads:self.poster_threads.remove(w)
-            if callable(on_failure): on_failure(str(message))
-        w.success.connect(done); w.failure.connect(failed); w.finished.connect(w.deleteLater); w.start()
+            worker = WorkerThread(fn, self)
+            self.poster_threads.append(worker)
+
+            def done(p, rid=request_id, w=worker):
+                if w in self.poster_threads:
+                    self.poster_threads.remove(w)
+                self._finish_poster_request(rid, Path(p), None)
+
+            def failed(message, rid=request_id, p=path, w=worker):
+                if w in self.poster_threads:
+                    self.poster_threads.remove(w)
+                self._finish_poster_request(rid, p, str(message))
+
+            worker.success.connect(done)
+            worker.failure.connect(failed)
+            worker.finished.connect(worker.deleteLater)
+            worker.start()
+
+    def load_poster_async(self, label: QLabel, url: str, key: str, on_failure=None):
+        cache = self.s.paths.cache / "posters"
+        cache.mkdir(parents=True, exist_ok=True)
+        request_id = hashlib.sha256((key + url).encode()).hexdigest()
+        path = cache / (request_id + ".jpg")
+
+        if path.exists():
+            pixmap = QPixmap(str(path))
+            if not pixmap.isNull():
+                self._apply_poster_pixmap(label, pixmap)
+                return
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        self._poster_waiters.setdefault(request_id, []).append((label, on_failure))
+        if request_id in self._poster_enqueued:
+            return
+
+        self._poster_enqueued.add(request_id)
+        self._poster_queue.append((request_id, url, path))
+        self._pump_poster_queue()
 
     def feedback(self,movie_id:int,kind:str):
         try:
