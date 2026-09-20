@@ -176,6 +176,24 @@ def test_one_real_rating_is_owned_by_latest_explicit_exposure(tmp_path):
     assert recommendation_performance(db).rated_outcomes == 1
 
 
+
+
+def test_skipped_choice_is_not_retroactively_counted_as_success(tmp_path):
+    db = Database(tmp_path / "skipped-outcome.db")
+    mid = _movie(db, 4, "Skipped choice")
+    eid = _exposure(db, mid, day="2026-09-18", predicted=7.8, rank=1)
+    _event(db, eid, mid, "2026-09-18", "chosen", 19)
+    _event(db, eid, mid, "2026-09-18", "skip_today", 20)
+    _rating(db, mid, 9, "2026-09-20")
+
+    reconcile_recommendation_outcomes(db)
+    with db.connect() as con:
+        row = con.execute(
+            "SELECT * FROM recommendation_outcomes WHERE exposure_history_id=?",
+            (eid,),
+        ).fetchone()
+    assert row is None
+
 def test_contextual_feedback_is_short_term_only(tmp_path):
     db = Database(tmp_path / "feedback.db")
     mid = _movie(db, 3, "Not tonight")
