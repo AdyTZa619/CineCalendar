@@ -81,6 +81,7 @@ jobs:
             Start-Sleep -Seconds (5 * $attempt)
           }
           if (-not $ok) { throw "IMDb public-profile live gate failed after 3 attempts." }
+          python -c "import requests; from cinecalendar.imdb_sync import _metadata_payload; p=_metadata_payload(requests.Session(),['tt0111161'],timeout=20); t=(p.get('data') or {}).get('titles') or []; assert t and t[0].get('ratingsSummary'), p; print('LIVE_IMDB_METADATA_OK',t[0]['id'],t[0]['ratingsSummary'].get('aggregateRating'))"
 
       - name: Benchmark 260k catalog engine
         env:
