@@ -25,6 +25,7 @@ class RecommendationPerformance:
     within_one: float | None
     top1_liked_rate: float | None
     top3_liked_rate: float | None
+    measurement_start: str | None
     recent: tuple[dict, ...]
 
 
@@ -213,20 +214,23 @@ def recommendation_performance(db, *, recent_limit: int = 12) -> RecommendationP
     reconcile_recommendation_outcomes(db)
     with db.connect() as con:
         exposure_row = con.execute(
-            """SELECT COUNT(*)
+            """SELECT COUNT(*),MIN(context_date)
                FROM recommendation_history
                WHERE action IS NULL
+                 AND predicted_rating IS NOT NULL
                  AND slot IN ('decision','decision-refill','watchlist_next','decision-v41')"""
         ).fetchone()
         rows = con.execute(
             """SELECT o.*,COALESCE(NULLIF(m.original_title,''),m.title) AS display_title
                FROM recommendation_outcomes o
                JOIN movies m ON m.id=o.movie_id
+               WHERE o.predicted_rating IS NOT NULL
                ORDER BY COALESCE(o.rating_date,o.watched_at,o.playback_at,o.chosen_at,o.context_date) DESC,
                         o.exposure_history_id DESC"""
         ).fetchall()
 
     decision_exposures = int(exposure_row[0] or 0)
+    measurement_start = str(exposure_row[1] or "")[:10] or None
     chosen = sum(bool(row["chosen_at"]) for row in rows)
     started = sum(bool(row["playback_at"]) for row in rows)
     watched = sum(bool(row["watched_at"]) for row in rows)
@@ -280,5 +284,6 @@ def recommendation_performance(db, *, recent_limit: int = 12) -> RecommendationP
         within_one=rate(sum(error <= 1.0 for error in errors), len(errors)) if errors else None,
         top1_liked_rate=rate(sum(int(row["actual_rating"]) >= 8 for row in top1), len(top1)) if top1 else None,
         top3_liked_rate=rate(sum(int(row["actual_rating"]) >= 8 for row in top3), len(top3)) if top3 else None,
+        measurement_start=measurement_start,
         recent=tuple(recent),
     )
