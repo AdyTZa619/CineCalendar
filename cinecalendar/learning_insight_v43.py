@@ -376,7 +376,10 @@ class TextSemanticBrainV43:
         n_docs = len(rows)
         tokens = {}
         for token, docs in df.items():
-            if docs < 3 or docs > max(8, int(n_docs * 0.42)):
+            # IDF already suppresses broad vocabulary. Keep discriminative terms that occur in
+            # up to 75% of rated texts; a 40-60% split can be exactly the signal separating a
+            # strongly liked theme from a strongly disliked one.
+            if docs < 3 or docs > max(8, int(n_docs * 0.75)):
                 continue
             raw = residual_sum[token] / max(0.001, weight_sum[token])
             support = docs / (docs + 7.0)
