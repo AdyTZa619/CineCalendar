@@ -7,7 +7,7 @@ from typing import Iterable
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -122,6 +122,40 @@ class MovieDetailDialog(QDialog):
             calendar.setObjectName("Muted")
             wl.addWidget(calendar)
         body.addWidget(why)
+
+        if str(getattr(rec.score, "why_not", "") or "").strip():
+            caution = QFrame()
+            caution.setObjectName("PremiumCard")
+            cl = QVBoxLayout(caution)
+            cl.setContentsMargins(22, 18, 22, 18)
+            ch = QLabel("Compromisuri / de ce nu e o alegere perfectă")
+            ch.setObjectName("SectionTitle")
+            cl.addWidget(ch)
+            ct = QLabel(str(rec.score.why_not))
+            ct.setObjectName("Muted")
+            ct.setWordWrap(True)
+            cl.addWidget(ct)
+            body.addWidget(caution)
+
+        factors = dict(getattr(rec.score, "score_factors", {}) or {})
+        if factors:
+            factor_box = QFrame()
+            factor_box.setObjectName("PremiumCard")
+            fl = QVBoxLayout(factor_box)
+            fl.setContentsMargins(22, 18, 22, 18)
+            fh = QLabel("Scor explicabil")
+            fh.setObjectName("SectionTitle")
+            fl.addWidget(fh)
+            for name, value in factors.items():
+                row = QHBoxLayout()
+                label = QLabel(str(name).capitalize())
+                label.setObjectName("BodyStrong")
+                row.addWidget(label, 1)
+                number = QLabel(f"{float(value):+.3f}")
+                number.setObjectName("SignalPositive" if float(value) >= 0 else "SignalNegative")
+                row.addWidget(number)
+                fl.addLayout(row)
+            body.addWidget(factor_box)
 
         signals = QFrame()
         signals.setObjectName("PremiumCard")
@@ -399,13 +433,38 @@ class PremiumDecisionWindow(DecisionWindow):
         self.today_content.addWidget(self.decision_hero(primary))
 
         mode = QFrame(); mode.setObjectName("PremiumCard")
-        ml = QHBoxLayout(mode); ml.setContentsMargins(16,12,16,12)
+        ml = QHBoxLayout(mode); ml.setContentsMargins(16,12,16,12); ml.setSpacing(8)
         label = QLabel("Reglaj rapid")
-        label.setObjectName("BodyStrong"); ml.addWidget(label); ml.addStretch(1)
+        label.setObjectName("BodyStrong"); ml.addWidget(label)
         for text, value in (("Echilibrat","decide"),("Mai sigur","safe"),("Surprinde-mă","surprise"),("Mai scurt","short")):
             b=QPushButton(text)
             if value==self.decision_mode: b.setProperty("accent",True)
             b.clicked.connect(lambda _,v=value:self.set_decision_mode(v)); ml.addWidget(b)
+
+        ml.addWidget(QLabel("Timp"))
+        runtime = QComboBox()
+        for text, key in (("Orice","all"),("≤60 min","60"),("≤90 min","90"),("≤120 min","120"),("180+ min","180plus")):
+            runtime.addItem(text,key)
+        wanted_runtime = str(self.db.get_setting("chooser_runtime_bucket","all") or "all")
+        runtime.setCurrentIndex(max(0, runtime.findData(wanted_runtime)))
+        ml.addWidget(runtime)
+
+        ml.addWidget(QLabel("Dispoziție"))
+        mood = QComboBox()
+        for text, key in (("Neutru","neutral"),("Lejer","light"),("Intens","intense"),("Contemplativ","contemplative"),("Ușor de urmărit","easy")):
+            mood.addItem(text,key)
+        wanted_mood = str(self.db.get_setting("chooser_mood","neutral") or "neutral")
+        mood.setCurrentIndex(max(0, mood.findData(wanted_mood)))
+        ml.addWidget(mood)
+        ml.addStretch(1)
+
+        def chooser_changed():
+            self.db.set_setting("chooser_runtime_bucket", str(runtime.currentData() or "all"))
+            self.db.set_setting("chooser_mood", str(mood.currentData() or "neutral"))
+            self.show_page("today")
+
+        runtime.currentIndexChanged.connect(lambda _i: chooser_changed())
+        mood.currentIndexChanged.connect(lambda _i: chooser_changed())
         self.today_content.addWidget(mode)
 
         if backups:
@@ -439,6 +498,8 @@ class PremiumDecisionWindow(DecisionWindow):
 
         overview=QLabel(self.overview_text(m)); overview.setObjectName("Overview"); overview.setWordWrap(True); overview.setMaximumHeight(118); right.addWidget(overview)
         reason=QLabel(self.human_reason(rec)); reason.setWordWrap(True); reason.setObjectName("BodyStrong"); right.addWidget(reason)
+        if str(getattr(s, "why_not", "") or "").strip():
+            caution=QLabel("Compromisuri: "+str(s.why_not)); caution.setObjectName("Muted"); caution.setWordWrap(True); right.addWidget(caution)
         if s.calendar_reason and s.calendar >= .48:
             now=QLabel("De ce acum: "+s.calendar_reason); now.setObjectName("Muted"); now.setWordWrap(True); right.addWidget(now)
 

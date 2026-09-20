@@ -92,15 +92,30 @@ def install_smart_watchlist_ui(window_cls) -> None:
         idx = content_type.findData(wanted_type)
         content_type.setCurrentIndex(idx if idx >= 0 else 0)
         row.addWidget(content_type)
+
+        row.addWidget(QLabel("Stil"))
+        style = QComboBox()
+        for label, key in (
+            ("Echilibrat", "decide"),
+            ("Mai sigur", "safe"),
+            ("Surprinde-mă", "surprise"),
+        ):
+            style.addItem(label, key)
+        wanted_style = str(self.db.get_setting("watchlist_decision_mode", "decide") or "decide")
+        idx = style.findData(wanted_style)
+        style.setCurrentIndex(idx if idx >= 0 else 0)
+        row.addWidget(style)
         row.addStretch(1)
 
         def changed():
             self.db.set_setting("watchlist_runtime_filter", str(runtime.currentData() or "all"))
             self.db.set_setting("watchlist_type_filter", str(content_type.currentData() or "all"))
+            self.db.set_setting("watchlist_decision_mode", str(style.currentData() or "decide"))
             self.show_page("watchlist")
 
         runtime.currentIndexChanged.connect(lambda _i: changed())
         content_type.currentIndexChanged.connect(lambda _i: changed())
+        style.currentIndexChanged.connect(lambda _i: changed())
         return box
 
     def _toggle_pin(self, movie_id: int):
@@ -279,6 +294,9 @@ def install_smart_watchlist_ui(window_cls) -> None:
                 self.choose_decision(int(mid), getattr(r, "exposure_history_id", None))
             )
             quick.addWidget(choose_now)
+            all_library = QPushButton("Alege din toată biblioteca")
+            all_library.clicked.connect(lambda _checked=False: self.show_page("today"))
+            quick.addWidget(all_library)
             quick.addStretch(1)
             sl.addLayout(quick)
             title = QLabel("Următoarele 5")
@@ -361,7 +379,7 @@ def install_smart_watchlist_ui(window_cls) -> None:
                 self.s.recommender,
                 date.today(),
                 5,
-                getattr(self, "decision_mode", "decide"),
+                str(self.db.get_setting("watchlist_decision_mode", "decide") or "decide"),
                 runtime_bucket=str(self.db.get_setting("watchlist_runtime_filter", "all") or "all"),
                 content_type=str(self.db.get_setting("watchlist_type_filter", "all") or "all"),
             ),
