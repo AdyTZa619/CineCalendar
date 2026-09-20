@@ -196,3 +196,135 @@ def test_public_sync_sends_required_imdb_web_headers():
         assert headers["Referer"] == "https://www.imdb.com/"
         assert headers["x-imdb-client-name"] == "imdb-web-next"
         assert "application/graphql+json" in headers["Accept"]
+
+
+def test_full_profile_prunes_stale_csv_rating_with_same_title_year(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    now = "2026-05-23T00:00:00+00:00"
+    with db.tx() as con:
+        old = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt1861356","jana|jana|2004|movie","Jana","Jana","jana","jana",
+                2004,"Movie","[\"Action\",\"Drama\"]","[\"Shaji Kailas\"]",
+                "imdb_csv",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(old.lastrowid),5,"2026-05-23","imdb",now,now),
+        )
+
+    result = sync_public_ratings(
+        db,
+        URL,
+        baseline_date=None,
+        session=session_for(payload([
+            ("tt4568192","Jana",5,"2026-05-23",2004),
+        ])),
+    )
+
+    assert result.removed_ratings == [("Jana", 5, "tt1861356")]
+    with db.connect() as con:
+        rows = con.execute(
+            """SELECT m.imdb_id,r.rating,r.source
+               FROM ratings r JOIN movies m ON m.id=r.movie_id
+               ORDER BY m.imdb_id"""
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("tt4568192", 5, "imdb_public_sync"),
+    ]
+
+
+def test_full_profile_keeps_two_distinct_same_title_year_movies_if_both_are_live(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    result = sync_public_ratings(
+        db,
+        URL,
+        baseline_date=None,
+        session=session_for(payload([
+            ("tt1861356","Jana",5,"2026-05-23",2004),
+            ("tt4568192","Jana",5,"2026-05-23",2004),
+        ])),
+    )
+    assert result.removed_ratings == []
+    with db.connect() as con:
+        ids = [
+            row[0] for row in con.execute(
+                """SELECT m.imdb_id
+                   FROM ratings r JOIN movies m ON m.id=r.movie_id
+                   ORDER BY m.imdb_id"""
+            ).fetchall()
+        ]
+    assert ids == ["tt1861356","tt4568192"]
+
+
+def test_full_profile_never_prunes_manual_rating(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    now = "2026-01-01T00:00:00+00:00"
+    with db.tx() as con:
+        cur = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt9999999","manual|manual|2020|movie","Manual","Manual","manual","manual",
+                2020,"Movie","[]","[]","manual",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(cur.lastrowid),7,"2026-01-01","manual",now,now),
+        )
+
+    sync_public_ratings(
+        db,
+        URL,
+        baseline_date=None,
+        session=session_for(payload([
+            ("tt1000999","Other",8,"2026-09-01",2024),
+        ])),
+    )
+    with db.connect() as con:
+        manual = con.execute(
+            """SELECT r.rating FROM ratings r JOIN movies m ON m.id=r.movie_id
+               WHERE m.imdb_id='tt9999999'"""
+        ).fetchone()
+    assert manual is not None and int(manual[0]) == 7
+
+
+def test_empty_remote_profile_does_not_wipe_existing_imdb_history(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    now = "2026-01-01T00:00:00+00:00"
+    with db.tx() as con:
+        cur = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt1000001","film|film|2020|movie","Film","Film","film","film",
+                2020,"Movie","[]","[]","imdb_csv",now,now,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (int(cur.lastrowid),8,"2026-01-01","imdb",now,now),
+        )
+
+    with pytest.raises(RuntimeError):
+        sync_public_ratings(
+            db,
+            URL,
+            baseline_date=None,
+            session=session_for(payload([])),
+        )
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 1
