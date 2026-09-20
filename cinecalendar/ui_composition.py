@@ -19,6 +19,7 @@ def compose_premium_window(window_cls) -> None:
     from .romanian_list_ui_patch import install_romanian_list_ui_patch
     from .context_ui_v35 import install_context_ui_v35
     from .accuracy_ui_v37 import install_accuracy_ui_v37
+    from .smart_watchlist_ui import install_smart_watchlist_ui
     from .decision_action_patch import install_decision_action_patch
     from .watch_success_ui_patch import install_watch_success_ui_patch
     from .foundation_v33 import install_foundation_v33
@@ -33,6 +34,7 @@ def compose_premium_window(window_cls) -> None:
     install_romanian_list_ui_patch(window_cls)
     install_context_ui_v35(window_cls)
     install_accuracy_ui_v37(window_cls)
+    install_smart_watchlist_ui(window_cls)
     install_decision_action_patch(window_cls)
     install_watch_success_ui_patch(window_cls)
     install_foundation_v33(window_cls)
