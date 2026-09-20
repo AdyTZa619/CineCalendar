@@ -501,6 +501,7 @@ class CineCalendarWindow(QMainWindow):
                 profile_url=url,
                 baseline_date=baseline,
                 limit=5000,
+                dataset_dir=self.s.paths.cache / "imdb_datasets",
                 progress=progress,
             )
 
@@ -514,6 +515,13 @@ class CineCalendarWindow(QMainWindow):
                 f"Bibliotecă reparată: {result.after.complete:,}/{result.after.total:,} titluri complete.",
                 False,
             )
+            unresolved = ""
+            if result.remaining_gaps:
+                preview = list(result.remaining_gaps[:15])
+                unresolved = "\n\nÎncă au metadate lipsă:\n- " + "\n- ".join(preview)
+                if len(result.remaining_gaps) > len(preview):
+                    unresolved += f"\n… și încă {len(result.remaining_gaps) - len(preview)} în raport."
+
             QMessageBox.information(
                 self,
                 "Repară biblioteca",
@@ -521,12 +529,17 @@ class CineCalendarWindow(QMainWindow):
                 f"Ratinguri noi: {result.new_ratings}\n"
                 f"Ratinguri modificate: {result.changed_ratings}\n"
                 f"Duplicate reparate: {result.duplicates_repaired}\n"
-                f"IMDb completate: {result.imdb_enriched}\n"
+                f"IMDb GraphQL completate: {result.imdb_enriched}\n"
+                f"IMDb dataset — regizori: {result.imdb_dataset_directors}\n"
+                f"IMDb dataset — titluri originale corectate: {result.imdb_dataset_original_titles}\n"
+                f"IMDb dataset — genuri: {result.imdb_dataset_genres}\n"
+                f"IMDb dataset — durate: {result.imdb_dataset_runtime}\n"
                 f"TMDb completate: {result.tmdb_enriched}\n"
                 f"Wikidata/Wikipedia completate: {result.wikimedia_enriched}\n\n"
                 f"Complete: {result.after.complete:,}/{result.after.total:,} "
                 f"({result.after.completion_percent:.1f}%)\n"
                 f"Încă incomplete: {result.after.incomplete:,}."
+                + unresolved
                 + (
                     "\n\nEtape temporar indisponibile:\n- " + "\n- ".join(result.stage_errors)
                     if result.stage_errors else ""
