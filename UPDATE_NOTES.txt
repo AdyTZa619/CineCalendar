@@ -1,44 +1,81 @@
-CineCalendar 4.0.5 – Metadata Integrity
+CineCalendar 4.1.0 – Personalizare evolutivă și recomandări explicabile
 
 Obiectiv:
-- repară cazurile în care IMDb afișează regizorul, dar CineCalendar rămânea cu „—”;
-- consolidează prioritatea surselor și transparența metadatelor fără a modifica motorul de recomandări.
+- îmbunătățește calitatea reală a recomandărilor fără să înlocuiască motorul validat;
+- orice reranking nou care poate schimba ordinea este limitat și protejat de un quality-gate local;
+- explicațiile, profilurile pe tip de conținut și controalele de alegere sunt disponibile chiar dacă quality-gate-ul decide să nu lase stratul temporal să modifice scorurile.
 
-Regizori IMDb:
-- „Repară biblioteca” încearcă întâi metadata IMDb GraphQL;
-- dacă regizorul lipsește în continuare, folosește dataseturile oficiale IMDb title.crew.tsv.gz + name.basics.tsv.gz;
-- această etapă verifică direct toate filmele evaluate, fără pragul de minimum 50 voturi folosit de catalogul de recomandări;
-- filmele foarte noi, scurtmetrajele și titlurile obscure pot primi astfel regizorul chiar dacă nu au intrat în catalogul eligibil;
-- fișierele oficiale sunt păstrate în cache și refolosite; dacă au peste 36 de ore, etapa de reparare descarcă automat copia IMDb actuală.
+1. Gustul evoluează în timp
+- ratingurile recente primesc o greutate mai mare decât cele vechi, fără să șteargă istoricul;
+- motorul calculează separat media recentă și istorică pentru genuri, regizori, țări, decenii și tipuri de conținut;
+- detectează explicit când gustul s-a încălzit sau răcit pentru un tipar;
+- ajustarea de scor este plafonată și se activează numai dacă trece quality-gate-ul local.
 
-Titlu original și alte câmpuri:
-- title.basics.tsv.gz devine sursă oficială pentru originalTitle;
-- corectează titlul original când baza locală are o valoare diferită;
-- completează din datasetul oficial genul, durata și anul când acestea lipsesc;
-- identitatea internă și semantic metadata sunt recalculare după corecție.
+2. Dovezi concrete din ratingurile tale
+- explicația poate cita filme evaluate efectiv de tine, de exemplu „Film A 9/10; Film B 8/10”;
+- caută repere similare prin regizor, gen, țară, tip de conținut și perioadă;
+- folosește și exemple negative pentru a explica de ce un titlu nu este o alegere perfectă.
 
-Prioritatea surselor:
-1. IMDb GraphQL / dataset oficial IMDb;
-2. TMDb, numai pentru câmpuri încă lipsă;
-3. Wikidata/Wikipedia, numai pentru câmpuri încă lipsă.
-TMDb nu mai suprascrie regizori, genuri, durate sau țări deja obținute din IMDb.
+3. Anti-repetiție 4.1
+- penalizează repetarea aceluiași regizor în aceeași listă;
+- reduce listele cu genuri aproape identice, aceeași țară sau aceeași perioadă;
+- ține cont și de tiparele recomandate în ultimele 45 de zile;
+- în modul „Surprinde-mă” penalizarea de diversitate este mai mică;
+- Top 3 validat nu primește membri noi din afara setului; 4.1 poate doar reordona și explica aceleași trei titluri.
 
-Wikidata:
-- repară interogarea pentru genuri: proprietatea P136 este acum legată efectiv;
-- cache-ul fallback este versionat din nou, astfel încât rezultatele vechi fără gen să fie refăcute o singură dată.
+4. Calendar/context mai strict
+- contextul perioadei primește numai un bonus mic;
+- bonusul apare doar peste un prag de potrivire personală și rating estimat;
+- legăturile atmosferice sunt mult mai slabe decât cele directe/istorice/spirituale;
+- calendarul nu poate salva un film care nu se potrivește suficient gustului personal.
 
-Transparență:
-- baza de date păstrează sursa ultimului furnizor pentru fiecare câmp reparat;
-- în meniul ⋯ al unui film apare submeniul „Surse metadate” când există informație de proveniență;
-- pot apărea surse precum IMDb GraphQL, IMDb dataset oficial, TMDb sau Wikidata/Wikipedia.
+5. Profiluri separate pe tip de conținut
+- film;
+- documentar;
+- scurtmetraj;
+- animație;
+- Taste Hub afișează media și trendul separat pentru fiecare tip când există suficiente date.
 
-Raport de reparare:
-- afișează separat câți regizori au fost completați din datasetul oficial;
-- afișează câte titluri originale au fost corectate;
-- afișează genurile și duratele reparate;
-- la final listează concret titlurile care încă au metadate lipsă și câmpurile rămase.
+6. Detectarea schimbării gustului
+- Taste Hub arată cele mai clare creșteri/scăderi recente;
+- schimbările cer suport minim, ca un singur rating să nu fie interpretat drept schimbare stabilă.
+
+7. Scor explicabil
+- fiecare recomandare poate expune separat: gust, afinitate personală, regizor/cinematografie, calendar, anotimp, calitate, noutate, evoluția gustului, dispoziția aleasă și contextul strict;
+- fereastra Detalii are o secțiune „Scor explicabil”.
+
+8. „De ce NU”
+- recomandările pot afișa compromisuri: predicție personală modestă, încredere mică, recomandare recentă, răcire a gustului sau filme similare evaluate slab;
+- pagina „Ce văd acum?” arată rezumatul direct sub motivul principal;
+- Detalii are o secțiune dedicată compromisurilor.
+
+9. „Alege-mi unul acum” extins
+- timp disponibil: orice / <=60 / <=90 / <=120 / 180+ minute;
+- dispoziție: neutru / lejer / intens / contemplativ / ușor de urmărit;
+- rămân modurile Echilibrat / Mai sigur / Surprinde-mă / Mai scurt;
+- filtrul de timp este aplicat înainte de alegerea finală, nu doar afișat în UI.
+
+10. Watchlist dinamic
+- prioritatea manuală rămâne;
+- scorul Watchlist se recalculează după ratingurile noi și evoluția gustului;
+- filmele foarte vechi din Watchlist cu potrivire modestă pot coborî ușor;
+- vechimea singură nu împinge un film în sus;
+- stilul Watchlist poate fi Echilibrat / Mai sigur / Surprinde-mă;
+- buton separat permite alegerea din toată biblioteca.
+
+11. Consistență metadata
+- „Repară biblioteca” rulează după completare și un audit de consistență;
+- semnalează titluri originale lipsă, durate/ani imposibili și identități locale posibil duplicate;
+- auditul nu suprascrie automat valori doar fiindcă diferă între surse.
+
+12. Quality-gate automat 4.1
+- stratul temporal se validează pe un holdout cronologic local;
+- compară MAE și ordonarea pairwise cu o bază simplă;
+- dacă nu există câștig măsurabil sau apare regresie, rerankingul temporal rămâne blocat;
+- Taste Hub arată starea gate-ului și valorile de validare;
+- quality manager-ul existent continuă să testeze stack-ul complet în backtesturile de producție.
 
 Siguranță:
-- schema SQLite urcă la v6 și adaugă doar tabela metadata_provenance;
-- migrarea păstrează mecanismul existent de backup/quick_check;
-- motorul de recomandări, ratingurile și logica Smart Watchlist nu sunt modificate.
+- baza 4.0.5, metadata integrity, Smart Watchlist, ALS, contextul 3.5 și quality manager 3.7 rămân active;
+- 4.1 este un strat compus peste stack-ul existent, nu un motor paralel;
+- nu se modifică schema SQLite în această versiune.
