@@ -6,9 +6,10 @@ from .calendar_engine_v3 import ContextCalendarEngineV35
 from .context_recommender_v35 import CONTEXT_RECOMMENDER_VERSION, contextual_engine_class
 from .recommender_v16 import FastRecommendationEngineV16
 from .watch_success_v33 import WatchSuccessIntentLearnerV33
+from .personalization_v41 import PERSONALIZATION_V41_VERSION, personalization_engine_class
 
 
-PRODUCTION_STACK_VERSION = "production-stack-v3.8.0"
+PRODUCTION_STACK_VERSION = "production-stack-v4.1.0"
 
 
 def production_engine_class(base_cls: type) -> type:
@@ -27,8 +28,10 @@ def production_engine_class(base_cls: type) -> type:
         else availability_engine_class(base_cls)
     )
     if str(getattr(available_cls, "CONTEXT_RECOMMENDER_VERSION", "")) == CONTEXT_RECOMMENDER_VERSION:
-        return available_cls
-    return contextual_engine_class(available_cls)
+        context_cls = available_cls
+    else:
+        context_cls = contextual_engine_class(available_cls)
+    return personalization_engine_class(context_cls)
 
 
 def build_production_recommender(db, base_cls: type, calendar=None):
@@ -55,4 +58,10 @@ def production_stack_status(engine) -> dict:
         "calendar_class": type(getattr(engine, "calendar", None)).__name__,
         "adaptive_class": type(getattr(engine, "adaptive", None)).__name__,
         "watch_intent_class": type(getattr(engine, "watch_intent", None)).__name__,
+        "personalization_version": str(getattr(engine, "PERSONALIZATION_V41_VERSION", "")),
+        "personalization_status": (
+            engine.personalization_status()
+            if callable(getattr(engine, "personalization_status", None))
+            else {"version": PERSONALIZATION_V41_VERSION, "quality_gate": {"approved": False, "reason": "unavailable"}}
+        ),
     }
