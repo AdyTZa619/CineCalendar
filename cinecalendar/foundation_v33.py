@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from .recommender_v16 import ENGINE_VERSION
+from .recommendation_history_v43 import record_explanation_snapshot
 from .trust_audit import ensure_trust_audit_schema, record_trust_snapshot, validate_exposure_history_id
 from .util import utcnow_iso
 
@@ -60,6 +61,9 @@ def _record_exposures(window, recs, ctx: date, slot: str) -> list[int]:
         return kept_ids
 
     now = utcnow_iso()
+    engine_version = str(
+        getattr(window.s.recommender, "LEARNING_INSIGHT_VERSION", ENGINE_VERSION) or ENGINE_VERSION
+    )
     with window.db.tx() as con:
         ensure_trust_audit_schema(con)
         run = con.execute(
@@ -72,7 +76,7 @@ def _record_exposures(window, recs, ctx: date, slot: str) -> list[int]:
                 now,
                 _candidate_count(window, len(recs)),
                 len(new_recs),
-                ENGINE_VERSION,
+                engine_version,
             ),
         )
         run_id = int(run.lastrowid)
@@ -103,10 +107,11 @@ def _record_exposures(window, recs, ctx: date, slot: str) -> list[int]:
                 context_date=context_date,
                 slot=str(slot),
                 rank_position=rank_position,
-                engine_version=ENGINE_VERSION,
+                engine_version=engine_version,
                 payload=payload if isinstance(payload, dict) else {"status": "unclassified"},
                 created_at=now,
             )
+            record_explanation_snapshot(con, history_id, rec.score, created_at=now)
             rec.exposure_history_id = history_id
             rec.exposure_context_date = context_date
             rec.exposure_slot = str(slot)
