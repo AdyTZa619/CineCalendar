@@ -401,7 +401,11 @@ class CineCalendarWindow(QMainWindow):
 
     def feedback(self,movie_id:int,kind:str):
         try:
-            apply_feedback(self.db,movie_id,kind); self.set_status("Feedback salvat; profilul a fost recalculat.")
+            apply_feedback(self.db,movie_id,kind)
+            if kind in {"not_now","too_long","mood_mismatch","too_similar"}:
+                self.set_status("Feedback contextual salvat; nu modifică permanent profilul tău de gust.")
+            else:
+                self.set_status("Feedback salvat; profilul a fost recalculat.")
             self.show_page(self.current_page)
         except Exception as exc: QMessageBox.critical(self,"Feedback",str(exc))
 
