@@ -161,3 +161,29 @@ def test_official_catalog_auto_download_and_validate(tmp_path, monkeypatch):
     with db.connect() as con:
         r=con.execute("select imdb_id,title,imdb_rating from movies").fetchone()
         assert tuple(r)==('tt9000001','Auto Film',8.1)
+
+
+def test_csv_does_not_merge_different_imdb_ids_with_same_title_and_year(tmp_path):
+    db=dbtmp(tmp_path)
+    now='2026-05-23T00:00:00+00:00'
+    with db.tx() as con:
+        con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                'tt4568192','jana|jana|2004|movie','Jana','Jana','jana','jana',
+                2004,'Movie','[]','[]','imdb_public_sync',now,now,
+            ),
+        )
+
+    p=tmp_path/'jana.csv'
+    write_ratings(p,[row('tt1861356','5','Jana','2004','Action, Drama','Shaji Kailas')])
+    import_imdb_csv(db,p)
+
+    with db.connect() as con:
+        ids=[r[0] for r in con.execute(
+            "SELECT imdb_id FROM movies WHERE title='Jana' AND year=2004 ORDER BY imdb_id"
+        ).fetchall()]
+    assert ids == ['tt1861356','tt4568192']
