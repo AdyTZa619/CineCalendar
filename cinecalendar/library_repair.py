@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import requests
 
+from .catalog import repair_rated_metadata_from_official_datasets
 from .imdb_sync import backfill_public_rating_metadata, sync_public_ratings
 from .models import Movie
 from .open_metadata import OpenMovieMetadataProvider
@@ -41,6 +43,12 @@ class LibraryRepairResult:
     tmdb_enriched: int = 0
     wikimedia_enriched: int = 0
     wikimedia_failed: int = 0
+    imdb_dataset_matches: int = 0
+    imdb_dataset_directors: int = 0
+    imdb_dataset_original_titles: int = 0
+    imdb_dataset_genres: int = 0
+    imdb_dataset_runtime: int = 0
+    remaining_gaps: tuple[str, ...] = ()
     stage_errors: tuple[str, ...] = ()
 
     @property
@@ -108,6 +116,47 @@ def _missing_rows(db, limit: int):
         ).fetchall()
 
 
+def remaining_metadata_gaps(db, limit: int = 50) -> tuple[str, ...]:
+    with db.connect() as con:
+        rows = con.execute(
+            """SELECT m.title,m.original_title,m.imdb_id,m.runtime_min,m.imdb_rating,
+                      m.genres_json,m.directors_json,m.poster_url,m.countries_json,
+                      r.date_rated,r.id AS rating_id
+               FROM ratings r
+               JOIN movies m ON m.id=r.movie_id
+               WHERE
+                    TRIM(COALESCE(m.genres_json,'')) IN ('','[]')
+                 OR TRIM(COALESCE(m.directors_json,'')) IN ('','[]')
+                 OR m.runtime_min IS NULL
+                 OR m.imdb_rating IS NULL
+                 OR m.poster_url IS NULL OR TRIM(m.poster_url)=''
+                 OR TRIM(COALESCE(m.countries_json,'')) IN ('','[]')
+               ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC
+               LIMIT ?""",
+            (max(1, int(limit)),),
+        ).fetchall()
+
+    out: list[str] = []
+    for row in rows:
+        missing: list[str] = []
+        if not (json_loads(row["directors_json"], []) or []):
+            missing.append("regizor")
+        if not (json_loads(row["genres_json"], []) or []):
+            missing.append("gen")
+        if row["runtime_min"] is None:
+            missing.append("durată")
+        if row["imdb_rating"] is None:
+            missing.append("rating IMDb")
+        if not str(row["poster_url"] or "").strip():
+            missing.append("poster")
+        if not (json_loads(row["countries_json"], []) or []):
+            missing.append("țară")
+        title = str(row["original_title"] or row["title"] or "Titlu necunoscut")
+        iid = str(row["imdb_id"] or "fără IMDb ID")
+        out.append(f"{title} [{iid}] — {', '.join(missing)}")
+    return tuple(out)
+
+
 def _movie_from_row(row) -> Movie:
     return Movie(
         id=int(row["id"]),
@@ -137,6 +186,7 @@ def repair_rated_library(
     profile_url: str = "",
     baseline_date: str | None = "2026-09-05",
     limit: int = 5000,
+    dataset_dir: str | Path | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> LibraryRepairResult:
     progress = progress or (lambda _message: None)
@@ -166,6 +216,19 @@ def repair_rated_library(
         imdb_enriched = 0
         stage_errors.append(f"Metadate IMDb: {str(exc)[:180]}")
         progress("Metadatele IMDb nu sunt disponibile; continui cu fallback-urile.")
+
+    dataset_result: dict[str, int] = {}
+    if dataset_dir is not None:
+        progress("Verific dataseturile oficiale IMDb pentru regizori și titluri originale…")
+        try:
+            dataset_result = repair_rated_metadata_from_official_datasets(
+                db,
+                dataset_dir,
+                progress,
+            )
+        except (requests.RequestException, RuntimeError, ValueError, OSError) as exc:
+            stage_errors.append(f"Dataset IMDb: {str(exc)[:180]}")
+            progress("Datasetul oficial IMDb nu a putut fi folosit; continui cu celelalte surse.")
 
     tmdb_enriched = 0
     token = str(db.get_setting("tmdb_token", "") or "").strip()
@@ -219,6 +282,7 @@ def repair_rated_library(
     progress("Recalculez statisticile și profilul de gust…")
     build_profile(db)
     after = rated_library_health(db)
+    remaining = remaining_metadata_gaps(db, limit=50)
     return LibraryRepairResult(
         before=before,
         after=after,
@@ -229,5 +293,11 @@ def repair_rated_library(
         tmdb_enriched=tmdb_enriched,
         wikimedia_enriched=wikimedia_enriched,
         wikimedia_failed=wikimedia_failed,
+        imdb_dataset_matches=int(dataset_result.get("dataset_matches", 0) or 0),
+        imdb_dataset_directors=int(dataset_result.get("directors_filled", 0) or 0),
+        imdb_dataset_original_titles=int(dataset_result.get("original_titles_corrected", 0) or 0),
+        imdb_dataset_genres=int(dataset_result.get("genres_filled", 0) or 0),
+        imdb_dataset_runtime=int(dataset_result.get("runtime_filled", 0) or 0),
+        remaining_gaps=remaining,
         stage_errors=tuple(stage_errors),
     )
