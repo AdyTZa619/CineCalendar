@@ -356,7 +356,7 @@ def backfill_public_rating_metadata(
                  AND m.imdb_id IS NOT NULL
                  AND (
                      m.imdb_rating IS NULL OR m.runtime_min IS NULL OR
-                     m.genres_json='[]' OR m.directors_json='[]' OR
+                     m.genres_json='[]' OR
                      m.poster_url IS NULL OR TRIM(m.poster_url)=''
                  )
                ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC
@@ -525,6 +525,11 @@ def _prune_stale_imdb_ratings_with_con(con, live_ids: set[str], result: SyncResu
         raise RuntimeError(
             "IMDb a returnat 0 ratinguri pentru un profil care are ratinguri IMDb locale; "
             "reconcilierea a fost anulată pentru protecția datelor."
+        )
+    if local_count >= 100 and live_ids and len(live_ids) < local_count * 0.5:
+        raise RuntimeError(
+            f"IMDb a returnat doar {len(live_ids)} din {local_count} ratinguri IMDb locale; "
+            "scăderea este prea mare pentru o ștergere automată sigură."
         )
 
     con.execute("CREATE TEMP TABLE IF NOT EXISTS _cc_live_imdb_ids(imdb_id TEXT PRIMARY KEY)")
