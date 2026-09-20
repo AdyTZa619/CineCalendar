@@ -183,9 +183,18 @@ def test_skipped_choice_is_not_retroactively_counted_as_success(tmp_path):
     mid = _movie(db, 4, "Skipped choice")
     eid = _exposure(db, mid, day="2026-09-18", predicted=7.8, rank=1)
     _event(db, eid, mid, "2026-09-18", "chosen", 19)
+
+    # The first choice is a live outcome while it is still active.
+    reconcile_recommendation_outcomes(db)
+    with db.connect() as con:
+        assert con.execute(
+            "SELECT 1 FROM recommendation_outcomes WHERE exposure_history_id=?",
+            (eid,),
+        ).fetchone() is not None
+
+    # A later skip must remove that already-created outcome, not only prevent future inserts.
     _event(db, eid, mid, "2026-09-18", "skip_today", 20)
     _rating(db, mid, 9, "2026-09-20")
-
     reconcile_recommendation_outcomes(db)
     with db.connect() as con:
         row = con.execute(
