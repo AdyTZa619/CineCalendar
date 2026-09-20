@@ -11,7 +11,7 @@ import requests
 from .db import Database
 from .models import Movie
 from .semantic import extract_semantic
-from .util import identity_key, json_dumps, normalize_text, utcnow_iso
+from .util import identity_key, json_dumps, json_loads, normalize_text, utcnow_iso
 
 
 GRAPHQL_URLS = (
@@ -104,13 +104,14 @@ class SyncResult:
     new_ratings: list[tuple[str, int]] = field(default_factory=list)
     changed_ratings: list[tuple[str, int, int]] = field(default_factory=list)
     removed_ratings: list[tuple[str, int, str]] = field(default_factory=list)
+    reconciled_duplicates: list[tuple[str, str, str]] = field(default_factory=list)
     metadata_enriched: int = 0
     unchanged: int = 0
     stopped_at_baseline: bool = False
 
     @property
     def changed(self) -> bool:
-        return bool(self.new_ratings or self.changed_ratings or self.removed_ratings)
+        return bool(self.new_ratings or self.changed_ratings or self.reconciled_duplicates)
 
 
 def user_id_from_profile_url(url: str) -> str:
@@ -481,6 +482,7 @@ def backfill_public_rating_metadata(
 
 
 _IMDB_RATING_SOURCES = ("imdb", "imdb_public_sync", "imdb_csv")
+_PUBLIC_ALIAS_SETTING = "imdb_public_id_aliases"
 
 
 def _manual_identity_candidate(con, item: RemoteRating):
@@ -508,76 +510,293 @@ def _manual_identity_candidate(con, item: RemoteRating):
     ).fetchone()
 
 
-def _prune_stale_imdb_ratings_with_con(con, live_ids: set[str], result: SyncResult) -> None:
-    """Make a successful full public-profile sync authoritative for IMDb-derived ratings."""
-    local_count = int(
-        con.execute(
-            """SELECT COUNT(*)
-               FROM ratings r
-               JOIN movies m ON m.id=r.movie_id
-               WHERE r.source IN (?,?,?) AND m.imdb_id IS NOT NULL""",
-            _IMDB_RATING_SOURCES,
-        ).fetchone()[0]
+def _aliases_with_con(con) -> dict[str, str]:
+    row = con.execute(
+        "SELECT value_json FROM settings WHERE key=?",
+        (_PUBLIC_ALIAS_SETTING,),
+    ).fetchone()
+    raw = json_loads(row[0], {}) if row else {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(k): str(v)
+        for k, v in raw.items()
+        if re.fullmatch(r"tt\d+", str(k or "")) and re.fullmatch(r"tt\d+", str(v or ""))
+    }
+
+
+def _save_aliases_with_con(con, aliases: dict[str, str], now: str) -> None:
+    con.execute(
+        """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
+           ON CONFLICT(key) DO UPDATE SET
+             value_json=excluded.value_json,updated_at=excluded.updated_at""",
+        (_PUBLIC_ALIAS_SETTING, json_dumps(aliases), now),
     )
-    # An unexpected empty remote profile must never wipe a populated local history.
-    if not live_ids and local_count:
-        raise RuntimeError(
-            "IMDb a returnat 0 ratinguri pentru un profil care are ratinguri IMDb locale; "
-            "reconcilierea a fost anulată pentru protecția datelor."
-        )
-    if local_count >= 100 and live_ids and len(live_ids) < local_count * 0.5:
-        raise RuntimeError(
-            f"IMDb a returnat doar {len(live_ids)} din {local_count} ratinguri IMDb locale; "
-            "scăderea este prea mare pentru o ștergere automată sigură."
-        )
 
-    con.execute("CREATE TEMP TABLE IF NOT EXISTS _cc_live_imdb_ids(imdb_id TEXT PRIMARY KEY)")
-    con.execute("DELETE FROM _cc_live_imdb_ids")
-    if live_ids:
-        con.executemany(
-            "INSERT OR IGNORE INTO _cc_live_imdb_ids(imdb_id) VALUES(?)",
-            ((iid,) for iid in sorted(live_ids)),
-        )
 
-    stale = con.execute(
-        """SELECT r.id,m.title,r.rating,m.imdb_id
+def _movie_richness(row) -> int:
+    score = 0
+    if row["imdb_rating"] is not None:
+        score += 2
+    if int(row["num_votes"] or 0) > 0:
+        score += 1
+    if row["runtime_min"] is not None:
+        score += 1
+    if str(row["genres_json"] or "[]") != "[]":
+        score += 2
+    if str(row["directors_json"] or "[]") != "[]":
+        score += 2
+    if str(row["poster_url"] or "").strip():
+        score += 1
+    return score
+
+
+def _same_title_year_candidates(con, item: RemoteRating, *, exclude_movie_id: int | None = None):
+    original = item.original_title or item.title
+    tn = normalize_text(item.title)
+    on = normalize_text(original)
+    params: list[Any] = [item.year, tn, on, tn, on]
+    sql = """SELECT m.*,r.rating AS user_rating,r.date_rated AS user_date,
+                    r.source AS rating_source
+             FROM movies m
+             LEFT JOIN ratings r ON r.movie_id=m.id
+             WHERE m.year IS ?
+               AND (m.title_norm IN (?,?) OR m.original_title_norm IN (?,?))"""
+    if exclude_movie_id is not None:
+        sql += " AND m.id<>?"
+        params.append(int(exclude_movie_id))
+    sql += " ORDER BY m.id"
+    return con.execute(sql, tuple(params)).fetchall()
+
+
+def _export_candidate(con, item: RemoteRating, *, exclude_movie_id: int | None = None):
+    """Find one canonical local/export row for a public-profile identity alias."""
+    candidates = _same_title_year_candidates(
+        con, item, exclude_movie_id=exclude_movie_id
+    )
+    scored: list[tuple[int, Any]] = []
+    for row in candidates:
+        if str(row["imdb_id"] or "") == item.imdb_id:
+            continue
+        score = 0
+        source = str(row["rating_source"] or "")
+        same_rating = row["user_rating"] is not None and int(row["user_rating"]) == int(item.rating)
+        same_date = (
+            not item.date_rated
+            or not row["user_date"]
+            or str(row["user_date"])[:10] == str(item.date_rated)[:10]
+        )
+        if source in {"imdb", "imdb_csv"} and same_rating and same_date:
+            score += 120
+        elif source == "imdb_public_sync" and same_rating and same_date:
+            score += 25
+
+        movie_source = str(row["source"] or "")
+        if movie_source in {"imdb_csv", "imdb_dataset", "catalog_csv"}:
+            score += 15
+        if normalize_text(row["original_title"] or row["title"]) == normalize_text(item.original_title or item.title):
+            score += 10
+        score += min(10, _movie_richness(row))
+        scored.append((score, row))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda pair: (-pair[0], int(pair[1]["id"])))
+    if scored[0][0] < 120:
+        return None
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][1]
+
+
+def _repair_candidate_for_sparse_public(con, public_row):
+    """Repair rows created by 3.9.8/3.9.9 when the exported movie already existed."""
+    item = RemoteRating(
+        imdb_id=str(public_row["imdb_id"] or ""),
+        title=str(public_row["title"] or ""),
+        original_title=str(public_row["original_title"] or public_row["title"] or ""),
+        year=int(public_row["year"]) if public_row["year"] is not None else None,
+        title_type=str(public_row["title_type"] or "Movie"),
+        rating=int(public_row["user_rating"]),
+        date_rated=str(public_row["user_date"] or "") or None,
+    )
+    candidates = _same_title_year_candidates(
+        con, item, exclude_movie_id=int(public_row["id"])
+    )
+    scored: list[tuple[int, Any]] = []
+    public_richness = _movie_richness(public_row)
+    for row in candidates:
+        if not row["imdb_id"]:
+            continue
+        score = 0
+        same_rating = row["user_rating"] is not None and int(row["user_rating"]) == int(item.rating)
+        same_date = (
+            not item.date_rated
+            or not row["user_date"]
+            or str(row["user_date"])[:10] == str(item.date_rated)[:10]
+        )
+        source = str(row["rating_source"] or "")
+        if source in {"imdb", "imdb_csv"} and same_rating and same_date:
+            score += 140
+        if row["user_rating"] is None and str(row["source"] or "") != "imdb_public_sync":
+            richness_gap = _movie_richness(row) - public_richness
+            if richness_gap >= 3:
+                score += 105 + min(10, richness_gap)
+        if normalize_text(row["original_title"] or row["title"]) == normalize_text(item.original_title or item.title):
+            score += 10
+        scored.append((score, row))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda pair: (-pair[0], int(pair[1]["id"])))
+    if scored[0][0] < 110:
+        return None
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][1]
+
+
+def _merge_public_duplicate_with_con(
+    con,
+    public_row,
+    canonical,
+    result: SyncResult,
+    aliases: dict[str, str],
+    now: str,
+) -> None:
+    public_id = int(public_row["id"])
+    canonical_id = int(canonical["id"])
+    public_imdb = str(public_row["imdb_id"] or "")
+    canonical_imdb = str(canonical["imdb_id"] or "")
+    public_rating = int(public_row["user_rating"])
+    public_date = str(public_row["user_date"] or "") or None
+
+    current = con.execute(
+        "SELECT rating,date_rated,source FROM ratings WHERE movie_id=?",
+        (canonical_id,),
+    ).fetchone()
+    if current is None:
+        con.execute(
+            """UPDATE ratings SET movie_id=?,source=?,updated_at=?
+               WHERE movie_id=?""",
+            (
+                canonical_id,
+                "imdb" if str(canonical["source"] or "") == "imdb_csv" else "imdb_public_sync",
+                now,
+                public_id,
+            ),
+        )
+    else:
+        current_date = str(current["date_rated"] or "")
+        should_update = (
+            int(current["rating"]) != public_rating
+            and (not current_date or not public_date or public_date >= current_date[:10])
+        )
+        if should_update:
+            con.execute(
+                """UPDATE ratings SET rating=?,date_rated=COALESCE(?,date_rated),
+                   updated_at=? WHERE movie_id=?""",
+                (public_rating, public_date, now, canonical_id),
+            )
+        con.execute("DELETE FROM ratings WHERE movie_id=?", (public_id,))
+
+    con.execute(
+        """INSERT OR IGNORE INTO watchlist(movie_id,status,added_at,updated_at)
+           SELECT ?,status,added_at,updated_at FROM watchlist WHERE movie_id=?""",
+        (canonical_id, public_id),
+    )
+    con.execute("DELETE FROM watchlist WHERE movie_id=?", (public_id,))
+    con.execute("UPDATE feedback SET movie_id=? WHERE movie_id=?", (canonical_id, public_id))
+    con.execute(
+        "UPDATE recommendation_history SET movie_id=? WHERE movie_id=?",
+        (canonical_id, public_id),
+    )
+
+    if public_imdb and canonical_imdb:
+        aliases[public_imdb] = canonical_imdb
+
+    refs = int(con.execute(
+        """SELECT
+             (SELECT COUNT(*) FROM ratings WHERE movie_id=?)
+           + (SELECT COUNT(*) FROM feedback WHERE movie_id=?)
+           + (SELECT COUNT(*) FROM recommendation_history WHERE movie_id=?)
+           + (SELECT COUNT(*) FROM recommendation_trust_audit WHERE movie_id=?)
+           + (SELECT COUNT(*) FROM watchlist WHERE movie_id=?)""",
+        (public_id, public_id, public_id, public_id, public_id),
+    ).fetchone()[0])
+    if refs == 0 and str(public_row["source"] or "") == "imdb_public_sync":
+        con.execute("DELETE FROM movies WHERE id=?", (public_id,))
+
+    result.reconciled_duplicates.append(
+        (str(public_row["title"] or ""), public_imdb, canonical_imdb)
+    )
+
+
+def _repair_public_sync_duplicates_with_con(
+    con,
+    result: SyncResult,
+    aliases: dict[str, str],
+    now: str,
+) -> None:
+    rows = con.execute(
+        """SELECT m.*,r.rating AS user_rating,r.date_rated AS user_date,
+                  r.source AS rating_source
            FROM ratings r
            JOIN movies m ON m.id=r.movie_id
-           WHERE r.source IN (?,?,?)
+           WHERE r.source='imdb_public_sync'
              AND m.imdb_id IS NOT NULL
-             AND NOT EXISTS(
-                 SELECT 1 FROM _cc_live_imdb_ids live WHERE live.imdb_id=m.imdb_id
-             )
-           ORDER BY r.id""",
-        _IMDB_RATING_SOURCES,
+           ORDER BY r.id"""
     ).fetchall()
-    result.removed_ratings.extend(
-        (str(row["title"]), int(row["rating"]), str(row["imdb_id"]))
-        for row in stale
-    )
-    if stale:
-        con.execute(
-            """DELETE FROM ratings
-               WHERE id IN (
-                   SELECT r.id
-                   FROM ratings r
-                   JOIN movies m ON m.id=r.movie_id
-                   WHERE r.source IN (?,?,?)
-                     AND m.imdb_id IS NOT NULL
-                     AND NOT EXISTS(
-                         SELECT 1 FROM _cc_live_imdb_ids live WHERE live.imdb_id=m.imdb_id
-                     )
-               )""",
-            _IMDB_RATING_SOURCES,
-        )
+    for public_row in rows:
+        canonical = _repair_candidate_for_sparse_public(con, public_row)
+        if canonical is not None:
+            _merge_public_duplicate_with_con(
+                con, public_row, canonical, result, aliases, now
+            )
 
 
-def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> None:
+def _resolve_public_movie(con, item: RemoteRating, aliases: dict[str, str]):
+    canonical_id = aliases.get(item.imdb_id)
+    if canonical_id:
+        row = con.execute(
+            "SELECT * FROM movies WHERE imdb_id=?",
+            (canonical_id,),
+        ).fetchone()
+        if row is not None:
+            return row, True
+
+    row = con.execute(
+        "SELECT * FROM movies WHERE imdb_id=?",
+        (item.imdb_id,),
+    ).fetchone()
+    if row is not None:
+        return row, False
+
+    candidate = _export_candidate(con, item)
+    if candidate is not None and candidate["imdb_id"]:
+        aliases[item.imdb_id] = str(candidate["imdb_id"])
+        return candidate, True
+
+    row = _manual_identity_candidate(con, item)
+    return row, False
+
+
+def _upsert_with_con(
+    con,
+    item: RemoteRating,
+    result: SyncResult,
+    now: str,
+    aliases: dict[str, str] | None = None,
+    *,
+    allow_create: bool = True,
+) -> bool:
+    aliases = aliases if aliases is not None else {}
     original = item.original_title or item.title
     ident = identity_key(item.title, original, item.year, item.title_type)
-    movie = con.execute("SELECT * FROM movies WHERE imdb_id=?", (item.imdb_id,)).fetchone()
-    if movie is None:
-        movie = _manual_identity_candidate(con, item)
+    movie, is_alias = _resolve_public_movie(con, item, aliases)
+    if movie is None and not allow_create:
+        return False
+
     if movie is None:
         cur = con.execute(
             """INSERT INTO movies(imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
@@ -590,51 +809,63 @@ def _upsert_with_con(con, item: RemoteRating, result: SyncResult, now: str) -> N
             ),
         )
         movie_id = int(cur.lastrowid)
+        movie_source = "imdb_public_sync"
     else:
         movie_id = int(movie["id"])
-        con.execute(
-            """UPDATE movies SET imdb_id=COALESCE(imdb_id,?),title=?,original_title=?,
-               title_norm=?,original_title_norm=?,year=COALESCE(?,year),
-               title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
-            (
-                item.imdb_id, item.title, original, normalize_text(item.title), normalize_text(original),
-                item.year, item.title_type, now, movie_id,
-            ),
-        )
+        movie_source = str(movie["source"] or "")
+        if not is_alias:
+            con.execute(
+                """UPDATE movies SET imdb_id=COALESCE(imdb_id,?),title=?,original_title=?,
+                   title_norm=?,original_title_norm=?,year=COALESCE(?,year),
+                   title_type=COALESCE(NULLIF(?,''),title_type),updated_at=? WHERE id=?""",
+                (
+                    item.imdb_id, item.title, original, normalize_text(item.title), normalize_text(original),
+                    item.year, item.title_type, now, movie_id,
+                ),
+            )
 
-    old = con.execute("SELECT rating,date_rated,source FROM ratings WHERE movie_id=?", (movie_id,)).fetchone()
+    old = con.execute(
+        "SELECT rating,date_rated,source FROM ratings WHERE movie_id=?",
+        (movie_id,),
+    ).fetchone()
     if old is None:
+        source = "imdb_public_sync"
+        if is_alias and movie_source == "imdb_csv":
+            source = "imdb"
         con.execute(
-            "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
-            (movie_id, item.rating, item.date_rated, "imdb_public_sync", now, now),
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (movie_id, item.rating, item.date_rated, source, now, now),
         )
         result.new_ratings.append((item.title, item.rating))
     elif int(old["rating"]) != item.rating:
         previous = int(old["rating"])
+        # Keep the exported CSV provenance when a public-profile alias updates it.
+        source = str(old["source"] or "imdb_public_sync")
         con.execute(
-            "UPDATE ratings SET rating=?,date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=? WHERE movie_id=?",
-            (item.rating, item.date_rated, "imdb_public_sync", now, now, movie_id),
+            """UPDATE ratings SET rating=?,date_rated=COALESCE(?,date_rated),
+               source=?,imported_at=?,updated_at=? WHERE movie_id=?""",
+            (item.rating, item.date_rated, source, now, now, movie_id),
         )
         result.changed_ratings.append((item.title, previous, item.rating))
     else:
-        if (
-            (item.date_rated and str(old["date_rated"] or "") != item.date_rated)
-            or str(old["source"] or "") != "imdb_public_sync"
-        ):
+        if item.date_rated and str(old["date_rated"] or "") != item.date_rated:
             con.execute(
-                """UPDATE ratings
-                   SET date_rated=COALESCE(?,date_rated),source=?,imported_at=?,updated_at=?
+                """UPDATE ratings SET date_rated=?,imported_at=?,updated_at=?
                    WHERE movie_id=?""",
-                (item.date_rated, "imdb_public_sync", now, now, movie_id),
+                (item.date_rated, now, now, movie_id),
             )
         result.unchanged += 1
+    return True
 
 
 def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
-    """Compatibility wrapper; full sync uses one transaction for the entire profile."""
+    """Compatibility wrapper used by tests/helpers."""
     now = utcnow_iso()
     with db.tx() as con:
-        _upsert_with_con(con, item, result, now)
+        aliases = _aliases_with_con(con)
+        _upsert_with_con(con, item, result, now, aliases)
+        _save_aliases_with_con(con, aliases, now)
 
 
 def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | None = "2026-09-05",
@@ -644,41 +875,42 @@ def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | 
     cutoff = date.fromisoformat(baseline_date) if baseline_date else None
     now = utcnow_iso()
 
-    # One transaction for the entire profile. A 2,000+ rating account must not
-    # perform thousands of BEGIN/COMMIT cycles on a portable HDD, and a failed
-    # sync must never leave a half-imported profile.
+    # The exported ratings CSV is the historical canonical dataset. Public sync
+    # is an incremental updater and identity-alias source; it must never delete
+    # or replace valid exported ratings merely because IMDb exposes another ID.
     with db.tx() as con:
+        aliases = _aliases_with_con(con)
+
+        # First repair duplicates created by older public-sync versions.
+        _repair_public_sync_duplicates_with_con(
+            con, result, aliases, now
+        )
+
         for item in items:
+            allow_create = True
             if cutoff:
                 if not item.date_rated:
-                    existing = con.execute(
-                        "SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)
-                    ).fetchone()
-                    if existing is None:
-                        continue
+                    allow_create = False
                 else:
                     try:
                         if date.fromisoformat(item.date_rated) <= cutoff:
                             result.stopped_at_baseline = True
-                            continue
+                            allow_create = False
                     except ValueError:
-                        existing = con.execute(
-                            "SELECT 1 FROM movies WHERE imdb_id=?", (item.imdb_id,)
-                        ).fetchone()
-                        if existing is None:
-                            continue
-            _upsert_with_con(con, item, result, now)
+                        allow_create = False
 
-        # baseline_date=None means we fetched the complete public profile. In that
-        # mode the remote list is the source of truth, so stale rows from an old
-        # CSV/export are removed instead of living forever as duplicate ratings.
-        if cutoff is None:
-            _prune_stale_imdb_ratings_with_con(
+            # Pre-baseline rows may still update/confirm an existing exported
+            # row, but they are not allowed to create a second historical movie.
+            _upsert_with_con(
                 con,
-                {item.imdb_id for item in items},
+                item,
                 result,
+                now,
+                aliases,
+                allow_create=allow_create,
             )
 
+        _save_aliases_with_con(con, aliases, now)
         con.execute(
             """INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)
                ON CONFLICT(key) DO UPDATE SET

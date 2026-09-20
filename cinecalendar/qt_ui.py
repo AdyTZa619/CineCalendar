@@ -505,10 +505,11 @@ class CineCalendarWindow(QMainWindow):
             # The public profile is the source of truth for watched/rated state.
             # Import the full history, not only ratings newer than the old CSV baseline.
             # Upsert-by-IMDb-id keeps this idempotent and also picks up changed old ratings.
+            baseline = str(self.db.get_setting("imdb_public_sync_baseline", "2026-09-05") or "2026-09-05")
             result = sync_public_ratings(
                 self.db,
                 url,
-                baseline_date=None,
+                baseline_date=baseline,
             )
             try:
                 result.metadata_enriched = backfill_public_rating_metadata(self.db, limit=120)
@@ -520,14 +521,14 @@ class CineCalendarWindow(QMainWindow):
         self.worker = WorkerThread(fn, self)
         def done(r):
             self.db.set_setting("imdb_public_sync_last_error", "")
-            removed = len(r.removed_ratings)
+            reconciled = len(r.reconciled_duplicates)
             if silent:
-                suffix = f" • {removed} ratinguri vechi eliminate" if removed else ""
+                suffix = f" • {reconciled} duplicate reparate" if reconciled else ""
                 self.set_status("Pregătit • IMDb sincronizat în fundal" + suffix + ".", False)
             else:
                 self.set_status(
                     f"IMDb sincronizat: {len(r.new_ratings)} noi, {len(r.changed_ratings)} modificate, "
-                    f"{removed} eliminate.",
+                    f"{reconciled} duplicate reparate.",
                     False,
                 )
                 QMessageBox.information(
@@ -536,7 +537,7 @@ class CineCalendarWindow(QMainWindow):
                     f"Sincronizare finalizată.\n"
                     f"Noi: {len(r.new_ratings)}\n"
                     f"Modificate: {len(r.changed_ratings)}\n"
-                    f"Eliminate din istoricul local (nu mai sunt pe profil): {removed}\n"
+                    f"Duplicate public-sync reparate: {reconciled}\n"
                     f"Metadate completate: {r.metadata_enriched}\n"
                     f"Verificate pe profil: {r.fetched}",
                 )
