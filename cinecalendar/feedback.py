@@ -28,6 +28,8 @@ def apply_feedback(db: Database, movie_id: int, kind: str):
                 "INSERT INTO feedback(movie_id,kind,weight,created_at) VALUES(?,?,0,?)",
                 (movie_id, kind, now),
             )
+            # A watched title no longer belongs in an explicit "want to watch" queue.
+            con.execute("DELETE FROM watchlist WHERE movie_id=?", (movie_id,))
         return build_profile(db)
 
     if kind not in FEEDBACK_WEIGHTS:
@@ -46,4 +48,7 @@ def apply_feedback(db: Database, movie_id: int, kind: str):
                      status='want_to_watch',updated_at=excluded.updated_at""",
                 (movie_id, now, now),
             )
+        elif kind in {"not_interested", "never_similar"}:
+            # Explicit negative intent and "want to watch" cannot both be active.
+            con.execute("DELETE FROM watchlist WHERE movie_id=?", (movie_id,))
     return build_profile(db)

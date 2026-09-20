@@ -1,28 +1,34 @@
-CineCalendar 3.9.10 corectează regresia introdusă de 3.9.8/3.9.9 în sincronizarea ratingurilor IMDb.
+CineCalendar 4.0.0 introduce Watchlist inteligent și „Următoarele 5”.
 
-Sursa corectă:
-- exportul IMDb importat rămâne baza istorică canonică;
-- sincronizarea profilului public este doar un updater incremental pentru ratinguri noi/modificate și un mecanism de legare a identităților;
-- aplicația nu mai șterge ratinguri valide din export doar pentru că endpointul public returnează alt IMDb ID.
+Watchlist inteligent:
+- Watchlist-ul nu mai este doar o listă cronologică;
+- aplicația calculează din filmele salvate o coadă „Următoarele 5”;
+- rankingul NU este un al doilea motor: reutilizează exact stack-ul de producție deja validat pentru recomandări;
+- intră în calcul ratingurile personale, scorul de conținut, ALS MovieLens, preferințele adaptive, Watch Success/Startability și poarta V16 de încredere;
+- calendarul și sezonul rămân semnale secundare și nu înlocuiesc gustul personal.
 
-Duplicate:
-- dacă profilul public returnează alt IMDb ID pentru același titlu/an/rating/data deja existent în export, intrarea publică este legată de filmul exportat, nu creată ca al doilea rating;
-- duplicatele public-sync deja create de versiunile anterioare sunt reparate automat;
-- dacă 3.9.9 a șters ratingul de pe filmul exportat, 3.9.10 mută ratingul înapoi pe înregistrarea locală bogată în metadate atunci când potrivirea este unică și sigură;
-- aliasul dintre ID-ul public și ID-ul canonic local este memorat pentru sincronizările următoare;
-- filmele distincte cu același titlu/an rămân separate când nu există dovadă suficientă că sunt aceeași intrare.
+Următoarele 5:
+- ordinea se recalculează din Watchlist la deschiderea paginii;
+- sunt excluse din Top 5 titlurile deja evaluate/văzute, cele blocate explicit și lansările viitoare cunoscute;
+- fiecare rezultat arată estimarea personală, metadatele și motivul recomandării;
+- din card poți alege filmul pentru azi, deschide detaliile, porni Stremio sau scoate filmul din Watchlist;
+- alegerea pentru azi folosește același sistem de exposure/action tracking ca Home.
 
-Metadate:
-- filmul canonic păstrează IMDb rating, voturi, genuri, regizor, durată și poster deja existente;
-- titlurile cu adevărat noi adăugate prin profilul public primesc în continuare completare best-effort de metadate.
+Consistența Watchlist:
+- „Scoate” elimină numai intenția „Vreau să văd” și NU creează feedback negativ;
+- „Am văzut”, „Nu mă interesează” și „Nu-mi recomanda similare” elimină automat starea contradictorie din Watchlist;
+- restul filmelor salvate rămân vizibile sub Top 5 chiar dacă nu sunt eligibile pentru rankingul inteligent.
 
 Siguranță:
-- sincronizarea respectă din nou baseline-ul exportului 05.09.2026;
-- ratingurile istorice de dinainte de baseline pot confirma/actualiza un rând existent, dar nu pot crea duplicate istorice noi;
-- ratingurile manuale nu sunt afectate;
-- referințele din watchlist, feedback, istoric recomandări și auditul de încredere sunt mutate pe filmul canonic când se repară un duplicat.
+- schema bazei de date rămâne neschimbată; nu este necesară migrare nouă;
+- sincronizarea IMDb și reparațiile 3.9.10 nu sunt modificate;
+- cronologia filmelor românești nu este modificată;
+- noua funcție rulează separat în worker, fără să blocheze interfața.
 
-Cazul Jana:
-- exportul inițial valid conținea Jana (2004) cu tt1861356 și metadatele complete;
-- public sync a introdus separat tt4568192, fără metadatele locale, ceea ce a produs cele două rânduri văzute în Ratinguri;
-- 3.9.10 păstrează rândul exportat cu metadatele lui și elimină duplicatul public-sync prin reconciliere, fără să șteargă istoricul exportat.
+Validare:
+- teste unitare noi pentru eligibilitate, filme viitoare/văzute, ordinea Top 5 și semantica Watchlist;
+- suită completă pytest;
+- gate live pentru profilul public IMDb;
+- benchmark pe catalogul mare;
+- build PyInstaller Premium;
+- smoke-launch Windows.
