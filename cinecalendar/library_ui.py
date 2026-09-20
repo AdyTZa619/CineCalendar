@@ -847,13 +847,17 @@ def install_library_ui(window_cls) -> None:
 
             pg = QGridLayout(); pg.setHorizontalSpacing(12); pg.setVerticalSpacing(8)
             perf_values = [
+                (f"{perf.decision_exposures:,}", "expuneri decizionale"),
                 (f"{perf.chosen:,}", "alese"),
-                (f"{perf.start_rate*100:.0f}%", "pornite din cele alese"),
-                (f"{perf.watched_rate*100:.0f}%", "confirmate văzute"),
+                (f"{perf.choice_rate*100:.0f}%" if perf.decision_exposures else "—", "rată de alegere"),
+                (f"{perf.start_rate*100:.0f}%" if perf.chosen else "—", "pornite din cele alese"),
+                (f"{perf.watched_rate*100:.0f}%" if perf.chosen else "—", "confirmate văzute"),
                 (f"{perf.rated_outcomes:,}", "cu rating ulterior"),
                 (f"{perf.mae:.2f}" if perf.mae is not None else "—", "eroare medie predicție"),
                 (f"{perf.within_one*100:.0f}%" if perf.within_one is not None else "—", "predicții la ±1 punct"),
                 (f"{perf.liked_rate*100:.0f}%" if perf.rated_outcomes else "—", "recomandări notate ≥8"),
+                (f"{perf.top1_liked_rate*100:.0f}%" if perf.top1_liked_rate is not None else "—", "Top 1 ajuns la ≥8"),
+                (f"{perf.top3_liked_rate*100:.0f}%" if perf.top3_liked_rate is not None else "—", "Top 3 ajuns la ≥8"),
                 (f"{perf.bias:+.2f}" if perf.bias is not None else "—", "bias estimat − real"),
             ]
             for idx, (value, caption) in enumerate(perf_values):
