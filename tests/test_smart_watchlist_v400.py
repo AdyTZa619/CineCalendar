@@ -214,7 +214,7 @@ def test_watchlist_duration_and_documentary_filters(tmp_path):
 
     engine = _FakeProductionRecommender(db)
     short_result = rank_watchlist(engine, date(2026, 9, 20), 5, runtime_bucket="short")
-    assert [rec.movie.title for rec in short_result.recommendations] == ["Documentary", "Short Runtime"]
+    assert [rec.movie.title for rec in short_result.recommendations] == ["Short Runtime"]
 
     doc_result = rank_watchlist(engine, date(2026, 9, 20), 5, content_type="documentary")
     assert [rec.movie.title for rec in doc_result.recommendations] == ["Documentary"]
