@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
-# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v7 through
+# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v8 through
 # idempotent Python helpers so an interrupted ALTER TABLE can be resumed safely.
 MIGRATIONS: dict[int, str] = {
 1: r'''
@@ -197,6 +197,16 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes(
 );
 CREATE INDEX IF NOT EXISTS ix_rec_outcome_movie ON recommendation_outcomes(movie_id);
 CREATE INDEX IF NOT EXISTS ix_rec_outcome_rating_date ON recommendation_outcomes(rating_date);
+''',
+8: r'''
+CREATE TABLE IF NOT EXISTS recommendation_explanations(
+  history_id INTEGER PRIMARY KEY REFERENCES recommendation_history(id) ON DELETE CASCADE,
+  personal_reason TEXT NOT NULL DEFAULT '',
+  why_not TEXT NOT NULL DEFAULT '',
+  score_factors_json TEXT NOT NULL DEFAULT '{}',
+  contributions_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
 '''
 }
 
@@ -312,6 +322,8 @@ class Database:
         if not self._table_exists(con, "metadata_provenance"):
             return True
         if not self._table_exists(con, "recommendation_outcomes"):
+            return True
+        if not self._table_exists(con, "recommendation_explanations"):
             return True
         return False
 
@@ -486,6 +498,19 @@ class Database:
             "CREATE INDEX IF NOT EXISTS ix_rec_outcome_rating_date ON recommendation_outcomes(rating_date)"
         )
 
+    def _apply_v8(self, con: sqlite3.Connection) -> None:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS recommendation_explanations(
+              history_id INTEGER PRIMARY KEY
+                REFERENCES recommendation_history(id) ON DELETE CASCADE,
+              personal_reason TEXT NOT NULL DEFAULT '',
+              why_not TEXT NOT NULL DEFAULT '',
+              score_factors_json TEXT NOT NULL DEFAULT '{}',
+              contributions_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL
+            )"""
+        )
+
     def connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -546,6 +571,7 @@ class Database:
                 (5, self._apply_v5),
                 (6, self._apply_v6),
                 (7, self._apply_v7),
+                (8, self._apply_v8),
             ):
                 con.execute("BEGIN IMMEDIATE")
                 try:

@@ -17,6 +17,7 @@ from .profile import get_profile, top_profile_features
 from .qt_ui import WorkerThread
 from .qt_ui_v2 import DecisionWindow
 from .recommendation import Recommendation
+from .learning_insight_v43 import comparison_reason
 from .tmdb import TmdbProvider
 
 
@@ -493,7 +494,7 @@ class PremiumDecisionWindow(DecisionWindow):
             h=QLabel("Alternative bune, dacă prima alegere nu te prinde")
             h.setObjectName("SectionTitle"); self.today_content.addWidget(h)
             grid=QGridLayout(); grid.setHorizontalSpacing(14); grid.setVerticalSpacing(14)
-            for i, rec in enumerate(backups[:2]): grid.addWidget(self.backup_card(rec),0,i)
+            for i, rec in enumerate(backups[:2]): grid.addWidget(self.backup_card(rec, primary),0,i)
             wrap=QFrame(); wrap.setLayout(grid); self.today_content.addWidget(wrap)
         self.today_content.addStretch(1)
 
@@ -536,7 +537,7 @@ class PremiumDecisionWindow(DecisionWindow):
         main.addLayout(right,1)
         return box
 
-    def backup_card(self, rec: Recommendation):
+    def backup_card(self, rec: Recommendation, primary: Recommendation | None = None):
         m,s=rec.movie,rec.score
         box=QFrame(); box.setObjectName("PremiumCard"); box.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Minimum)
         main=QHBoxLayout(box); main.setContentsMargins(16,16,16,16); main.setSpacing(14)
@@ -545,6 +546,9 @@ class PremiumDecisionWindow(DecisionWindow):
         l=QVBoxLayout(); t=QLabel(m.title+(f" ({m.year})" if m.year else "")); t.setObjectName("CardTitle"); t.setWordWrap(True); l.addWidget(t)
         p=QLabel(f"{s.predicted_rating:.1f}/10 pentru tine • {round(s.confidence*100)}% încredere"); p.setObjectName("Score"); l.addWidget(p)
         meta=" • ".join(self.movie_chips(m,4)); x=QLabel(meta); x.setObjectName("Muted"); x.setWordWrap(True); l.addWidget(x)
+        if primary is not None:
+            compare=QLabel("Față de alegerea #1: "+comparison_reason(primary, rec))
+            compare.setObjectName("Muted"); compare.setWordWrap(True); l.addWidget(compare)
         row=QHBoxLayout(); d=QPushButton("Detalii"); d.clicked.connect(lambda _,r=rec:self.open_details(r)); row.addWidget(d)
         c=QPushButton("Aleg"); c.clicked.connect(lambda _,mid=m.id:self.choose_decision(mid)); row.addWidget(c); row.addStretch(1); l.addLayout(row)
         main.addLayout(l,1); return box

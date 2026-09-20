@@ -122,12 +122,12 @@ def test_profile_v3_roundtrip_preserves_prediction_snapshots_and_outcomes(tmp_pa
             ),
         )
 
-    archive = export_profile(source, tmp_path / "profile-v3.zip")
+    archive = export_profile(source, tmp_path / "profile-v4.zip")
     with zipfile.ZipFile(archive, "r") as fh:
         payload = json.loads(fh.read("profile.json").decode("utf-8"))
         manifest = json.loads(fh.read("manifest.json").decode("utf-8"))
-    assert PROFILE_VERSION == 3
-    assert payload["version"] == 3
+    assert PROFILE_VERSION == 4
+    assert payload["version"] == 4
     assert manifest["counts"]["recommendation_outcomes"] == 1
     assert len(payload["tables"]["recommendation_outcomes"]) == 1
 
