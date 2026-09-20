@@ -1,44 +1,32 @@
-CineCalendar 4.0.2 întărește biblioteca personală, statisticile și Smart Watchlist.
+CineCalendar 4.0.3 redesenează complet pagina Ratinguri IMDb pentru lizibilitate și utilizare rapidă pe biblioteci mari.
 
-Bibliotecă / Ratinguri:
-- buton nou „Repară biblioteca”;
-- o singură operație sincronizează profilul IMDb, repară duplicatele, completează metadatele și recalculează profilul de gust;
-- afișează sănătatea bibliotecii: câte titluri sunt complete și câte mai au lipsuri;
-- arată separat lipsurile de gen, regizor, durată, rating IMDb și poster;
-- filtre noi pentru ratinguri: Azi, ultimele 7 zile, ultimele 30 zile și anul curent;
-- titlul original rămâne titlul principal, iar titlul localizat este vizibil separat când diferă;
-- ultimul rating acordat rămâne implicit primul.
+Ratinguri IMDb:
+- tabel compact inspirat din vizualizarea de bibliotecă, nu dintr-un tabel tehnic;
+- titlul original este informația principală, iar titlul localizat apare dedesubt;
+- poster mic pe fiecare rând;
+- coloanele principale sunt: #, Poster, Titlu, An, Nota ta, IMDb, Δ, Genuri, Regizor, Data;
+- Sursă și IMDb ID nu mai ocupă coloane permanente; sunt disponibile din meniul ⋯ și în tooltip;
+- Nota ta, IMDb și diferența față de IMDb sunt evidențiate vizual;
+- genurile sunt afișate sub formă de badge-uri compacte;
+- textele lungi au tooltip cu valoarea completă.
 
-Metadate:
-- ordine de completare: IMDb -> TMDb (dacă există token) -> Wikidata/Wikipedia;
-- TMDb verifică acum și gen, regizor, țară și durată, nu doar poster/overview;
-- TMDb nu mai șterge metadate bune dacă răspunsul lui are un câmp gol;
-- fallback-ul Wikidata poate completa acum și genurile, pe lângă regizor, țară, durată și poster;
-- fallback-urile sunt aplicate numai titlurilor evaluate care chiar au câmpuri lipsă;
-- dacă o sursă online este temporar indisponibilă, repararea continuă cu celelalte surse și raportează etapa care a eșuat.
+Filtre:
+- căutare compactă;
+- filtre separate pentru gen, regizor, an și nota personală;
+- filtre rapide Toate / Azi / 7 zile / 30 zile / Anul acesta;
+- sortarea implicită rămâne „Ultimul rating primul”;
+- sortări pentru nota personală, IMDb, diferență, an și titlu.
 
-Statistici:
-- Taste Hub recalculează profilul la deschidere, astfel încât valorile să nu rămână stale după sincronizare;
-- afișează procentul de metadate esențiale complete și numărul real de titluri fără gen/regizor;
-- adaugă activitatea ratingurilor pe ani și pe ultimele luni;
-- adaugă rezumat stabil pentru genurile și regizorii cel mai bine/slab evaluați, cu minimum 3 exemple;
-- statisticile existente pentru genuri, regizori, țări, decenii și afinități rămân disponibile.
+Acțiuni:
+- Sincronizează + completează;
+- Repară biblioteca;
+- Export CSV pentru exact selecția filtrată;
+- meniul ⋯ din antet păstrează Import IMDb CSV și Adaugă rating manual;
+- meniul ⋯ pe fiecare rând oferă IMDb și copierea IMDb ID fără să aglomereze tabelul.
 
-Smart Watchlist:
-- „Prioritar” / „Vreau să-l văd curând” persistent;
-- titlurile prioritare primesc un boost controlat, dar nu sar peste filtrele de calitate;
-- filtre după durată: <=90 min, 91-120 min, >120 min;
-- filtre separate pentru filme, scurtmetraje și documentare;
-- buton „Alege-mi unul acum” folosește primul rezultat valid din coada personală;
-- scoaterea unui film din Watchlist curăță și prioritatea lui.
+Performanță:
+- titlul pe două rânduri și badge-urile de gen sunt desenate prin delegate Qt, fără mii de widget-uri grele;
+- posterele se încarcă lazy numai pentru rândurile vizibile și un buffer mic în jurul lor;
+- biblioteca completă rămâne afișabilă fără limita veche de 500 de ratinguri.
 
-Recomandări:
-- motorul de scor validat nu a fost modificat arbitrar;
-- interfața folosește acum explicația bogată calculată deja de motor;
-- când ALS are dovezi, explicația poate include filme concrete din ratingurile tale și notele acordate;
-- diversificarea existentă și ponderarea de recență rămân active.
-
-Validare:
-- teste noi pentru sănătatea bibliotecii și pipeline-ul de reparare;
-- teste pentru prioritate Watchlist și filtrele de durată/tip;
-- păstrează testele pentru duplicate, titlu original, sortare și metadata backfill.
+4.0.2 rămâne baza funcțională: Repară biblioteca, fallback-urile de metadate, statisticile și Smart Watchlist sunt păstrate.

@@ -37,6 +37,8 @@ def test_rating_library_returns_all_rows_without_500_limit(tmp_path):
     assert rows[0]["user_rating"] == 8
     assert rows[0]["genres"] == ["Drama"]
     assert rows[0]["directors"] == ["Director Test"]
+    assert rows[0]["runtime_min"] == 100
+    assert rows[0]["poster_url"] == ""
 
 
 def test_profile_feature_labels_and_categories_are_human_readable():
@@ -117,3 +119,19 @@ def test_stable_extremes_ignore_single_movie_noise():
     ]
     assert [r["label"] for r in _stable_extremes(rows, "genres", positive=True)] == ["Drama", "Comedy"]
     assert [r["label"] for r in _stable_extremes(rows, "genres", positive=False)] == ["Comedy", "Drama"]
+
+
+def test_ratings_ui_keeps_technical_fields_out_of_main_table():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "cinecalendar" / "library_ui.py").read_text(encoding="utf-8")
+    block = source[source.index("def page_ratings"):source.index("def page_profile", source.index("def page_ratings"))]
+    assert '"Titlu (original / localizat)"' in block
+    assert '"Poster"' in block
+    assert '"Sursă"' not in block.split("setHorizontalHeaderLabels", 1)[1].split("])", 1)[0]
+    assert '"IMDb ID"' not in block.split("setHorizontalHeaderLabels", 1)[1].split("])", 1)[0]
+    assert "RatingTitleDelegate" in block
+    assert "GenreBadgeDelegate" in block
+    assert "refresh_visible_posters" in block
+    assert "Toți regizorii" in block
+    assert "Toți anii" in block

@@ -1,22 +1,31 @@
 from __future__ import annotations
 
+import csv
 from datetime import date, timedelta
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Qt, QTimer, QUrl, QSize
+from PySide6.QtGui import QColor, QCursor, QDesktopServices, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from .library_repair import rated_library_health
@@ -48,6 +57,107 @@ class SmartItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
+class RatingTitleDelegate(QStyledItemDelegate):
+    """Paint a two-line title without creating thousands of child widgets."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        painter.save()
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+
+        original = str(index.data(Qt.UserRole + 1) or index.data(Qt.DisplayRole) or "")
+        localized = str(index.data(Qt.UserRole + 2) or "")
+        rect = option.rect.adjusted(12, 5, -8, -5)
+        selected = bool(option.state & QStyle.State_Selected)
+        primary_color = option.palette.highlightedText().color() if selected else QColor("#f4f7fb")
+        secondary_color = option.palette.highlightedText().color() if selected else QColor("#9aa9bc")
+
+        primary_font = QFont(option.font)
+        primary_font.setBold(True)
+        primary_font.setPointSize(max(9, option.font.pointSize()))
+        painter.setFont(primary_font)
+        painter.setPen(primary_color)
+        fm = QFontMetrics(primary_font)
+        first = fm.elidedText(original, Qt.ElideRight, rect.width())
+        painter.drawText(rect.x(), rect.y() + fm.ascent() + 1, first)
+
+        if localized:
+            secondary_font = QFont(option.font)
+            secondary_font.setPointSize(max(8, option.font.pointSize() - 1))
+            painter.setFont(secondary_font)
+            painter.setPen(secondary_color)
+            sfm = QFontMetrics(secondary_font)
+            second = sfm.elidedText(f"({localized})", Qt.ElideRight, rect.width())
+            painter.drawText(rect.x(), rect.bottom() - 4, second)
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        hint = super().sizeHint(option, index)
+        return QSize(hint.width(), max(56, hint.height()))
+
+
+_GENRE_COLORS = {
+    "Action": ("#12345a", "#8fc6ff"),
+    "Comedy": ("#12345a", "#8fc6ff"),
+    "Drama": ("#34205f", "#c6a9ff"),
+    "Horror": ("#562027", "#ff9aa5"),
+    "Mystery": ("#164b4a", "#8fe6df"),
+    "Crime": ("#5a3518", "#ffb36d"),
+    "Romance": ("#5a1f49", "#ff9bd7"),
+    "Short": ("#2a3442", "#d7e0eb"),
+    "Documentary": ("#254a34", "#9ee6b4"),
+}
+
+
+class GenreBadgeDelegate(QStyledItemDelegate):
+    """Compact painted badges; keeps the full 2,445-row table responsive."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        painter.save()
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+
+        raw = str(index.data(Qt.UserRole + 3) or "")
+        genres = [x for x in raw.split("|") if x]
+        x = option.rect.x() + 10
+        y = option.rect.center().y()
+        right = option.rect.right() - 8
+        font = QFont(option.font)
+        font.setPointSize(max(8, option.font.pointSize() - 1))
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+
+        shown = 0
+        for genre in genres:
+            text_w = fm.horizontalAdvance(genre) + 18
+            if x + text_w > right:
+                break
+            bg, fg = _GENRE_COLORS.get(genre, ("#263445", "#c8d5e4"))
+            badge = option.rect.adjusted(0, 0, 0, 0)
+            badge.setLeft(x)
+            badge.setWidth(text_w)
+            badge.setTop(y - 14)
+            badge.setHeight(28)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(bg))
+            painter.drawRoundedRect(badge, 10, 10)
+            painter.setPen(QColor(fg))
+            painter.drawText(badge, Qt.AlignCenter, genre)
+            x += text_w + 7
+            shown += 1
+
+        if shown < len(genres) and x < right:
+            painter.setPen(QColor("#9aa9bc"))
+            painter.drawText(x, y + fm.ascent() // 2, f"+{len(genres) - shown}")
+        painter.restore()
+
+
 def load_rating_rows(db) -> list[dict]:
     """Return the complete rated library. Intentionally no arbitrary LIMIT."""
     with db.connect() as con:
@@ -64,6 +174,8 @@ def load_rating_rows(db) -> list[dict]:
                 m.original_title,
                 m.year,
                 m.imdb_rating,
+                m.poster_url,
+                m.runtime_min,
                 m.genres_json,
                 m.directors_json
             FROM ratings r
@@ -88,6 +200,8 @@ def load_rating_rows(db) -> list[dict]:
                 "year": int(row["year"]) if row["year"] is not None else None,
                 "user_rating": user_rating,
                 "imdb_rating": imdb_rating,
+                "poster_url": str(row["poster_url"] or ""),
+                "runtime_min": int(row["runtime_min"]) if row["runtime_min"] is not None else None,
                 "delta": (user_rating - imdb_rating) if imdb_rating is not None else None,
                 "genres": [str(x) for x in genres],
                 "directors": [str(x) for x in directors],
@@ -208,55 +322,137 @@ def install_library_ui(window_cls) -> None:
     """Install the full library/profile explorer on the Premium window class."""
 
     def page_ratings(self):
+        rows = load_rating_rows(self.db)
+
+        def show_more_actions():
+            button = self.sender()
+            menu = QMenu(self)
+            menu.addAction("Import IMDb ratings.csv", self.import_ratings)
+            menu.addAction("Adaugă rating manual", self.manual_rating)
+            if button is not None:
+                menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+            else:
+                menu.exec(QCursor.pos())
+
+        def export_current():
+            selected = filtered_rows()
+            if not selected:
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export ratinguri",
+                "CineCalendar-ratinguri.csv",
+                "CSV (*.csv)",
+            )
+            if not path:
+                return
+            if not path.lower().endswith(".csv"):
+                path += ".csv"
+            with open(path, "w", newline="", encoding="utf-8-sig") as handle:
+                writer = csv.writer(handle)
+                writer.writerow([
+                    "Title", "Localized Title", "Year", "Your Rating", "IMDb Rating",
+                    "Delta", "Genres", "Directors", "Date Rated", "IMDb ID", "Source",
+                ])
+                for row in selected:
+                    writer.writerow([
+                        _display_title(row),
+                        row["title"],
+                        row["year"] or "",
+                        row["user_rating"],
+                        row["imdb_rating"] if row["imdb_rating"] is not None else "",
+                        f"{row['delta']:+.1f}" if row["delta"] is not None else "",
+                        ", ".join(row["genres"]),
+                        ", ".join(row["directors"]),
+                        row["date_rated"][:10] if row["date_rated"] else "",
+                        row["imdb_id"],
+                        row["source"],
+                    ])
+            self.set_status(f"Exportate {len(selected):,} ratinguri în {path}.", False)
+
         page, content = self.page_shell(
             "Ratinguri IMDb",
-            "Toată biblioteca ta de ratinguri, fără limita veche de 500. Caută, filtrează și sortează local.",
+            f"Afișate {len(rows):,} din {len(rows):,} ratinguri",
             [
-                ("Repară biblioteca", self.repair_library, True),
-                ("Import IMDb ratings.csv", self.import_ratings, False),
-                ("Adaugă rating", self.manual_rating, False),
+                ("Sincronizează + completează", lambda: self.sync_imdb_public(silent=False), True),
+                ("Repară biblioteca", self.repair_library, False),
+                ("Export", lambda: export_current(), False),
+                ("⋯", show_more_actions, False),
             ],
         )
 
-        rows = load_rating_rows(self.db)
         all_genres = sorted({g for row in rows for g in row["genres"]}, key=str.casefold)
+        all_directors = sorted({d for row in rows for d in row["directors"]}, key=str.casefold)
+        all_years = sorted({int(row["year"]) for row in rows if row["year"] is not None}, reverse=True)
 
-        summary = QFrame(); summary.setObjectName("PremiumCard")
-        sl = QVBoxLayout(summary); sl.setContentsMargins(18, 16, 18, 16); sl.setSpacing(8)
-        health = rated_library_health(self.db)
-        sh = QLabel(
-            f"{len(rows):,} ratinguri • {health.complete:,} cu metadate esențiale complete "
-            f"({health.completion_percent:.1f}%)"
-        )
-        sh.setObjectName("SectionTitle"); sl.addWidget(sh)
-        sd = QLabel(
-            "Lipsuri: "
-            f"{health.missing_genres} gen • {health.missing_directors} regizor • "
-            f"{health.missing_runtime} durată • {health.missing_imdb_rating} rating IMDb • "
-            f"{health.missing_poster} poster. Dublu-click pe un film pentru pagina IMDb."
-        )
-        sd.setObjectName("Muted"); sd.setWordWrap(True); sl.addWidget(sd)
-        content.addWidget(summary)
+        controls = QFrame()
+        controls.setObjectName("PremiumCard")
+        grid = QGridLayout(controls)
+        grid.setContentsMargins(14, 12, 14, 12)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
 
-        controls = QFrame(); controls.setObjectName("PremiumCard")
-        grid = QGridLayout(controls); grid.setContentsMargins(16, 14, 16, 14); grid.setHorizontalSpacing(10); grid.setVerticalSpacing(8)
+        search = QLineEdit()
+        search.setPlaceholderText("Caută filme…")
+        grid.addWidget(search, 0, 0, 1, 2)
 
-        search = QLineEdit(); search.setPlaceholderText("Caută titlu, titlu original, gen, regizor, an sau IMDb ID…")
-        grid.addWidget(search, 0, 0, 1, 4)
-
-        rating_filter = QComboBox(); rating_filter.addItem("Toate notele", None)
-        for n in range(10, 0, -1):
-            rating_filter.addItem(f"Doar {n}/10", n)
-        grid.addWidget(rating_filter, 1, 0)
-
-        genre_filter = QComboBox(); genre_filter.addItem("Toate genurile", "")
+        genre_filter = QComboBox()
+        genre_filter.addItem("Toate genurile", "")
         for genre in all_genres:
             genre_filter.addItem(genre, genre)
-        grid.addWidget(genre_filter, 1, 1)
+        grid.addWidget(genre_filter, 0, 2)
+
+        director_filter = QComboBox()
+        director_filter.addItem("Toți regizorii", "")
+        for director in all_directors:
+            director_filter.addItem(director, director)
+        grid.addWidget(director_filter, 0, 3)
+
+        year_filter = QComboBox()
+        year_filter.addItem("Toți anii", None)
+        for year in all_years:
+            year_filter.addItem(str(year), year)
+        grid.addWidget(year_filter, 0, 4)
+
+        rating_filter = QComboBox()
+        rating_filter.addItem("Toate notele", None)
+        for n in range(10, 0, -1):
+            rating_filter.addItem(f"{n}/10", n)
+        grid.addWidget(rating_filter, 0, 5)
+
+        date_wrap = QWidget()
+        date_layout = QHBoxLayout(date_wrap)
+        date_layout.setContentsMargins(0, 0, 0, 0)
+        date_layout.setSpacing(6)
+        date_group = QButtonGroup(page)
+        date_group.setExclusive(True)
+        date_buttons: dict[str, QPushButton] = {}
+        for label, key in (
+            ("Toate", "all"),
+            ("Azi", "today"),
+            ("7 zile", "7d"),
+            ("30 zile", "30d"),
+            ("Anul acesta", "year"),
+        ):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setProperty("compact", True)
+            if key == "all":
+                button.setChecked(True)
+                button.setProperty("accent", True)
+            date_group.addButton(button)
+            date_layout.addWidget(button)
+            date_buttons[key] = button
+        date_layout.addStretch(1)
+        grid.addWidget(date_wrap, 1, 0, 1, 4)
+
+        sort_label = QLabel("Sortare:")
+        sort_label.setObjectName("Muted")
+        grid.addWidget(sort_label, 1, 4, alignment=Qt.AlignRight)
 
         sort_combo = QComboBox()
         for label, key in (
-            ("Cele mai recente", "date_desc"),
+            ("Ultimul rating primul", "date_desc"),
             ("Nota mea: mare → mică", "rating_desc"),
             ("Nota mea: mică → mare", "rating_asc"),
             ("IMDb: mare → mic", "imdb_desc"),
@@ -265,61 +461,69 @@ def install_library_ui(window_cls) -> None:
             ("Titlu A–Z", "title_asc"),
         ):
             sort_combo.addItem(label, key)
-        grid.addWidget(sort_combo, 1, 2)
-
-        date_filter = QComboBox()
-        date_filter.addItem("Oricând", "all")
-        date_filter.addItem("Azi", "today")
-        date_filter.addItem("Ultimele 7 zile", "7d")
-        date_filter.addItem("Ultimele 30 zile", "30d")
-        date_filter.addItem("Anul acesta", "year")
-        grid.addWidget(date_filter, 1, 3)
-
-        reset = QPushButton("Resetează")
-        grid.addWidget(reset, 2, 3)
+        grid.addWidget(sort_combo, 1, 5)
         content.addWidget(controls)
 
+        status = QFrame()
+        status.setObjectName("PremiumCard")
+        status_layout = QHBoxLayout(status)
+        status_layout.setContentsMargins(14, 9, 14, 9)
         count_label = QLabel("")
         count_label.setObjectName("Muted")
-        content.addWidget(count_label)
+        status_layout.addWidget(count_label)
+        status_layout.addStretch(1)
+        health = rated_library_health(self.db)
+        health_label = QLabel(
+            f"Bibliotecă IMDb: {health.complete:,}/{health.total:,} metadate esențiale complete"
+        )
+        health_label.setObjectName("Muted")
+        status_layout.addWidget(health_label)
+        content.addWidget(status)
 
         table = QTableWidget(0, 11)
         table.setHorizontalHeaderLabels([
-            "Titlu original", "Titlu localizat", "An", "Nota ta", "IMDb", "Δ ta−IMDb",
-            "Genuri", "Regizor", "Data", "Sursă", "IMDb ID",
+            "#", "Poster", "Titlu (original / localizat)", "An", "Nota ta",
+            "IMDb", "Δ", "Genuri", "Regizor", "Data", "⋯",
         ])
         table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setSelectionMode(QTableWidget.SingleSelection)
         table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(58)
         table.setSortingEnabled(False)
-        table.setMinimumHeight(620)
+        table.setMinimumHeight(650)
+        table.setShowGrid(True)
+        table.setItemDelegateForColumn(2, RatingTitleDelegate(table))
+        table.setItemDelegateForColumn(7, GenreBadgeDelegate(table))
+
         header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.Interactive)
-        for col in (2, 3, 4, 5, 8, 9, 10):
+        header.setMinimumHeight(42)
+        for col in (0, 1, 3, 4, 5, 6, 9, 10):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(7, QHeaderView.Interactive)
-        table.setColumnWidth(1, 210)
-        table.setColumnWidth(6, 220)
-        table.setColumnWidth(7, 190)
+        header.setSectionResizeMode(8, QHeaderView.Interactive)
+        table.setColumnWidth(7, 250)
+        table.setColumnWidth(8, 220)
         content.addWidget(table)
 
-        def open_imdb(row_index: int, _column: int):
-            item = table.item(row_index, 0)
-            imdb_id = item.data(Qt.UserRole) if item else None
-            if imdb_id:
-                QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{imdb_id}/"))
+        poster_cells: dict[int, tuple[QLabel, str, str]] = {}
+        loaded_posters: set[int] = set()
 
-        table.cellDoubleClicked.connect(open_imdb)
+        def selected_period() -> str:
+            for key, button in date_buttons.items():
+                if button.isChecked():
+                    return key
+            return "all"
 
         def filtered_rows() -> list[dict]:
             query = search.text().strip().casefold()
             wanted_rating = rating_filter.currentData()
             wanted_genre = str(genre_filter.currentData() or "")
-            period = str(date_filter.currentData() or "all")
+            wanted_director = str(director_filter.currentData() or "")
+            wanted_year = year_filter.currentData()
+            period = selected_period()
             today = date.today()
             cutoff = None
             if period == "today":
@@ -330,21 +534,28 @@ def install_library_ui(window_cls) -> None:
                 cutoff = (today - timedelta(days=29)).isoformat()
             elif period == "year":
                 cutoff = date(today.year, 1, 1).isoformat()
+
             selected = []
             for row in rows:
                 if wanted_rating is not None and int(row["user_rating"]) != int(wanted_rating):
                     continue
                 if wanted_genre and wanted_genre not in row["genres"]:
                     continue
+                if wanted_director and wanted_director not in row["directors"]:
+                    continue
+                if wanted_year is not None and row["year"] != int(wanted_year):
+                    continue
                 if cutoff and (not row["date_rated"] or row["date_rated"][:10] < cutoff):
                     continue
                 if query:
-                    haystack = " | ".join(
-                        [
-                            row["title"], row["original_title"], str(row["year"] or ""), row["imdb_id"],
-                            " ".join(row["genres"]), " ".join(row["directors"]), row["source"],
-                        ]
-                    ).casefold()
+                    haystack = " | ".join([
+                        row["title"],
+                        row["original_title"],
+                        str(row["year"] or ""),
+                        row["imdb_id"],
+                        " ".join(row["genres"]),
+                        " ".join(row["directors"]),
+                    ]).casefold()
                     if query not in haystack:
                         continue
                 selected.append(row)
@@ -356,61 +567,192 @@ def install_library_ui(window_cls) -> None:
                 selected.sort(key=lambda r: _rating_sort_key(r, mode))
             return selected
 
+        def refresh_visible_posters():
+            if not poster_cells or table.rowCount() <= 0:
+                return
+            top = table.rowAt(0)
+            bottom = table.rowAt(max(0, table.viewport().height() - 1))
+            if top < 0:
+                top = 0
+            if bottom < 0:
+                bottom = min(table.rowCount() - 1, top + 20)
+            start_row = max(0, top - 4)
+            end_row = min(table.rowCount() - 1, bottom + 6)
+            for row_index in range(start_row, end_row + 1):
+                if row_index in loaded_posters:
+                    continue
+                info = poster_cells.get(row_index)
+                if not info:
+                    continue
+                label, url, key = info
+                loaded_posters.add(row_index)
+                if url:
+                    self.load_poster_async(label, url, key)
+
+        def show_row_menu(row_index: int):
+            if row_index < 0 or row_index >= table.rowCount():
+                return
+            item = table.item(row_index, 2)
+            if item is None:
+                return
+            imdb_id = str(item.data(Qt.UserRole) or "")
+            source = str(item.data(Qt.UserRole + 4) or "")
+            menu = QMenu(self)
+            if imdb_id:
+                menu.addAction(
+                    "Deschide IMDb",
+                    lambda iid=imdb_id: QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/")),
+                )
+                menu.addAction(
+                    "Copiază IMDb ID",
+                    lambda iid=imdb_id: QApplication.clipboard().setText(iid),
+                )
+            source_action = menu.addAction(f"Sursă: {source or '—'}")
+            source_action.setEnabled(False)
+            menu.exec(QCursor.pos())
+
         def render():
             selected = filtered_rows()
-            table.setSortingEnabled(False)
             table.clearContents()
             table.setRowCount(len(selected))
+            poster_cells.clear()
+            loaded_posters.clear()
+
             for i, row in enumerate(selected):
+                imdb_id = row["imdb_id"] or ""
                 original = _display_title(row)
                 localized = str(row["title"] or "").strip()
-                localized_display = "—" if not localized or localized.casefold() == original.casefold() else localized
-                values = [
-                    SmartItem(original, original.casefold()),
-                    SmartItem(localized_display, localized.casefold() if localized else ""),
-                    SmartItem(str(row["year"] or "—"), row["year"]),
-                    SmartItem(f"{row['user_rating']}/10", row["user_rating"]),
-                    SmartItem(f"{row['imdb_rating']:.1f}" if row["imdb_rating"] is not None else "—", row["imdb_rating"]),
-                    SmartItem(f"{row['delta']:+.1f}" if row["delta"] is not None else "—", row["delta"]),
-                    SmartItem(", ".join(row["genres"]) or "—"),
-                    SmartItem(", ".join(row["directors"]) or "—"),
-                    SmartItem(row["date_rated"][:10] if row["date_rated"] else "—", row["date_rated"]),
-                    SmartItem(row["source"] or "—"),
-                    SmartItem(row["imdb_id"] or "—"),
-                ]
-                for j, item in enumerate(values):
-                    item.setData(Qt.UserRole, row["imdb_id"] or "")
-                    table.setItem(i, j, item)
-            table.setSortingEnabled(True)
-            mode = str(sort_combo.currentData() or "date_desc")
-            sort_column, sort_order = {
-                "date_desc": (8, Qt.DescendingOrder),
-                "rating_desc": (3, Qt.DescendingOrder),
-                "rating_asc": (3, Qt.AscendingOrder),
-                "imdb_desc": (4, Qt.DescendingOrder),
-                "delta_desc": (5, Qt.DescendingOrder),
-                "year_desc": (2, Qt.DescendingOrder),
-                "title_asc": (0, Qt.AscendingOrder),
-            }.get(mode, (8, Qt.DescendingOrder))
-            table.sortItems(sort_column, sort_order)
-            count_label.setText(f"Afișate {len(selected):,} din {len(rows):,} ratinguri")
+                title_item = SmartItem(original, original.casefold())
+                title_item.setData(Qt.UserRole, imdb_id)
+                title_item.setData(Qt.UserRole + 1, original)
+                title_item.setData(Qt.UserRole + 2, localized)
+                title_item.setData(Qt.UserRole + 4, row["source"])
+                title_item.setToolTip(
+                    f"{original}"
+                    + (f"\nTitlu localizat: {localized}" if localized else "")
+                    + f"\nIMDb ID: {imdb_id or '—'}\nSursă: {row['source'] or '—'}"
+                )
 
-        debounce = QTimer(page); debounce.setSingleShot(True); debounce.setInterval(120); debounce.timeout.connect(render)
+                number = SmartItem(str(i + 1), i + 1)
+                number.setTextAlignment(Qt.AlignCenter)
+
+                poster_item = SmartItem("", "")
+                poster_item.setData(Qt.UserRole, imdb_id)
+                poster = QLabel("—")
+                poster.setAlignment(Qt.AlignCenter)
+                poster.setFixedSize(34, 50)
+                poster.setObjectName("Muted")
+                poster.setStyleSheet(
+                    "border:1px solid rgba(115,132,154,0.30); border-radius:5px;"
+                    "background:rgba(12,18,28,0.45);"
+                )
+                poster_cells[i] = (poster, row["poster_url"], imdb_id or str(row["movie_id"]))
+
+                year_item = SmartItem(str(row["year"] or "—"), row["year"])
+                year_item.setTextAlignment(Qt.AlignCenter)
+
+                user_item = SmartItem(f"{row['user_rating']}/10", row["user_rating"])
+                user_item.setTextAlignment(Qt.AlignCenter)
+                user_font = QFont(user_item.font())
+                user_font.setBold(True)
+                user_item.setFont(user_font)
+                if row["user_rating"] >= 7:
+                    user_item.setForeground(QColor("#45df83"))
+                elif row["user_rating"] <= 3:
+                    user_item.setForeground(QColor("#ff5f67"))
+
+                imdb_item = SmartItem(
+                    f"{row['imdb_rating']:.1f}" if row["imdb_rating"] is not None else "—",
+                    row["imdb_rating"],
+                )
+                imdb_item.setTextAlignment(Qt.AlignCenter)
+                if row["imdb_rating"] is not None:
+                    imdb_item.setForeground(QColor("#45df83"))
+
+                delta_item = SmartItem(
+                    f"{row['delta']:+.1f}" if row["delta"] is not None else "—",
+                    row["delta"],
+                )
+                delta_item.setTextAlignment(Qt.AlignCenter)
+                if row["delta"] is not None:
+                    if row["delta"] < 0:
+                        delta_item.setForeground(QColor("#ff5f67"))
+                    elif row["delta"] > 0:
+                        delta_item.setForeground(QColor("#45df83"))
+
+                genres_text = ", ".join(row["genres"]) or "—"
+                genres_item = SmartItem(genres_text, genres_text.casefold())
+                genres_item.setData(Qt.UserRole + 3, "|".join(row["genres"]))
+                genres_item.setToolTip(genres_text)
+
+                directors_text = ", ".join(row["directors"]) or "—"
+                directors_item = SmartItem(directors_text, directors_text.casefold())
+                directors_item.setToolTip(directors_text)
+
+                date_text = row["date_rated"][:10] if row["date_rated"] else "—"
+                date_item = SmartItem(date_text, row["date_rated"])
+                date_item.setTextAlignment(Qt.AlignCenter)
+
+                more = SmartItem("⋯", "")
+                more.setTextAlignment(Qt.AlignCenter)
+                more.setToolTip(
+                    f"IMDb ID: {imdb_id or '—'}\nSursă: {row['source'] or '—'}"
+                )
+
+                items = [
+                    number, poster_item, title_item, year_item, user_item,
+                    imdb_item, delta_item, genres_item, directors_item, date_item, more,
+                ]
+                for column, item in enumerate(items):
+                    table.setItem(i, column, item)
+                table.setCellWidget(i, 1, poster)
+
+            count_label.setText(f"Afișate {len(selected):,} din {len(rows):,} ratinguri")
+            QTimer.singleShot(0, refresh_visible_posters)
+
+        def set_period(key: str):
+            for candidate, button in date_buttons.items():
+                active = candidate == key
+                button.setChecked(active)
+                button.setProperty("accent", active)
+                button.style().unpolish(button)
+                button.style().polish(button)
+            render()
+
+        for key, button in date_buttons.items():
+            button.clicked.connect(lambda _checked=False, k=key: set_period(k))
+
+        def open_imdb(row_index: int, column: int):
+            if column == 10:
+                show_row_menu(row_index)
+                return
+            item = table.item(row_index, 2)
+            imdb_id = item.data(Qt.UserRole) if item else None
+            if imdb_id:
+                QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{imdb_id}/"))
+
+        table.cellDoubleClicked.connect(open_imdb)
+        table.cellClicked.connect(lambda row_index, column: show_row_menu(row_index) if column == 10 else None)
+        table.verticalScrollBar().valueChanged.connect(lambda _value: refresh_visible_posters())
+
+        debounce = QTimer(page)
+        debounce.setSingleShot(True)
+        debounce.setInterval(120)
+        debounce.timeout.connect(render)
         search.textChanged.connect(lambda _text: debounce.start())
         rating_filter.currentIndexChanged.connect(lambda _i: render())
         genre_filter.currentIndexChanged.connect(lambda _i: render())
+        director_filter.currentIndexChanged.connect(lambda _i: render())
+        year_filter.currentIndexChanged.connect(lambda _i: render())
         sort_combo.currentIndexChanged.connect(lambda _i: render())
-        date_filter.currentIndexChanged.connect(lambda _i: render())
 
-        def reset_filters():
-            search.clear()
-            rating_filter.setCurrentIndex(0)
-            genre_filter.setCurrentIndex(0)
-            sort_combo.setCurrentIndex(0)
-            date_filter.setCurrentIndex(0)
-            render()
+        hint = QLabel(
+            "Sfat: dublu-click pe un film pentru IMDb. Coloana ⋯ păstrează IMDb ID și sursa fără să aglomereze tabelul."
+        )
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        content.addWidget(hint)
 
-        reset.clicked.connect(reset_filters)
         render()
         return page
 
