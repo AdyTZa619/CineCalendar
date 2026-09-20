@@ -1,63 +1,52 @@
-CineCalendar 4.3.0 – Learning Insight
+CineCalendar 4.3.1 – Performance Audit
 
 Obiectiv:
-- folosește rezultatele reale din 4.2 pentru a îmbunătăți predicțiile fără să înlocuiască shortlist-ul validat;
-- explică și păstrează exact de ce un film a fost recomandat;
-- face performanța motorului comparabilă pe perioade și versiuni.
+- optimizează stratul Learning Insight 4.3 și Istoricul fără să schimbe formula de scoring sau regulile de quality-gate;
+- păstrează reacția corectă la ratinguri și metadata noi;
+- adaugă măsurători și benchmark-uri care detectează regresiile de performanță înainte de Stable.
 
-1. Calibrare automată după ratingurile reale
-- folosește recommendation_outcomes cu predicted_rating + actual_rating;
-- construiește corecții globale, pe tip de conținut și pe zona notei estimate;
-- validarea este cronologică: train pe rezultatele mai vechi, holdout pe cele mai noi;
-- are nevoie de minimum 30 outcome-uri măsurabile;
-- se activează numai dacă MAE sau procentul la ±1 punct se îmbunătățește;
-- corecția notei este plafonată la ±0,70;
-- influența asupra ordinii este foarte mică și plafonată;
-- nu poate introduce un film nou în Top 3, doar poate reordona shortlist-ul deja acceptat.
+1. Cache semantic
+- semnăturile locale synopsis + keywords sunt reutilizate pentru payload-uri identice;
+- cache-ul este limitat la 16.384 intrări;
+- cheia este conținutul efectiv al synopsisului și keyword-urilor, deci metadata modificată generează automat o semnătură nouă;
+- Taste Hub poate expune hit/miss și dimensiunea cache-ului prin statusul runtime.
 
-2. Semantică text mai profundă, dar ușoară
-- analizează local synopsis + keywords;
-- folosește tokeni, expresii de două cuvinte, suport și IDF;
-- nu adaugă un model AI mare în executabil;
-- cere minimum 120 ratinguri cu text și holdout de minimum 24;
-- semnalul se activează numai dacă îmbunătățește MAE față de baza cronologică;
-- influența finală este plafonată la ±0,009 din scor.
+2. O singură verificare a modelelor per rundă
+- semantică și calibrarea își verifică starea o singură dată înainte de procesarea shortlist-ului;
+- cele 3 recomandări nu mai repetă aceleași interogări SQLite de freshness;
+- invalidarea după ratinguri/outcome-uri rămâne activă;
+- tokenul semantic include acum și ultima modificare a metadata filmelor notate.
 
-3. Explorare controlată
-- modul „Surprinde-mă” poate favoriza foarte ușor noutatea;
-- numai dacă filmul are predicție, încredere și calitate suficiente;
-- bonus maxim 0,006;
-- funcționează exclusiv în shortlist-ul deja validat, fără candidați noi injectați.
+3. Istoric scalabil
+- filtrul de status este calculat și aplicat direct în SQLite;
+- LIMIT se aplică după filtrare, nu înainte;
+- un rezultat mai vechi care corespunde filtrului nu mai poate fi exclus accidental de rânduri mai noi cu alt status;
+- indexuri dedicate accelerează root exposures, acțiunile expunerii și filtrarea pe versiune de motor.
 
-4. „De ce A și nu B?”
-- alternativele din „Ce văd acum?” explică direct de ce alegerea #1 este înainte;
-- compară nota estimată, încrederea și factorii principali;
-- nu inventează motive dacă diferența este foarte mică.
+4. Dashboard și outcome queries
+- schema SQLite urcă la v9;
+- indexuri noi pentru engine_version + context_date și context_date pe recommendation_outcomes;
+- datele, scorurile și snapshoturile existente nu sunt rescrise;
+- migrarea păstrează backupul pre-migration, quick_check, last-good snapshot și rollback.
 
-5. Istoric complet al recomandărilor
-- pagina Istoric este refăcută;
-- filtre: perioadă, status, motor și căutare;
-- coloane: dată, titlu, poziție, estimare, potrivire, încredere, motor, status, nota reală, eroare și context;
-- dublu-click deschide detaliile expunerii;
-- pentru recomandările 4.3+ se păstrează motivul exact, compromisurile, factorii și contribuțiile existente în momentul afișării;
-- expunerile vechi rămân vizibile, dar aplicația spune explicit când explicația exactă nu exista în versiunea respectivă.
+5. Telemetrie locală de performanță
+- Learning Insight păstrează numai ferestre limitate de timpi în memorie;
+- sunt disponibile count, last, P50 și P95 pentru prepare/enhance;
+- măsurarea nu trimite date în exterior și nu afectează scoring-ul.
 
-6. Dashboard pe perioade și versiuni
-- Taste Hub poate filtra performanța pe: toată perioada / 30 zile / 90 zile / anul curent;
-- poate filtra pe versiunea motorului;
-- afișează comparație compactă între versiunile care au date;
-- outcome-urile se reconciliază o singură dată la deschiderea dashboard-ului, nu pentru fiecare versiune.
+6. CI și benchmark
+- nou benchmark cu 8.000 de expuneri verifică Istoric filtrat, dashboard și cache semantic;
+- benchmark-ul rulează în CI alături de benchmark-ul existent pe catalogul de 260k;
+- testele acoperă cache-ul, invalidarea metadata, filtrarea înainte de LIMIT și pregătirea o singură dată per rundă.
 
-7. Persistență și integritate
-- schema SQLite urcă la v8;
-- noua tabelă recommendation_explanations păstrează snapshotul explicației per expunere;
-- Profile Backup urcă la v4 și include recommendation_explanations;
-- importul profilelor v1/v2/v3 rămâne compatibil;
-- restore remapează snapshoturile la noile history_id-uri;
-- backupul pre-migration, quick_check, last-good snapshot și rollback rămân neschimbate.
+Siguranță:
+- calibrarea, semantica, explorarea controlată și pragurile 4.3 rămân neschimbate;
+- 4.3.1 nu introduce candidați noi și nu modifică shortlist-ul de bază;
+- Profile Backup rămâne v4, iar formatul datelor utilizatorului nu este schimbat;
+- modificările sunt limitate la cache, query/read-path, indexuri, instrumentare locală și teste.
 
-8. Producție
-- stack-ul devine production-stack-v4.3.0;
-- Learning Insight este compus peste Availability Guard + Context 3.5 + Personalizare 4.1;
-- Quality Manager 3.7 rămâne protecția generală anti-regresie;
-- 4.3 își mai aplică propriile quality-gate-uri locale pentru calibrare și semantică.
+Versiune:
+- aplicație 4.3.1;
+- Learning Insight learning-insight-v4.3.1;
+- production-stack-v4.3.1;
+- SQLite schema v9.
