@@ -129,6 +129,13 @@ def build_profile(db: Database) -> dict:
         con.execute("""INSERT INTO user_profile(profile_key,value_json,updated_at) VALUES('main',?,?)
                        ON CONFLICT(profile_key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at""",
                     (json_dumps(profile), utcnow_iso()))
+    # A newly imported/synced IMDb rating may close a recommendation outcome. Keep this
+    # fail-open: recommendation/profile learning must never fail only because analytics did.
+    try:
+        from .recommendation_outcomes_v42 import reconcile_recommendation_outcomes
+        reconcile_recommendation_outcomes(db)
+    except Exception:
+        pass
     return profile
 
 

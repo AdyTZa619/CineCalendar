@@ -32,6 +32,10 @@ _FEEDBACK_SIGNALS = {
     "less_like_this": (-0.55, 45.0, 0.85),
     "not_interested": (-0.80, 75.0, 1.00),
     "never_similar": (-1.00, 120.0, 1.20),
+    "not_now": (-0.34, 3.0, 0.45),
+    "too_long": (-0.32, 14.0, 0.55),
+    "mood_mismatch": (-0.26, 3.0, 0.40),
+    "too_similar": (-0.45, 21.0, 0.70),
 }
 
 _RECENT_RATING_SIGNALS = {
@@ -130,7 +134,10 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
             feedback_rows = con.execute(
                 """SELECT m.*,f.kind AS intent_kind,f.created_at AS intent_at
                    FROM feedback f JOIN movies m ON m.id=f.movie_id
-                   WHERE f.kind IN ('want_to_watch','more_like_this','less_like_this','not_interested','never_similar')
+                   WHERE f.kind IN (
+                       'want_to_watch','more_like_this','less_like_this','not_interested','never_similar',
+                       'not_now','too_long','mood_mismatch','too_similar'
+                   )
                    ORDER BY f.id DESC LIMIT 400"""
             ).fetchall()
             rating_rows = con.execute(

@@ -7,7 +7,7 @@ from typing import Iterable
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -327,6 +327,28 @@ class PremiumDecisionWindow(DecisionWindow):
             return text[:357].rsplit(" ", 1)[0] + "…"
         return "Descrierea și imaginea se completează automat din surse deschise. Nu trebuie să adaugi nimic manual."
 
+    def apply_contextual_feedback(self, movie_id: int, kind: str) -> None:
+        if kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}:
+            self.session_skips.add(int(movie_id))
+        self.feedback(int(movie_id), str(kind))
+
+    def contextual_feedback_menu(self, movie_id: int, button: QPushButton) -> None:
+        menu = QMenu(self)
+        choices = (
+            ("Nu acum", "not_now"),
+            ("Prea lung pentru moment", "too_long"),
+            ("Nu am chef de genul ăsta acum", "mood_mismatch"),
+            ("Prea similar cu ce am văzut/recomandat", "too_similar"),
+            ("Nu mă interesează", "not_interested"),
+            ("Nu-mi recomanda similare", "never_similar"),
+        )
+        for label, kind in choices:
+            action = menu.addAction(label)
+            action.triggered.connect(
+                lambda _checked=False, mid=int(movie_id), k=kind: self.apply_contextual_feedback(mid, k)
+            )
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+
     def human_reason(self, rec: Recommendation) -> str:
         m, s = rec.movie, rec.score
         # Later engines already compute evidence-rich explanations, including concrete
@@ -506,6 +528,9 @@ class PremiumDecisionWindow(DecisionWindow):
         actions=QHBoxLayout()
         choose=QPushButton("Aleg filmul ăsta"); choose.setProperty("accent",True); choose.clicked.connect(lambda _,mid=m.id:self.choose_decision(mid)); actions.addWidget(choose)
         detail=QPushButton("Detalii"); detail.clicked.connect(lambda _,r=rec:self.open_details(r)); actions.addWidget(detail)
+        why_no=QPushButton("Nu acum / motiv")
+        why_no.clicked.connect(lambda _checked=False, mid=m.id, b=why_no: self.contextual_feedback_menu(mid, b))
+        actions.addWidget(why_no)
         other=QPushButton("Alt film"); other.clicked.connect(lambda _,mid=m.id:self.skip_decision(mid)); actions.addWidget(other)
         actions.addStretch(1); right.addLayout(actions)
         main.addLayout(right,1)
@@ -542,7 +567,7 @@ class PremiumDecisionWindow(DecisionWindow):
     def _load_browse_async(self):
         if self.browse_worker and self.browse_worker.isRunning(): return
         self.set_status("Calculez recomandările…",True)
-        worker=WorkerThread(lambda progress:self.s.recommender.recommend(date.today(),12,record=False,slot="browse",candidate_limit=45000,mode="decide"),self)
+        worker=WorkerThread(lambda progress:self.s.recommender.recommend(date.today(),12,exclude_ids=set(self.session_skips),record=False,slot="browse",candidate_limit=45000,mode="decide"),self)
         self.browse_worker=worker
         def success(recs):
             self.browse_worker=None; self.browse_result=list(recs); self.set_status("Recomandările sunt gata.",False)
@@ -580,7 +605,9 @@ class PremiumDecisionWindow(DecisionWindow):
         reason=QLabel(self.human_reason(rec)); reason.setWordWrap(True); reason.setMaximumHeight(58); l.addWidget(reason)
         row=QHBoxLayout(); details=QPushButton("Detalii"); details.clicked.connect(lambda _,r=rec:self.open_details(r)); row.addWidget(details)
         watch=QPushButton("Watchlist"); watch.clicked.connect(lambda _,mid=m.id:self.feedback(mid,"want_to_watch")); row.addWidget(watch)
-        no=QPushButton("Nu"); no.clicked.connect(lambda _,mid=m.id:self.feedback(mid,"not_interested")); row.addWidget(no); row.addStretch(1); l.addLayout(row)
+        no=QPushButton("Nu acum / motiv")
+        no.clicked.connect(lambda _checked=False, mid=m.id, b=no: self.contextual_feedback_menu(mid, b))
+        row.addWidget(no); row.addStretch(1); l.addLayout(row)
         main.addLayout(l,1); return box
 
     # ---------- taste hub ----------

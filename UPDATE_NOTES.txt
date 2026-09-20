@@ -1,81 +1,45 @@
-CineCalendar 4.1.0 – Personalizare evolutivă și recomandări explicabile
+CineCalendar 4.2.0 – Outcome Learning
 
 Obiectiv:
-- îmbunătățește calitatea reală a recomandărilor fără să înlocuiască motorul validat;
-- orice reranking nou care poate schimba ordinea este limitat și protejat de un quality-gate local;
-- explicațiile, profilurile pe tip de conținut și controalele de alegere sunt disponibile chiar dacă quality-gate-ul decide să nu lase stratul temporal să modifice scorurile.
+- închide bucla recomandare → alegere → pornire → vizionare → rating real;
+- măsoară dacă estimările CineCalendar se confirmă după ce utilizatorul notează filmul pe IMDb;
+- separă feedbackul contextual de gustul permanent.
 
-1. Gustul evoluează în timp
-- ratingurile recente primesc o greutate mai mare decât cele vechi, fără să șteargă istoricul;
-- motorul calculează separat media recentă și istorică pentru genuri, regizori, țări, decenii și tipuri de conținut;
-- detectează explicit când gustul s-a încălzit sau răcit pentru un tipar;
-- ajustarea de scor este plafonată și se activează numai dacă trece quality-gate-ul local.
+Rezultate reale:
+- fiecare expunere nouă salvează nota estimată și încrederea existente în momentul recomandării;
+- alegerea, pornirea confirmată și vizionarea rămân legate de expunerea exactă;
+- când apare ulterior ratingul IMDb, CineCalendar îl leagă automat de cel mai recent traseu explicit pentru acel film;
+- același rating real nu poate fi atribuit mai multor expuneri istorice;
+- legarea se reface automat la actualizarea profilului, inclusiv după import/sincronizare IMDb.
 
-2. Dovezi concrete din ratingurile tale
-- explicația poate cita filme evaluate efectiv de tine, de exemplu „Film A 9/10; Film B 8/10”;
-- caută repere similare prin regizor, gen, țară, tip de conținut și perioadă;
-- folosește și exemple negative pentru a explica de ce un titlu nu este o alegere perfectă.
+Dashboard în Taste Hub:
+- număr de filme alese;
+- procent pornit din cele alese;
+- procent confirmat văzut;
+- câte recomandări au primit ulterior rating real;
+- eroarea medie dintre nota estimată și nota reală;
+- procentul estimărilor aflate la ±1 punct;
+- procentul recomandărilor evaluate ulterior cu minimum 8/10;
+- bias-ul mediu estimat minus real;
+- listă cu rezultatele recente și valorile estimat / real.
 
-3. Anti-repetiție 4.1
-- penalizează repetarea aceluiași regizor în aceeași listă;
-- reduce listele cu genuri aproape identice, aceeași țară sau aceeași perioadă;
-- ține cont și de tiparele recomandate în ultimele 45 de zile;
-- în modul „Surprinde-mă” penalizarea de diversitate este mai mică;
-- Top 3 validat nu primește membri noi din afara setului; 4.1 poate doar reordona și explica aceleași trei titluri.
+Feedback contextual:
+- „Nu acum”;
+- „Prea lung pentru moment”;
+- „Nu am chef de genul ăsta acum”;
+- „Prea similar cu ce am văzut/recomandat”;
+- aceste semnale sunt păstrate pentru învățarea de scurtă durată, dar au greutate 0 în profilul de gust permanent;
+- filmul este ascuns pentru sesiunea curentă, ca să nu reapară imediat;
+- „Nu mă interesează” și „Nu-mi recomanda similare” rămân feedback negativ persistent.
 
-4. Calendar/context mai strict
-- contextul perioadei primește numai un bonus mic;
-- bonusul apare doar peste un prag de potrivire personală și rating estimat;
-- legăturile atmosferice sunt mult mai slabe decât cele directe/istorice/spirituale;
-- calendarul nu poate salva un film care nu se potrivește suficient gustului personal.
-
-5. Profiluri separate pe tip de conținut
-- film;
-- documentar;
-- scurtmetraj;
-- animație;
-- Taste Hub afișează media și trendul separat pentru fiecare tip când există suficiente date.
-
-6. Detectarea schimbării gustului
-- Taste Hub arată cele mai clare creșteri/scăderi recente;
-- schimbările cer suport minim, ca un singur rating să nu fie interpretat drept schimbare stabilă.
-
-7. Scor explicabil
-- fiecare recomandare poate expune separat: gust, afinitate personală, regizor/cinematografie, calendar, anotimp, calitate, noutate, evoluția gustului, dispoziția aleasă și contextul strict;
-- fereastra Detalii are o secțiune „Scor explicabil”.
-
-8. „De ce NU”
-- recomandările pot afișa compromisuri: predicție personală modestă, încredere mică, recomandare recentă, răcire a gustului sau filme similare evaluate slab;
-- pagina „Ce văd acum?” arată rezumatul direct sub motivul principal;
-- Detalii are o secțiune dedicată compromisurilor.
-
-9. „Alege-mi unul acum” extins
-- timp disponibil: orice / <=60 / <=90 / <=120 / 180+ minute;
-- dispoziție: neutru / lejer / intens / contemplativ / ușor de urmărit;
-- rămân modurile Echilibrat / Mai sigur / Surprinde-mă / Mai scurt;
-- filtrul de timp este aplicat înainte de alegerea finală, nu doar afișat în UI.
-
-10. Watchlist dinamic
-- prioritatea manuală rămâne;
-- scorul Watchlist se recalculează după ratingurile noi și evoluția gustului;
-- filmele foarte vechi din Watchlist cu potrivire modestă pot coborî ușor;
-- vechimea singură nu împinge un film în sus;
-- stilul Watchlist poate fi Echilibrat / Mai sigur / Surprinde-mă;
-- buton separat permite alegerea din toată biblioteca.
-
-11. Consistență metadata
-- „Repară biblioteca” rulează după completare și un audit de consistență;
-- semnalează titluri originale lipsă, durate/ani imposibili și identități locale posibil duplicate;
-- auditul nu suprascrie automat valori doar fiindcă diferă între surse.
-
-12. Quality-gate automat 4.1
-- stratul temporal se validează pe un holdout cronologic local;
-- compară MAE și ordonarea pairwise cu o bază simplă;
-- dacă nu există câștig măsurabil sau apare regresie, rerankingul temporal rămâne blocat;
-- Taste Hub arată starea gate-ului și valorile de validare;
-- quality manager-ul existent continuă să testeze stack-ul complet în backtesturile de producție.
+Învățare:
+- ratingul real nou intră în continuare în profilul principal și în Personalizarea 4.1;
+- rezultatele de alegere/pornire/vizionare continuă să alimenteze Watch Success;
+- 4.2 adaugă măsurarea calibrării fără să creeze un motor paralel sau să ocolească quality-gate-urile existente.
 
 Siguranță:
-- baza 4.0.5, metadata integrity, Smart Watchlist, ALS, contextul 3.5 și quality manager 3.7 rămân active;
-- 4.1 este un strat compus peste stack-ul existent, nu un motor paralel;
-- nu se modifică schema SQLite în această versiune.
+- schema SQLite urcă la v7;
+- migrarea adaugă doar coloanele predicted_rating/confidence în recommendation_history și tabela recommendation_outcomes;
+- înaintea migrării se păstrează mecanismul existent de backup, quick_check și rollback;
+- Quality Manager 3.7 rămâne protecția pentru motoarele/rerankingurile noi, deci nu este duplicat printr-un al doilea „shadow mode”;
+- snapshotul last-good existent rămâne mecanismul principal de recuperare a bazei.
