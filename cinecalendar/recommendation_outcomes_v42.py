@@ -72,6 +72,30 @@ def reconcile_recommendation_outcomes(db) -> int:
         ).fetchall()
     ratings = {int(row["movie_id"]): row for row in rating_rows}
 
+    # One real IMDb rating may close at most one recommendation exposure. If the same film was
+    # chosen more than once before it was finally rated, attribute the outcome to the most recent
+    # explicit funnel, not to every historical exposure.
+    rating_owner: dict[int, int] = {}
+    by_movie: dict[int, list] = {}
+    for row in rows:
+        by_movie.setdefault(int(row["movie_id"]), []).append(row)
+    for movie_id, rating in ratings.items():
+        rating_day = str(rating["rating_date"] or "")[:10]
+        candidates = [
+            row for row in by_movie.get(movie_id, [])
+            if not rating_day or str(row["context_date"] or "")[:10] <= rating_day
+        ]
+        if not candidates:
+            continue
+        owner = max(
+            candidates,
+            key=lambda row: (
+                str(row["watched_at"] or row["playback_at"] or row["chosen_at"] or row["context_date"] or ""),
+                int(row["exposure_history_id"]),
+            ),
+        )
+        rating_owner[movie_id] = int(owner["exposure_history_id"])
+
     changed = 0
     with db.tx() as con:
         for row in rows:
@@ -82,7 +106,10 @@ def reconcile_recommendation_outcomes(db) -> int:
             absolute_error = None
             resolved_at = None
 
-            if rating is not None:
+            if (
+                rating is not None
+                and rating_owner.get(movie_id) == int(row["exposure_history_id"])
+            ):
                 candidate_date = str(rating["rating_date"] or "")
                 context_date = str(row["context_date"] or "")
                 if not candidate_date or not context_date or candidate_date[:10] >= context_date[:10]:
