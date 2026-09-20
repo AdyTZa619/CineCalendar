@@ -86,6 +86,18 @@ query CineCalendarTitleMetadataCore($ids: [ID!]!) {
 }
 """
 
+_TITLE_CREDITS_QUERY = """
+query CineCalendarTitleCredits($ids: [ID!]!) {
+  titles(ids: $ids) {
+    id
+    principalCredits(first: 8) {
+      category { id text }
+      credits { name { nameText { text } } }
+    }
+  }
+}
+"""
+
 
 @dataclass(frozen=True)
 class RemoteRating:
@@ -328,24 +340,44 @@ def _metadata_payload(
             timeout=timeout,
         )
     except RuntimeError:
-        # Credits are less stable than core title fields. Never let one optional
-        # field prevent rating metadata from being filled.
-        return _graphql_post(
+        # Credits are less stable than core title fields. Fetch the stable core
+        # first, then retry directors separately so one credits-schema failure
+        # does not erase genres/runtime/rating metadata for the whole batch.
+        core = _graphql_post(
             client,
             _TITLE_METADATA_CORE_QUERY,
             {"ids": ids},
             timeout=timeout,
         )
+        try:
+            credits = _graphql_post(
+                client,
+                _TITLE_CREDITS_QUERY,
+                {"ids": ids},
+                timeout=timeout,
+            )
+        except RuntimeError:
+            return core
+
+        credit_by_id = {
+            str(item.get("id") or ""): item.get("principalCredits") or []
+            for item in ((credits.get("data") or {}).get("titles") or [])
+            if isinstance(item, dict)
+        }
+        for item in ((core.get("data") or {}).get("titles") or []):
+            if isinstance(item, dict):
+                item["principalCredits"] = credit_by_id.get(str(item.get("id") or ""), [])
+        return core
 
 
 def backfill_public_rating_metadata(
     db: Database,
     *,
-    limit: int = 120,
+    limit: int = 5000,
     timeout: int = 20,
     session: requests.Session | None = None,
 ) -> int:
-    """Best-effort metadata fill for titles first discovered through profile sync."""
+    """Best-effort metadata fill for all rated IMDb-linked titles with missing fields."""
     with db.connect() as con:
         rows = con.execute(
             """SELECT m.id,m.imdb_id,m.title,m.original_title,m.year,m.title_type,
@@ -353,11 +385,14 @@ def backfill_public_rating_metadata(
                       m.num_votes,m.poster_url
                FROM movies m
                JOIN ratings r ON r.movie_id=m.id
-               WHERE r.source='imdb_public_sync'
-                 AND m.imdb_id IS NOT NULL
+               WHERE m.imdb_id IS NOT NULL
+                 AND TRIM(m.imdb_id)!=''
                  AND (
-                     m.imdb_rating IS NULL OR m.runtime_min IS NULL OR
-                     m.genres_json='[]'
+                     m.imdb_rating IS NULL OR m.num_votes IS NULL OR
+                     m.runtime_min IS NULL OR
+                     TRIM(COALESCE(m.genres_json,'')) IN ('','[]') OR
+                     TRIM(COALESCE(m.directors_json,'')) IN ('','[]') OR
+                     m.poster_url IS NULL OR TRIM(m.poster_url)=''
                  )
                ORDER BY COALESCE(r.date_rated,'') DESC,r.id DESC
                LIMIT ?""",
