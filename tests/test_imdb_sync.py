@@ -6,6 +6,7 @@ import pytest
 
 from cinecalendar.db import Database
 from cinecalendar.imdb_sync import (
+    backfill_public_rating_metadata,
     fetch_public_ratings,
     resolve_public_user_id,
     sync_public_ratings,
@@ -328,3 +329,45 @@ def test_empty_remote_profile_does_not_wipe_existing_imdb_history(tmp_path: Path
         )
     with db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 1
+
+
+def test_public_sync_metadata_backfill_fills_sparse_profile_rows(tmp_path: Path):
+    db = Database(tmp_path / "test.db")
+    sync_public_ratings(
+        db,
+        URL,
+        baseline_date=None,
+        session=session_for(payload([
+            ("tt4568192","Jana",5,"2026-05-23",2004),
+        ])),
+    )
+
+    metadata = {
+        "data": {
+            "titles": [{
+                "id": "tt4568192",
+                "runtime": {"seconds": 4800},
+                "ratingsSummary": {"aggregateRating": 4.5, "voteCount": 16},
+                "genres": {"genres": [{"text": "Drama"}]},
+                "primaryImage": {"url": "https://m.media-amazon.com/images/M/jana.jpg"},
+                "principalCredits": [{
+                    "category": {"id": "director", "text": "Director"},
+                    "credits": [{"name": {"nameText": {"text": "Valeriu Gagiu"}}}],
+                }],
+            }]
+        }
+    }
+    count = backfill_public_rating_metadata(db, session=Session([metadata]))
+    assert count == 1
+
+    with db.connect() as con:
+        row = con.execute(
+            """SELECT runtime_min,genres_json,directors_json,imdb_rating,num_votes,poster_url
+               FROM movies WHERE imdb_id='tt4568192'"""
+        ).fetchone()
+    assert int(row["runtime_min"]) == 80
+    assert row["genres_json"] == '["Drama"]'
+    assert row["directors_json"] == '["Valeriu Gagiu"]'
+    assert float(row["imdb_rating"]) == 4.5
+    assert int(row["num_votes"]) == 16
+    assert row["poster_url"] == "https://m.media-amazon.com/images/M/jana.jpg"
