@@ -1,45 +1,28 @@
-CineCalendar 4.2.0 – Outcome Learning
+CineCalendar 4.2.1 – Outcome Backup Integrity
 
-Obiectiv:
-- închide bucla recomandare → alegere → pornire → vizionare → rating real;
-- măsoară dacă estimările CineCalendar se confirmă după ce utilizatorul notează filmul pe IMDb;
-- separă feedbackul contextual de gustul permanent.
+Prioritate:
+- protejează complet datele introduse în 4.2 înainte de următoarele schimbări majore de recomandare.
 
-Rezultate reale:
-- fiecare expunere nouă salvează nota estimată și încrederea existente în momentul recomandării;
-- alegerea, pornirea confirmată și vizionarea rămân legate de expunerea exactă;
-- când apare ulterior ratingul IMDb, CineCalendar îl leagă automat de cel mai recent traseu explicit pentru acel film;
-- același rating real nu poate fi atribuit mai multor expuneri istorice;
-- legarea se reface automat la actualizarea profilului, inclusiv după import/sincronizare IMDb.
+Backup profil v3:
+- Export profil include acum recommendation_outcomes;
+- recommendation_history păstrează predicted_rating și confidence;
+- Restore reconstruiește corect relațiile outcome → exposure → movie → rating;
+- ID-urile interne sunt remapate în baza restaurată, nu copiate mecanic;
+- în modul Merge, un outcome din backup este legat de ratingul local mai nou dacă acel rating câștigă conflictul;
+- backupurile profil v1 și v2 rămân compatibile la import;
+- profilul exportat urcă la format v3;
+- recommendation_outcomes intră și în numărătoarea din manifest.
 
-Dashboard în Taste Hub:
-- număr de filme alese;
-- procent pornit din cele alese;
-- procent confirmat văzut;
-- câte recomandări au primit ulterior rating real;
-- eroarea medie dintre nota estimată și nota reală;
-- procentul estimărilor aflate la ±1 punct;
-- procentul recomandărilor evaluate ulterior cu minimum 8/10;
-- bias-ul mediu estimat minus real;
-- listă cu rezultatele recente și valorile estimat / real.
+Fereastra validă de măsurare:
+- dashboard-ul de performanță folosește numai expuneri care aveau predicted_rating salvat la momentul recomandării;
+- outcome-urile legacy fără snapshot de predicție nu mai intră în choice-rate, MAE, bias, Top 1/Top 3 sau lista de rezultate recente;
+- Taste Hub afișează explicit data de la care există date măsurabile;
+- dacă încă nu există o recomandare 4.2+ măsurabilă, interfața explică faptul că statisticile vor începe după primul snapshot valid.
 
-Feedback contextual:
-- „Nu acum”;
-- „Prea lung pentru moment”;
-- „Nu am chef de genul ăsta acum”;
-- „Prea similar cu ce am văzut/recomandat”;
-- aceste semnale sunt păstrate pentru învățarea de scurtă durată, dar au greutate 0 în profilul de gust permanent;
-- filmul este ascuns pentru sesiunea curentă, ca să nu reapară imediat;
-- „Nu mă interesează” și „Nu-mi recomanda similare” rămân feedback negativ persistent.
-
-Învățare:
-- ratingul real nou intră în continuare în profilul principal și în Personalizarea 4.1;
-- rezultatele de alegere/pornire/vizionare continuă să alimenteze Watch Success;
-- 4.2 adaugă măsurarea calibrării fără să creeze un motor paralel sau să ocolească quality-gate-urile existente.
+Motiv:
+- CineCalendar 4.2 a introdus outcome learning; fără acest patch, Export profil / Restore putea pierde outcome-urile și snapshoturile de predicție chiar dacă backupul SQLite al updaterului rămânea sigur.
 
 Siguranță:
-- schema SQLite urcă la v7;
-- migrarea adaugă doar coloanele predicted_rating/confidence în recommendation_history și tabela recommendation_outcomes;
-- înaintea migrării se păstrează mecanismul existent de backup, quick_check și rollback;
-- Quality Manager 3.7 rămâne protecția pentru motoarele/rerankingurile noi, deci nu este duplicat printr-un al doilea „shadow mode”;
-- snapshotul last-good existent rămâne mecanismul principal de recuperare a bazei.
+- schema SQLite rămâne v7;
+- motorul de recomandări, Personalizarea 4.1 și scoring-ul nu sunt modificate;
+- schimbarea este limitată la backup/restore și la delimitarea corectă a statisticilor 4.2.
