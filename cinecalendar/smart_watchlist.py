@@ -7,7 +7,7 @@ from .models import Recommendation
 from .profile import get_profile
 from .recommendation import row_to_movie
 from .recommender_v11 import ALS_WEIGHT, CONTENT_WEIGHT
-from .util import clamp
+from .util import clamp, json_loads
 
 
 @dataclass(frozen=True)
@@ -71,11 +71,37 @@ def _known_future(row: dict, when: date) -> bool:
     return bool(len(release) >= 10 and release > when.isoformat())
 
 
+def pinned_watchlist_ids(db) -> set[int]:
+    raw = db.get_setting("watchlist_pinned_movie_ids", []) or []
+    out: set[int] = set()
+    for value in raw:
+        try:
+            out.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def set_watchlist_pinned(db, movie_id: int, pinned: bool) -> bool:
+    ids = pinned_watchlist_ids(db)
+    mid = int(movie_id)
+    if pinned:
+        ids.add(mid)
+    else:
+        ids.discard(mid)
+    db.set_setting("watchlist_pinned_movie_ids", sorted(ids))
+    return mid in ids
+
+
 def remove_from_watchlist(db, movie_id: int) -> bool:
     """Remove only the explicit Watchlist intent; do not create negative taste feedback."""
+    mid = int(movie_id)
     with db.tx() as con:
-        cur = con.execute("DELETE FROM watchlist WHERE movie_id=?", (int(movie_id),))
-        return int(cur.rowcount or 0) > 0
+        cur = con.execute("DELETE FROM watchlist WHERE movie_id=?", (mid,))
+        removed = int(cur.rowcount or 0) > 0
+    if removed:
+        set_watchlist_pinned(db, mid, False)
+    return removed
 
 
 def rank_watchlist(
@@ -83,6 +109,9 @@ def rank_watchlist(
     when: date | None = None,
     count: int = 5,
     mode: str = "decide",
+    *,
+    runtime_bucket: str = "all",
+    content_type: str = "all",
 ) -> SmartWatchlistResult:
     """Rank explicit Watchlist items through the current production scoring stack.
 
@@ -98,6 +127,31 @@ def rank_watchlist(
 
     available_rows = [row for row in rows if not _known_future(row, when)]
     future_hidden = eligible - len(available_rows)
+
+    def matches_filters(row: dict) -> bool:
+        runtime = row.get("runtime_min")
+        try:
+            minutes = int(runtime) if runtime is not None else None
+        except (TypeError, ValueError):
+            minutes = None
+        if runtime_bucket == "short" and (minutes is None or minutes > 90):
+            return False
+        if runtime_bucket == "medium" and (minutes is None or minutes < 91 or minutes > 120):
+            return False
+        if runtime_bucket == "long" and (minutes is None or minutes <= 120):
+            return False
+
+        typ = str(row.get("title_type") or "").lower()
+        genres = {str(x).casefold() for x in (json_loads(row.get("genres_json"), []) or [])}
+        if content_type == "short" and typ != "short":
+            return False
+        if content_type == "documentary" and "documentary" not in genres:
+            return False
+        if content_type == "movie" and (typ == "short" or "documentary" in genres):
+            return False
+        return True
+
+    available_rows = [row for row in available_rows if matches_filters(row)]
     if not available_rows:
         return SmartWatchlistResult((), total, eligible, 0, 0, future_hidden, total - eligible)
 
@@ -126,6 +180,7 @@ def rank_watchlist(
     collaborative_active = bool(collaborative_scores) and int(mapped_ratings) >= 20
 
     context = recommender._run_context()
+    pinned = pinned_watchlist_ids(recommender.db)
     candidates: list[Recommendation] = []
     for row in available_rows:
         movie = row_to_movie(row)
@@ -168,6 +223,16 @@ def rank_watchlist(
                     "Genuri, teme, regizori, calitate, noutate și context; "
                     "semnal independent de verificare.",
                 )
+            )
+        if movie.id is not None and int(movie.id) in pinned:
+            score.final = clamp(float(score.final) + 0.08)
+            score.contributions.insert(
+                0,
+                (
+                    "Prioritate Watchlist",
+                    8.0,
+                    "Ai marcat filmul «Vreau să-l văd curând»; primește prioritate fără a ocoli filtrele de calitate.",
+                ),
             )
         candidates.append(Recommendation(movie, score))
 

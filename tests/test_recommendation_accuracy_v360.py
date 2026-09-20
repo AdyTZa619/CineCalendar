@@ -151,4 +151,4 @@ def test_service_moves_to_v37_without_removing_v36_or_v35():
     assert "install_context_ui_v35" in composition
     assert "install_accuracy_ui_v37" in composition
     assert "install_accuracy_ui_v36" not in composition
-    assert '__version__ = "4.0.1"' in init
+    assert '__version__ = "4.0.2"' in init

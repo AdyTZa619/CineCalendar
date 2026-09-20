@@ -7,7 +7,13 @@ from cinecalendar.db import Database
 from cinecalendar.feedback import apply_feedback
 from cinecalendar.models import ScoreBreakdown
 from cinecalendar.profile import build_profile
-from cinecalendar.smart_watchlist import rank_watchlist, remove_from_watchlist, watchlist_entries
+from cinecalendar.smart_watchlist import (
+    pinned_watchlist_ids,
+    rank_watchlist,
+    remove_from_watchlist,
+    set_watchlist_pinned,
+    watchlist_entries,
+)
 from cinecalendar.util import utcnow_iso
 
 
@@ -176,3 +182,53 @@ def test_seen_feedback_removes_stale_watchlist_entry(tmp_path):
             (mid,),
         ).fetchone()
     assert row["kind"] == "seen"
+
+
+def test_watchlist_priority_pin_boosts_close_candidate(tmp_path):
+    db = Database(tmp_path / "pin.db")
+    _seed_profile(db)
+    regular = _movie(db, "tt4400001", "Regular", imdb_rating=8.2)
+    pinned = _movie(db, "tt4400002", "Pinned", imdb_rating=7.8)
+    _watch(db, regular)
+    _watch(db, pinned)
+    assert set_watchlist_pinned(db, pinned, True)
+    assert pinned in pinned_watchlist_ids(db)
+
+    result = rank_watchlist(_FakeProductionRecommender(db), date(2026, 9, 20), 2)
+    assert [rec.movie.title for rec in result.recommendations][:2] == ["Pinned", "Regular"]
+    assert result.recommendations[0].score.contributions[0][0] == "Prioritate Watchlist"
+
+
+def test_watchlist_duration_and_documentary_filters(tmp_path):
+    db = Database(tmp_path / "filters.db")
+    _seed_profile(db)
+    short = _movie(db, "tt4500001", "Short Runtime", imdb_rating=8.0)
+    long = _movie(db, "tt4500002", "Long Runtime", imdb_rating=8.5)
+    documentary = _movie(db, "tt4500003", "Documentary", imdb_rating=8.7)
+    for mid in (short, long, documentary):
+        _watch(db, mid)
+    with db.tx() as con:
+        con.execute("UPDATE movies SET runtime_min=80 WHERE id=?", (short,))
+        con.execute("UPDATE movies SET runtime_min=145 WHERE id=?", (long,))
+        con.execute("UPDATE movies SET genres_json=? WHERE id=?", (json.dumps(["Documentary"]), documentary))
+
+    engine = _FakeProductionRecommender(db)
+    short_result = rank_watchlist(engine, date(2026, 9, 20), 5, runtime_bucket="short")
+    assert [rec.movie.title for rec in short_result.recommendations] == ["Short Runtime"]
+
+    doc_result = rank_watchlist(engine, date(2026, 9, 20), 5, content_type="documentary")
+    assert [rec.movie.title for rec in doc_result.recommendations] == ["Documentary"]
+
+    movie_result = rank_watchlist(engine, date(2026, 9, 20), 5, content_type="movie")
+    assert "Documentary" not in [rec.movie.title for rec in movie_result.recommendations]
+
+
+def test_removing_watchlist_item_clears_priority_pin(tmp_path):
+    db = Database(tmp_path / "remove-pin.db")
+    mid = _movie(db, "tt4600001", "Pinned Then Removed")
+    _watch(db, mid)
+    set_watchlist_pinned(db, mid, True)
+    assert mid in pinned_watchlist_ids(db)
+
+    assert remove_from_watchlist(db, mid)
+    assert mid not in pinned_watchlist_ids(db)

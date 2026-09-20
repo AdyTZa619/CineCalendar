@@ -86,7 +86,7 @@ class OpenMovieMetadataProvider:
     def _fetch(self, imdb_id: str) -> dict:
         if not imdb_id or not imdb_id.startswith("tt") or not imdb_id[2:].isdigit():
             return {}
-        query = f'''SELECT ?item ?itemDescription ?image ?duration ?directorLabel ?countryLabel ?roArticle ?enArticle WHERE {{
+        query = f'''SELECT ?item ?itemDescription ?image ?duration ?directorLabel ?countryLabel ?genreLabel ?roArticle ?enArticle WHERE {{
           ?item wdt:P345 "{imdb_id}" .
           OPTIONAL {{ ?item wdt:P18 ?image . }}
           OPTIONAL {{ ?item wdt:P2047 ?duration . }}
@@ -105,13 +105,17 @@ class OpenMovieMetadataProvider:
         first = bindings[0]
         directors: list[str] = []
         countries: list[str] = []
+        genres: list[str] = []
         for b in bindings:
             d = b.get("directorLabel", {}).get("value", "").strip()
-            c = b.get("countryLabel", {}).get("value", "").strip()
+            country = b.get("countryLabel", {}).get("value", "").strip()
+            genre = b.get("genreLabel", {}).get("value", "").strip()
             if d and d not in directors and not d.startswith("http"):
                 directors.append(d)
-            if c and c not in countries and not c.startswith("http"):
-                countries.append(c)
+            if country and country not in countries and not country.startswith("http"):
+                countries.append(country)
+            if genre and genre not in genres and not genre.startswith("http"):
+                genres.append(genre)
 
         duration = None
         raw_duration = first.get("duration", {}).get("value")
@@ -138,6 +142,7 @@ class OpenMovieMetadataProvider:
             "runtime_min": duration,
             "directors": directors[:6],
             "countries": countries[:6],
+            "genres": genres[:8],
             "article_url": summary.get("article") or article,
             "attribution": "Wikidata / Wikipedia",
         }
@@ -166,18 +171,21 @@ class OpenMovieMetadataProvider:
             movie.directors = list(payload["directors"])
         if not movie.countries and payload.get("countries"):
             movie.countries = list(payload["countries"])
+        if not movie.genres and payload.get("genres"):
+            movie.genres = list(payload["genres"])
         movie.semantic = extract_semantic(movie)
 
         if movie.id is not None:
             with self.db.tx() as con:
                 con.execute(
                     """UPDATE movies SET overview=?,runtime_min=?,directors_json=?,countries_json=?,
-                       poster_url=?,semantic_json=?,updated_at=? WHERE id=?""",
+                       genres_json=?,poster_url=?,semantic_json=?,updated_at=? WHERE id=?""",
                     (
                         movie.overview or "",
                         movie.runtime_min,
                         json_dumps(movie.directors),
                         json_dumps(movie.countries),
+                        json_dumps(movie.genres),
                         movie.poster_url,
                         json_dumps(movie.semantic),
                         utcnow_iso(),

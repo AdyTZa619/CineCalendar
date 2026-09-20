@@ -47,12 +47,20 @@ class TmdbProvider:
         movie.original_title=details.get("original_title") or movie.original_title
         movie.overview=details.get("overview") or movie.overview
         movie.runtime_min=details.get("runtime") or movie.runtime_min
-        movie.countries=[x.get("name","") for x in details.get("production_countries",[]) if x.get("name")]
-        movie.genres=[x.get("name","") for x in details.get("genres",[]) if x.get("name")] or movie.genres
+        countries=[x.get("name","") for x in details.get("production_countries",[]) if x.get("name")]
+        if countries:
+            movie.countries=countries
+        genres=[x.get("name","") for x in details.get("genres",[]) if x.get("name")]
+        if genres:
+            movie.genres=genres
         credits=details.get("credits",{}).get("crew",[])
-        movie.directors=[x.get("name","") for x in credits if x.get("job")=="Director" and x.get("name")]
+        directors=[x.get("name","") for x in credits if x.get("job")=="Director" and x.get("name")]
+        if directors:
+            movie.directors=directors
         kws=details.get("keywords",{}).get("keywords",[]) or details.get("keywords",{}).get("results",[])
-        movie.keywords=[x.get("name","") for x in kws if x.get("name")]
+        keywords=[x.get("name","") for x in kws if x.get("name")]
+        if keywords:
+            movie.keywords=keywords
         poster=details.get("poster_path"); movie.poster_url=(IMG_BASE+poster) if poster else movie.poster_url
         movie.semantic=extract_semantic(movie)
         with self.db.tx() as con:
@@ -74,7 +82,7 @@ def _row_to_movie(row) -> Movie:
     )
 
 
-def enrich_library(db: Database, token: str, limit: int = 100, progress=None) -> dict[str, int]:
+def enrich_library(db: Database, token: str, limit: int = 100, progress=None, *, rated_only: bool = False) -> dict[str, int]:
     """Enrich up to ``limit`` IMDb-linked titles using the user's TMDb token.
 
     Explicit ratings are prioritized because richer metadata improves the learned profile first;
@@ -83,14 +91,22 @@ def enrich_library(db: Database, token: str, limit: int = 100, progress=None) ->
     """
     limit=max(1, min(int(limit), 5000))
     provider=TmdbProvider(db, token)
+    rated_clause = "AND r.movie_id IS NOT NULL" if rated_only else ""
     with db.connect() as con:
-        rows=con.execute("""
+        rows=con.execute(f"""
             SELECT m.*, CASE WHEN r.movie_id IS NULL THEN 0 ELSE 1 END AS is_rated
             FROM movies m
             LEFT JOIN ratings r ON r.movie_id=m.id
             WHERE m.imdb_id IS NOT NULL AND TRIM(m.imdb_id)!=''
-              AND (m.overview IS NULL OR TRIM(m.overview)='' OR m.tmdb_id IS NULL
-                   OR m.poster_url IS NULL OR TRIM(m.poster_url)='')
+              {rated_clause}
+              AND (
+                   m.overview IS NULL OR TRIM(m.overview)=''
+                   OR m.poster_url IS NULL OR TRIM(m.poster_url)=''
+                   OR m.runtime_min IS NULL
+                   OR TRIM(COALESCE(m.genres_json,'')) IN ('','[]')
+                   OR TRIM(COALESCE(m.directors_json,'')) IN ('','[]')
+                   OR TRIM(COALESCE(m.countries_json,'')) IN ('','[]')
+              )
             ORDER BY is_rated DESC, COALESCE(m.num_votes,0) DESC, m.id ASC
             LIMIT ?
         """, (limit,)).fetchall()
@@ -98,9 +114,9 @@ def enrich_library(db: Database, token: str, limit: int = 100, progress=None) ->
     for idx,row in enumerate(rows,1):
         movie=_row_to_movie(row)
         try:
-            before=(movie.overview, movie.poster_url, tuple(movie.keywords), tuple(movie.countries), tuple(movie.directors))
+            before=(movie.overview, movie.poster_url, movie.runtime_min, tuple(movie.genres), tuple(movie.keywords), tuple(movie.countries), tuple(movie.directors))
             provider.enrich_by_imdb(movie)
-            after=(movie.overview, movie.poster_url, tuple(movie.keywords), tuple(movie.countries), tuple(movie.directors))
+            after=(movie.overview, movie.poster_url, movie.runtime_min, tuple(movie.genres), tuple(movie.keywords), tuple(movie.countries), tuple(movie.directors))
             if after != before:
                 enriched += 1
             else:
