@@ -99,26 +99,34 @@ def reconcile_recommendation_outcomes(db) -> int:
                 (int(row["exposure_history_id"]),),
             ).fetchone()
 
-            payload = (
-                int(row["exposure_history_id"]),
-                movie_id,
-                int(row["rank_position"]) if row["rank_position"] is not None else None,
-                str(row["context_date"] or ""),
-                str(row["slot"] or ""),
-                str(row["chosen_at"] or "") or None,
-                str(row["playback_at"] or "") or None,
-                str(row["watched_at"] or "") or None,
-                rating_id,
-                actual_rating,
-                rating_date,
-                float(row["predicted_rating"]) if row["predicted_rating"] is not None else None,
-                float(row["confidence"]) if row["confidence"] is not None else None,
-                float(row["final_score"]) if row["final_score"] is not None else None,
-                str(row["engine_version"] or "") or None,
-                absolute_error,
-                resolved_at,
-                now,
-            )
+            desired = {
+                "exposure_history_id": int(row["exposure_history_id"]),
+                "movie_id": movie_id,
+                "rank_position": int(row["rank_position"]) if row["rank_position"] is not None else None,
+                "context_date": str(row["context_date"] or ""),
+                "slot": str(row["slot"] or ""),
+                "chosen_at": str(row["chosen_at"] or "") or None,
+                "playback_at": str(row["playback_at"] or "") or None,
+                "watched_at": str(row["watched_at"] or "") or None,
+                "rating_id": rating_id,
+                "actual_rating": actual_rating,
+                "rating_date": rating_date,
+                "predicted_rating": float(row["predicted_rating"]) if row["predicted_rating"] is not None else None,
+                "confidence": float(row["confidence"]) if row["confidence"] is not None else None,
+                "final_score": float(row["final_score"]) if row["final_score"] is not None else None,
+                "engine_version": str(row["engine_version"] or "") or None,
+                "absolute_error": absolute_error,
+                "resolved_at": resolved_at,
+            }
+            if before is not None and all(before[key] == value for key, value in desired.items()):
+                continue
+
+            payload = tuple(desired[key] for key in (
+                "exposure_history_id","movie_id","rank_position","context_date","slot",
+                "chosen_at","playback_at","watched_at","rating_id","actual_rating","rating_date",
+                "predicted_rating","confidence","final_score","engine_version","absolute_error",
+                "resolved_at"
+            )) + (now,)
             con.execute(
                 """INSERT INTO recommendation_outcomes(
                        exposure_history_id,movie_id,rank_position,context_date,slot,
@@ -146,12 +154,7 @@ def reconcile_recommendation_outcomes(db) -> int:
                        updated_at=excluded.updated_at""",
                 payload,
             )
-            after = con.execute(
-                "SELECT * FROM recommendation_outcomes WHERE exposure_history_id=?",
-                (int(row["exposure_history_id"]),),
-            ).fetchone()
-            if before is None or tuple(before) != tuple(after):
-                changed += 1
+            changed += 1
     return changed
 
 
