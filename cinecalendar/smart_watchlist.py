@@ -224,7 +224,26 @@ def rank_watchlist(
                     "semnal independent de verificare.",
                 )
             )
-        if movie.id is not None and int(movie.id) in pinned:
+        brain = getattr(recommender, "personalization_v41", None)
+        is_pinned = bool(movie.id is not None and int(movie.id) in pinned)
+        if brain is not None and callable(getattr(brain, "dynamic_watchlist_shift", None)):
+            shift, reason = brain.dynamic_watchlist_shift(
+                row,
+                score,
+                pinned=is_pinned,
+                when=when,
+            )
+            score.final = clamp(float(score.final) + float(shift))
+            if abs(float(shift)) >= 0.001:
+                score.contributions.insert(
+                    0,
+                    (
+                        "Prioritate Watchlist dinamică",
+                        float(shift) * 100.0,
+                        reason or "Prioritatea se recalculează după noile ratinguri și starea curentă a Watchlist-ului.",
+                    ),
+                )
+        elif is_pinned:
             score.final = clamp(float(score.final) + 0.08)
             score.contributions.insert(
                 0,
