@@ -110,6 +110,7 @@ def download_official_imdb_metadata_datasets(
     cache_dir: str | Path,
     progress: Callable[[str], None] | None = None,
     force: bool = False,
+    need_directors: bool = True,
 ) -> tuple[Path, Path, Path]:
     """Download only the official IMDb files needed to repair rated-title metadata."""
     progress = progress or (lambda _message: None)
@@ -131,15 +132,16 @@ def download_official_imdb_metadata_datasets(
         basics.unlink(missing_ok=True)
         raise ValueError("Fișierul title.basics descărcat nu este valid.")
 
-    _download_stream(IMDB_DATASET_URLS["crew"], crew, progress, "IMDb title.crew", force=False)
-    if not _valid_gzip_tsv(crew, {"tconst", "directors"}):
-        crew.unlink(missing_ok=True)
-        raise ValueError("Fișierul title.crew descărcat nu este valid.")
+    if need_directors:
+        _download_stream(IMDB_DATASET_URLS["crew"], crew, progress, "IMDb title.crew", force=False)
+        if not _valid_gzip_tsv(crew, {"tconst", "directors"}):
+            crew.unlink(missing_ok=True)
+            raise ValueError("Fișierul title.crew descărcat nu este valid.")
 
-    _download_stream(IMDB_DATASET_URLS["names"], names, progress, "IMDb name.basics", force=False)
-    if not _valid_gzip_tsv(names, {"nconst", "primaryName"}):
-        names.unlink(missing_ok=True)
-        raise ValueError("Fișierul name.basics descărcat nu este valid.")
+        _download_stream(IMDB_DATASET_URLS["names"], names, progress, "IMDb name.basics", force=False)
+        if not _valid_gzip_tsv(names, {"nconst", "primaryName"}):
+            names.unlink(missing_ok=True)
+            raise ValueError("Fișierul name.basics descărcat nu este valid.")
 
     return basics, crew, names
 
@@ -189,6 +191,7 @@ def repair_rated_metadata_from_official_datasets(
         cache_dir,
         progress,
         force=force_download,
+        need_directors=bool(missing_director_ids),
     )
 
     progress(f"IMDb oficial: caut metadata pentru {len(rated_ids):,} titluri evaluate…")
