@@ -622,7 +622,7 @@ class CineCalendarWindow(QMainWindow):
     def page_settings(self):
         page,content=self.page_shell("Setări","Configurare, catalog, metadata și backup")
         general=self.card(); gl=QVBoxLayout(general); gh=QLabel("Preferințe"); gh.setObjectName("CardTitle"); gl.addWidget(gh)
-        romance=QCheckBox("Exclude Romance (implicit ON)"); romance.setChecked(bool(self.db.get_setting("exclude_romance",True))); romance.toggled.connect(lambda v:self.db.set_setting("exclude_romance",bool(v))); gl.addWidget(romance)
+        genre_note=QLabel("Genurile nu sunt excluse global; recomandările sunt învățate din ratingurile tale."); genre_note.setObjectName("Muted"); genre_note.setWordWrap(True); gl.addWidget(genre_note)
         theme_row=QHBoxLayout(); theme_row.addWidget(QLabel("Temă")); combo=QComboBox(); combo.addItems(["dark","light"]); combo.setCurrentText(self.theme)
         def change_theme(v): self.theme=v; self.db.set_setting("theme",v); self.apply_theme()
         combo.currentTextChanged.connect(change_theme); theme_row.addWidget(combo); theme_row.addStretch(1); gl.addLayout(theme_row); content.addWidget(general)
