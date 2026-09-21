@@ -145,7 +145,7 @@ class RecommendationQualityManagerV37:
             if self._v34_ready():
                 return True
             report = self.v34_manager.cached_report()
-            if str(report.get("status") or "") == "error":
+            if str(report.get("status") or "") in {"error", "interrupted_cooldown"}:
                 return False
             time.sleep(1.0)
         return False
