@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 
 from .db import Database
 from .profile import build_profile
@@ -39,6 +40,9 @@ FEEDBACK_LABELS = {
 }
 
 
+CONTEXTUAL_FEEDBACK_KINDS = {"not_now", "too_long", "mood_mismatch", "too_similar"}
+
+
 @dataclass(frozen=True)
 class FeedbackReceipt:
     feedback_id: int
@@ -49,6 +53,51 @@ class FeedbackReceipt:
     @property
     def label(self) -> str:
         return FEEDBACK_LABELS.get(self.kind, self.kind)
+
+
+def daily_contextual_feedback(
+    db: Database,
+    *,
+    on_date: date | None = None,
+    local_tz=None,
+) -> tuple[tuple[str, int], ...]:
+    """Return distinct contextual reasons recorded on the current local calendar day.
+
+    Feedback timestamps are stored in UTC. Converting each timestamp to the machine's local
+    timezone prevents an action made after midnight in Romania from being assigned to yesterday.
+    Deleted/undone feedback is naturally absent, and a new day naturally returns an empty context.
+    """
+    zone = local_tz or datetime.now().astimezone().tzinfo or timezone.utc
+    target = on_date or datetime.now(zone).date()
+    rough_cutoff = (target - timedelta(days=2)).isoformat()
+    marks = ",".join("?" for _ in CONTEXTUAL_FEEDBACK_KINDS)
+    with db.connect() as con:
+        rows = con.execute(
+            f"""SELECT movie_id,kind,created_at FROM feedback
+                WHERE kind IN ({marks}) AND created_at>=?
+                ORDER BY id""",
+            (*sorted(CONTEXTUAL_FEEDBACK_KINDS), rough_cutoff),
+        ).fetchall()
+
+    active: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for row in rows:
+        raw = str(row["created_at"] or "").strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            created = datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created.astimezone(zone).date() != target:
+            continue
+        item = (str(row["kind"]), int(row["movie_id"]))
+        if item not in seen:
+            seen.add(item)
+            active.append(item)
+    return tuple(active)
 
 
 _WATCHLIST_STATE_KINDS = {"want_to_watch", "not_interested", "never_similar", "seen"}

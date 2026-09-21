@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__ as APP_VERSION
+from .feedback import daily_contextual_feedback
 from .open_metadata import OpenMovieMetadataProvider
 from .profile import get_profile, top_profile_features
 from .qt_ui import WorkerThread
@@ -333,12 +334,9 @@ class PremiumDecisionWindow(DecisionWindow):
         self.feedback(int(movie_id), str(kind))
 
     def active_contextual_feedback(self) -> tuple[tuple[str, int], ...]:
-        kinds = {"not_now", "too_long", "mood_mismatch", "too_similar"}
-        return tuple(
-            (str(receipt.kind), int(receipt.movie_id))
-            for receipt in self._feedback_undo_stack
-            if receipt.kind in kinds
-        )
+        # Rebuild from today's persisted events so closing/reopening the app cannot forget the
+        # current viewing context. The helper resets automatically on the next local date.
+        return daily_contextual_feedback(self.db)
 
     def contextual_feedback_menu(self, movie_id: int, button: QPushButton) -> None:
         menu = QMenu(self)
@@ -435,10 +433,12 @@ class PremiumDecisionWindow(DecisionWindow):
             return
         self.set_status("Calculez alegerea zilei…", True)
         contextual_feedback = self.active_contextual_feedback()
+        contextual_exclusions = {movie_id for _kind, movie_id in contextual_feedback}
+        exclude_ids = set(self.session_skips) | contextual_exclusions
         worker = WorkerThread(
             lambda progress: self.s.recommender.decision_pick(
                 date.today(),
-                self.session_skips,
+                exclude_ids,
                 self.decision_mode,
                 contextual_feedback=contextual_feedback,
             ),

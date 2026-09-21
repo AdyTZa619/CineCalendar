@@ -1,18 +1,20 @@
-CineCalendar 4.5.0 – Feedback care schimbă imediat alegerea
+CineCalendar 4.5.1 – Contextul zilei nu se pierde la repornire
 
 Obiectiv:
-- motivul ales produce o schimbare vizibilă chiar la următoarea recomandare;
-- feedbackul rămâne temporar, limitat la sesiunea curentă;
-- calitatea personală rămâne filtrul de bază, iar motivul ordonează alternativele bune.
+- motivele contextuale alese astăzi rămân active dacă programul este închis sau repornit;
+- contextul expiră automat la schimbarea zilei locale;
+- nu se adaugă setări permanente și nu este necesară migrarea bazei de date.
 
-1. Efect imediat și verificabil
+1. Efect imediat și recuperabil
 - „Prea lung pentru moment” mută următoarea alegere în categoria standard imediat mai scurtă: peste 120 → maximum 120 minute, 91–120 → maximum 90, 61–90 → maximum 60;
 - „Nu am chef de genul acesta acum” caută imediat alt gen sau altă atmosferă între candidații buni;
 - „Prea similar” preferă imediat alternativa bună cea mai diferită ca gen, teme și regizor;
-- „Nu acum” exclude exact titlul pe durata sesiunii.
+- „Nu acum” exclude exact titlul pe durata zilei curente.
 
-2. Fără contaminarea gustului
-- motivele sunt transmise direct motorului numai din acțiunile sesiunii curente;
+2. Context zilnic, nu gust permanent
+- motivele sunt reconstruite din feedbackul salvat în ziua locală curentă;
+- conversia UTC → fusul local evită pierderea feedbackului dat după miezul nopții în România;
+- acțiunile repetate identice sunt deduplicate;
 - ordonarea contextuală nu rescrie ratingul estimat sau profilul permanent;
 - Ctrl+Z elimină motivul din contextul activ și recalculează alegerea.
 
@@ -21,8 +23,8 @@ Obiectiv:
 - ratingurile, istoricul, outcomes, explicațiile și schema SQLite v9 nu sunt modificate.
 
 Versiune:
-- aplicație 4.5.0;
-- production-stack-v4.5.0-immediate-context;
-- personalization-v4.5.0-immediate-context;
+- aplicație 4.5.1;
+- production-stack-v4.5.1-daily-context;
+- personalization-v4.5.1-daily-context;
 - Watch Success v4 reason-scoped;
 - SQLite schema v9.

@@ -11,7 +11,7 @@ from .recommendation import row_to_movie
 from .util import clamp, cosine_sparse, json_loads
 from .watch_success import feedback_feature_vector
 
-PERSONALIZATION_V41_VERSION = "personalization-v4.5.0-immediate-context"
+PERSONALIZATION_V41_VERSION = "personalization-v4.5.1-daily-context"
 QUALITY_SETTING = "personalization_v41_quality"
 CONTEXTUAL_SESSION_KINDS = {"not_now", "too_long", "mood_mismatch", "too_similar"}
 
