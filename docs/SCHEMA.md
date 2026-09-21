@@ -1,6 +1,6 @@
 # Schema SQLite
 
-Versiunea curentă a schemei: **5**. Migrațiile canonice sunt definite în `cinecalendar/db.py`; `schema.sql` rămâne fotografia lizibilă a structurii.
+Versiunea curentă a schemei: **9**. Migrațiile canonice sunt definite în `cinecalendar/db.py`; `schema.sql` rămâne fotografia lizibilă a structurii.
 
 ## movies
 Identitatea și metadatele filmului: IMDb ID, identity key, titluri normalizate, an, tip, runtime, genuri, regizori, țări, overview, keywords, semantic vector, IMDb rating/voturi, poster, TMDb ID și sursă.
@@ -30,6 +30,15 @@ O rulare a motorului: context, număr de candidați/rezultate și versiunea moto
 ## recommendation_trust_audit
 Snapshot pentru fiecare expunere vizibilă V16: history/run ID, rang, versiune motor, `trusted/backfill/red_flag/bypassed`, trust score, gate score, supports, red flag, gap, ALS și rating public bayesian.
 
+## recommendation_outcomes
+Leagă expunerea concretă de alegere, pornirea/vizionarea confirmată și ratingul ulterior. Păstrează predicția, încrederea și eroarea absolută pentru evaluarea locală a calității.
+
+## recommendation_explanations
+Snapshotul explicației afișate la momentul recomandării: motiv personal, factori de scor, contribuții și motivul de respingere (`why_not`).
+
+## metadata_provenance
+Sursa și data ultimei actualizări pentru fiecare câmp de metadate al unui film.
+
 ## user_profile
 Profil derivat JSON, rebuildabil din ratinguri și feedback.
 
@@ -46,4 +55,4 @@ Setări JSON. Secretele și stările strict tranzitorii sunt excluse din backupu
 Persistență pentru evenimente custom/extinse.
 
 ## schema_migrations
-Lista versiunilor aplicate. Din 3.3, pașii v2-v5 sunt reconciliați idempotent și tranzacțional; înaintea unei schimbări necesare se creează `cinecalendar.pre_migration.bak`, iar integritatea este verificată cu `foreign_key_check` și `quick_check`.
+Lista versiunilor aplicate. Pașii v2-v9 sunt reconciliați idempotent și tranzacțional; înaintea unei schimbări necesare se creează `cinecalendar.pre_migration.bak`, iar integritatea este verificată cu `foreign_key_check` și `quick_check`.

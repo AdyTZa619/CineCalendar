@@ -411,6 +411,9 @@ class CineCalendarWindow(QMainWindow):
         try:
             _profile, receipt = apply_feedback_with_receipt(self.db,movie_id,kind)
             self._feedback_undo_stack.append(receipt)
+            if kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}:
+                # A failed database write must not make the title disappear from the UI.
+                self.session_skips.add(int(movie_id))
             self._refresh_feedback_undo_button()
             if kind in {"not_now","too_long","mood_mismatch","too_similar"}:
                 self.set_status("Feedback contextual salvat; nu modifică permanent gustul. Ctrl+Z îl anulează.")
@@ -441,7 +444,12 @@ class CineCalendarWindow(QMainWindow):
             self._feedback_undo_stack.pop()
             if undone.kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}:
                 skips = getattr(self, "session_skips", None)
-                if isinstance(skips, set):
+                still_skipped = any(
+                    int(item.movie_id) == int(undone.movie_id)
+                    and item.kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}
+                    for item in self._feedback_undo_stack
+                )
+                if isinstance(skips, set) and not still_skipped:
                     skips.discard(int(undone.movie_id))
             self._refresh_feedback_undo_button()
             self.set_status(f"Feedback anulat: {undone.label}.")

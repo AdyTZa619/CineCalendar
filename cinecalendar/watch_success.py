@@ -9,7 +9,7 @@ from .util import clamp, cosine_sparse
 from .watch_intent import WatchIntentLearner
 
 
-MODEL_VERSION = "watch-success-v3"
+MODEL_VERSION = "watch-success-v4-reason-scoped-feedback"
 
 # Watch Success is a funnel, not a bag of independent clicks. Opening Stremio only proves that
 # CineCalendar handed the title off to the app; it does NOT prove playback actually started.
@@ -36,6 +36,51 @@ _FEEDBACK_SIGNALS = {
     "mood_mismatch": (-0.26, 3.0, 0.40),
     "too_similar": (-0.45, 21.0, 0.70),
 }
+
+# Contextual answers describe *why this title does not fit now*, not a general dislike of every
+# attribute the movie happens to have. Keep each signal inside the feature family named by the
+# user. ``not_now`` is title/session-specific and is handled by the UI exclusion set; turning it
+# into a similarity vector would silently teach a dislike of the genre or director.
+_CONTEXTUAL_FEATURE_PREFIXES: dict[str, tuple[str, ...]] = {
+    "not_now": (),
+    "too_long": ("runtime:",),
+    "mood_mismatch": ("genre:", "combo:genre:", "theme:"),
+    "too_similar": (
+        "genre:",
+        "combo:genre:",
+        "theme:",
+        "director:",
+        "combo:director:",
+    ),
+}
+
+
+def feedback_feature_vector(kind: str, movie) -> dict[str, float]:
+    """Return only the movie features that the selected feedback reason actually describes."""
+    vector = feature_vector(movie)
+    prefixes = _CONTEXTUAL_FEATURE_PREFIXES.get(str(kind))
+    if prefixes is None:
+        return vector
+    if not prefixes:
+        return {}
+    return {
+        token: value
+        for token, value in vector.items()
+        if token.startswith(prefixes)
+    }
+
+
+def _accumulate_vector(target: dict[str, float], vector: dict[str, float], weight: float) -> bool:
+    if weight <= 0:
+        return False
+    added = False
+    for token, value in vector.items():
+        value = float(value)
+        if abs(value) < 0.03:
+            continue
+        target[token] = target.get(token, 0.0) + value * weight
+        added = True
+    return added
 
 _RECENT_RATING_SIGNALS = {
     10: 0.18,
@@ -187,7 +232,8 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
                 negative_weight += strength
 
         for row in feedback_rows:
-            cfg = _FEEDBACK_SIGNALS.get(str(row["intent_kind"] or ""))
+            kind = str(row["intent_kind"] or "")
+            cfg = _FEEDBACK_SIGNALS.get(kind)
             if not cfg:
                 continue
             signal, half_life, event_credit = cfg
@@ -195,13 +241,18 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
             strength = abs(signal) * decay
             if strength < 0.015:
                 continue
-            effective_events += event_credit * decay
             movie = row_to_movie(row)
+            vector = feedback_feature_vector(kind, movie)
+            # A plain "not now" hides the exact title for the current session, but it must neither
+            # unlock this model nor create a negative similarity prototype.
+            if not vector:
+                continue
+            effective_events += event_credit * decay
             if signal > 0:
-                self._accumulate(positive, movie, strength)
+                _accumulate_vector(positive, vector, strength)
                 positive_weight += strength
             else:
-                self._accumulate(negative, movie, strength)
+                _accumulate_vector(negative, vector, strength)
                 negative_weight += strength
 
         # Ratings remain only a weak bootstrap. They say what the user liked, not whether the

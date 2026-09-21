@@ -261,5 +261,5 @@ def test_release_sources_do_not_reintroduce_stale_packaging_or_docs():
     assert "--onefile" not in build
     assert "0.2.0" not in portable
     assert "updater declarat explicit ca dezactivat" not in implemented
-    assert "versiunea curentă a schemei: **5**" in schema
+    assert "versiunea curentă a schemei: **9**" in schema
     assert not (root / "releases" / "CineCalendar_LATEST.exe").exists()

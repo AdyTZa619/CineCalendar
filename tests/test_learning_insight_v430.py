@@ -340,7 +340,7 @@ def test_production_stack_and_ui_include_v43_layers():
     library = (root / "cinecalendar" / "library_ui.py").read_text(encoding="utf-8")
 
     assert "learning_insight_engine_class(personalized_cls)" in production
-    assert "production-stack-v4.4.0-feedback-protection" in production
+    assert "production-stack-v4.4.2-reason-scoped-feedback" in production
     assert "install_learning_insight_ui_v43(window_cls)" in composition
     assert "Față de alegerea #1:" in premium
     assert "Comparație pe versiuni de motor" in library
