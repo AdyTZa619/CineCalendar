@@ -8,6 +8,7 @@ from .logging_setup import setup_logging
 from .production_engine import build_production_recommender, production_stack_status
 from .quality_manager_v37 import RecommendationQualityManagerV37
 from .recommender_v16 import FastRecommendationEngineV16
+from .temp_workspaces import cleanup_abandoned_workspaces
 from .util import AppPaths
 
 
@@ -15,6 +16,15 @@ class CineCalendarService:
     def __init__(self, paths: AppPaths | None = None):
         self.paths = paths or AppPaths.portable()
         self.log = setup_logging(self.paths.logs)
+        temp_cleanup = cleanup_abandoned_workspaces()
+        if temp_cleanup["removed"] or temp_cleanup["failed"]:
+            self.log.info(
+                "Backtest temp cleanup: removed=%s active=%s recent_legacy=%s failed=%s",
+                temp_cleanup["removed"],
+                temp_cleanup["active"],
+                temp_cleanup["recent_legacy"],
+                temp_cleanup["failed"],
+            )
         self.db = Database(self.paths.data / "cinecalendar.db")
         self._defaults()
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
