@@ -10,7 +10,7 @@ from .personalization_v41 import PERSONALIZATION_V41_VERSION, personalization_en
 from .learning_insight_v43 import LEARNING_INSIGHT_VERSION, learning_insight_engine_class
 
 
-PRODUCTION_STACK_VERSION = "production-stack-v4.5.1-daily-context"
+PRODUCTION_STACK_VERSION = "production-stack-v4.6.0-personal-hybrid"
 
 
 def production_engine_class(base_cls: type) -> type:
@@ -60,6 +60,11 @@ def production_stack_status(engine) -> dict:
         "calendar_class": type(getattr(engine, "calendar", None)).__name__,
         "adaptive_class": type(getattr(engine, "adaptive", None)).__name__,
         "watch_intent_class": type(getattr(engine, "watch_intent", None)).__name__,
+        "hybrid_calibration_version": str(
+            getattr(engine, "HYBRID_CALIBRATION_VERSION", "global-baseline-70-30")
+        ),
+        "als_weight": round(float(getattr(engine, "ALS_WEIGHT", .70)), 2),
+        "content_weight": round(float(getattr(engine, "CONTENT_WEIGHT", .30)), 2),
         "personalization_version": str(getattr(engine, "PERSONALIZATION_V41_VERSION", "")),
         "personalization_status": (
             engine.personalization_status()

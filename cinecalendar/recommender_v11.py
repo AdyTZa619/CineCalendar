@@ -23,12 +23,23 @@ DIVERSITY_SHORTLIST_THRESHOLD = 20
 class FastRecommendationEngineV11(FastRecommendationEngineV10):
     """Hybrid recommender with globally calibrated collaborative filtering as primary ranker."""
 
+    # Class attributes allow a per-user, locally backtested production subclass to tune the
+    # collaborative/content balance without forking the ranking implementation.
+    ALS_WEIGHT = ALS_WEIGHT
+    CONTENT_WEIGHT = CONTENT_WEIGHT
+
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
         self.collaborative = CollaborativeALSProvider(db)
 
     def collaborative_status(self) -> dict:
         return self.collaborative.status()
+
+    def _hybrid_blend(self, als_score: float, content_score: float) -> tuple[float, float, float]:
+        """Blend the two independent signals using this engine's validated personal balance."""
+        als_weight = clamp(float(self.ALS_WEIGHT))
+        content_weight = 1.0 - als_weight
+        return clamp(als_weight * float(als_score) + content_weight * float(content_score)), als_weight, content_weight
 
     def _state_token(self) -> tuple:
         base = super()._state_token()
@@ -203,19 +214,19 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
                 ):
                     continue
                 old_final = float(score.final)
-                score.final = clamp(ALS_WEIGHT * als_score + CONTENT_WEIGHT * old_final)
+                score.final, als_weight, content_weight = self._hybrid_blend(als_score, old_final)
                 score.contributions.insert(
                     0,
                     (
                         "ALS colaborativ MovieLens",
-                        ALS_WEIGHT * als_score * 100.0,
+                        als_weight * als_score * 100.0,
                         self._collaborative_reason(mapped_ratings, als_score),
                     ),
                 )
                 score.contributions.append(
                     (
                         "Motor personal de conținut",
-                        CONTENT_WEIGHT * old_final * 100.0,
+                        content_weight * old_final * 100.0,
                         "Genuri, teme, regizori, calitate, noutate și context; semnal independent de verificare.",
                     )
                 )

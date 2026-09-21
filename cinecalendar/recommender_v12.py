@@ -5,12 +5,7 @@ from datetime import date
 from .models import Recommendation
 from .profile import get_profile
 from .recommendation import row_to_movie
-from .recommender_v11 import (
-    ALS_WEIGHT,
-    CONTENT_WEIGHT,
-    DIVERSITY_SHORTLIST_THRESHOLD,
-    FastRecommendationEngineV11,
-)
+from .recommender_v11 import DIVERSITY_SHORTLIST_THRESHOLD, FastRecommendationEngineV11
 from .romanian_cinema import RomanianCinemaProvider
 from .util import clamp, json_loads, normalize_text
 
@@ -158,19 +153,19 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
                 ):
                     continue
                 old_final = float(score.final)
-                score.final = clamp(ALS_WEIGHT * als_score + CONTENT_WEIGHT * old_final)
+                score.final, als_weight, content_weight = self._hybrid_blend(als_score, old_final)
                 score.contributions.insert(
                     0,
                     (
                         "ALS colaborativ MovieLens",
-                        ALS_WEIGHT * als_score * 100.0,
+                        als_weight * als_score * 100.0,
                         self._collaborative_reason(mapped_ratings, als_score),
                     ),
                 )
                 score.contributions.append(
                     (
                         "Motor personal de conținut",
-                        CONTENT_WEIGHT * old_final * 100.0,
+                        content_weight * old_final * 100.0,
                         "Genuri, teme, regizori, calitate, noutate și context; verificare independentă a potrivirii.",
                     )
                 )

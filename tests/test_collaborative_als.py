@@ -4,11 +4,12 @@ import inspect
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from implicit.cpu.als import AlternatingLeastSquares
 
 from cinecalendar.collaborative_als import CollaborativeALSProvider, MODEL_MANIFEST_URL, _rating_confidence
 from cinecalendar.db import Database
-from cinecalendar.recommender_v11 import ALS_WEIGHT, FastRecommendationEngineV11
+from cinecalendar.recommender_v11 import ALS_WEIGHT, CONTENT_WEIGHT, FastRecommendationEngineV11
 from cinecalendar.util import identity_key, utcnow_iso
 
 
@@ -29,7 +30,12 @@ def test_established_als_remains_primary_with_independent_content_check():
     assert ALS_WEIGHT >= 0.65
     source = inspect.getsource(FastRecommendationEngineV11.recommend)
     assert "collaborative.score_candidates" in source
-    assert "ALS_WEIGHT * als_score" in source
+    assert "self._hybrid_blend(als_score, old_final)" in source
+    baseline = object.__new__(FastRecommendationEngineV11)
+    blended, als_weight, content_weight = baseline._hybrid_blend(.9, .5)
+    assert als_weight == ALS_WEIGHT
+    assert content_weight == pytest.approx(CONTENT_WEIGHT)
+    assert blended == pytest.approx(ALS_WEIGHT * .9 + CONTENT_WEIGHT * .5)
     assert "_score_one" in source
     assert "_mapped_candidate_is_trustworthy" in source
     assert "_catalog_quality_is_trustworthy" in source

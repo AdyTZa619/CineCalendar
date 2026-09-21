@@ -6,7 +6,6 @@ from datetime import date
 from .models import Recommendation
 from .profile import get_profile
 from .recommendation import row_to_movie
-from .recommender_v11 import ALS_WEIGHT, CONTENT_WEIGHT
 from .util import clamp, json_loads
 
 
@@ -206,20 +205,22 @@ def rank_watchlist(
             ):
                 continue
             old_final = float(score.final)
-            score.final = clamp(ALS_WEIGHT * als_score + CONTENT_WEIGHT * old_final)
+            score.final, als_weight, content_weight = recommender._hybrid_blend(
+                als_score, old_final
+            )
             reason = recommender._collaborative_reason(mapped_ratings, als_score)
             score.contributions.insert(
                 0,
                 (
                     "ALS colaborativ MovieLens",
-                    ALS_WEIGHT * als_score * 100.0,
+                    als_weight * als_score * 100.0,
                     reason,
                 ),
             )
             score.contributions.append(
                 (
                     "Motor personal de conținut",
-                    CONTENT_WEIGHT * old_final * 100.0,
+                    content_weight * old_final * 100.0,
                     "Genuri, teme, regizori, calitate, noutate și context; "
                     "semnal independent de verificare.",
                 )

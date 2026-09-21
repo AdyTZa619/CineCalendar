@@ -1,30 +1,31 @@
-CineCalendar 4.5.1 – Contextul zilei nu se pierde la repornire
+CineCalendar 4.6.0 – Pondere personală ALS/conținut
 
 Obiectiv:
-- motivele contextuale alese astăzi rămân active dacă programul este închis sau repornit;
-- contextul expiră automat la schimbarea zilei locale;
-- nu se adaugă setări permanente și nu este necesară migrarea bazei de date.
+- recomandările să fie optimizate pentru istoricul utilizatorului, nu pentru o pondere universală;
+- orice schimbare a motorului să fie câștigată prin backtest local, nu presupusă;
+- baseline-ul sigur să rămână activ dacă datele nu dovedesc un beneficiu.
 
-1. Efect imediat și recuperabil
-- „Prea lung pentru moment” mută următoarea alegere în categoria standard imediat mai scurtă: peste 120 → maximum 120 minute, 91–120 → maximum 90, 61–90 → maximum 60;
-- „Nu am chef de genul acesta acum” caută imediat alt gen sau altă atmosferă între candidații buni;
-- „Prea similar” preferă imediat alternativa bună cea mai diferită ca gen, teme și regizor;
-- „Nu acum” exclude exact titlul pe durata zilei curente.
+1. Calibrare personală reală
+- raportul consacrat 70% ALS / 30% profil de conținut rămâne baseline;
+- 50/50, 60/40 și 80/20 sunt challengeri, nu setări arbitrare;
+- fiecare variantă este evaluată pe ferestre temporale ne-suprapuse din ratingurile personale;
+- ratingurile viitoare sunt eliminate complet din copia de training pentru fiecare fereastră.
 
-2. Context zilnic, nu gust permanent
-- motivele sunt reconstruite din feedbackul salvat în ziua locală curentă;
-- conversia UTC → fusul local evită pierderea feedbackului dat după miezul nopții în România;
-- acțiunile repetate identice sunt deduplicate;
-- ordonarea contextuală nu rescrie ratingul estimat sau profilul permanent;
-- Ctrl+Z elimină motivul din contextul activ și recalculează alegerea.
+2. Protecție contra regresiilor
+- o pondere nouă trebuie să câștige stabil pe majoritatea ferestrelor;
+- recall-ul filmelor evaluate 8+/9+ nu poate regresa material;
+- NDCG și expunerea filmelor evaluate slab au garduri stricte;
+- fără minimum 170 de ratinguri sau fără un câștig măsurat, programul păstrează 70/30;
+- ultimul raport personal validat rămâne activ cât timp recalibrarea rulează.
 
-3. Compatibilitate
-- filtrul manual de durată și dispoziție rămâne disponibil;
-- ratingurile, istoricul, outcomes, explicațiile și schema SQLite v9 nu sunt modificate.
+3. Aplicare consecventă
+- aceeași pondere este folosită în recomandarea zilei, recomandările generale, cinema românesc și Smart Watchlist;
+- evaluarea rulează local, în fundal, iar ratingurile nu sunt încărcate pe un serviciu extern;
+- verdictul devine activ la o pornire ulterioară, fără schimbarea motorului în mijlocul sesiunii;
+- schema SQLite rămâne v9 și nu necesită migrare.
 
 Versiune:
-- aplicație 4.5.1;
-- production-stack-v4.5.1-daily-context;
-- personalization-v4.5.1-daily-context;
-- Watch Success v4 reason-scoped;
+- aplicație 4.6.0;
+- production-stack-v4.6.0-personal-hybrid;
+- quality-manager-v4.6.0-personal-hybrid;
 - SQLite schema v9.
