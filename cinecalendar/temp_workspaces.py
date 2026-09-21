@@ -16,7 +16,7 @@ MANAGED_PREFIXES = (
     "cinecalendar-rolling37-",
     "cinecalendar-v431-bench-",
 )
-LEGACY_GRACE_SECONDS = 2 * 60 * 60
+LEGACY_GRACE_SECONDS = 30 * 60
 MAX_OWNED_AGE_SECONDS = 24 * 60 * 60
 
 
@@ -37,7 +37,17 @@ def _pid_is_running(pid: int) -> bool:
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             process_query_limited_information = 0x1000
             still_active = 259
-            handle = kernel32.OpenProcess(
+            open_process = kernel32.OpenProcess
+            open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            open_process.restype = wintypes.HANDLE
+            get_exit_code = kernel32.GetExitCodeProcess
+            get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            get_exit_code.restype = wintypes.BOOL
+            close_handle = kernel32.CloseHandle
+            close_handle.argtypes = [wintypes.HANDLE]
+            close_handle.restype = wintypes.BOOL
+
+            handle = open_process(
                 process_query_limited_information,
                 False,
                 wintypes.DWORD(pid),
@@ -47,11 +57,11 @@ def _pid_is_running(pid: int) -> bool:
                 return ctypes.get_last_error() == 5
             try:
                 exit_code = wintypes.DWORD()
-                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                if not get_exit_code(handle, ctypes.byref(exit_code)):
                     return True
                 return int(exit_code.value) == still_active
             finally:
-                kernel32.CloseHandle(handle)
+                close_handle(handle)
         except Exception:
             # Failure to prove that another process is dead must never cause its workspace to be
             # deleted. A later startup can retry the cleanup.
