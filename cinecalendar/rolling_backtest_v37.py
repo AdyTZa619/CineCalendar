@@ -168,36 +168,55 @@ def run_window_backtest(
         _sqlite_backup(source_path, temp_path)
         test_db = Database(temp_path)
         _remove_future(test_db, window)
-        try:
-            eval_date = date.fromisoformat(window.cutoff_date) if window.cutoff_date else date.today()
-        except ValueError:
-            eval_date = date.today()
-
-        # Historical evaluation must not give either side access to films known to release after
-        # the simulated day. Apply the same guard used by 3.7 production to baseline and challenger.
-        evaluated_cls = availability_engine_class(engine_cls)
-        engine = _build_engine(evaluated_cls, test_db)
-        _wait_for_als(engine.collaborative, als_timeout)
-        candidate_imdb = _candidate_imdb_ids(engine, eval_date, test_db, candidate_limit)
-        engine.adaptive.status()
-
-        final = engine.recommend(
-            when=eval_date,
-            count=max(10, int(final_limit)),
-            record=False,
-            candidate_limit=max(100, int(candidate_limit)),
+        return _evaluate_window_db(
+            test_db,
+            window,
+            engine_cls=engine_cls,
+            candidate_limit=candidate_limit,
+            final_limit=final_limit,
+            als_timeout=als_timeout,
         )
-        final_imdb = [str(rec.movie.imdb_id or "") for rec in final if rec.movie.imdb_id]
-        top3 = engine.recommend(
-            when=eval_date,
-            count=3,
-            record=False,
-            candidate_limit=max(100, int(candidate_limit)),
-        )
-        top3_imdb = [str(rec.movie.imdb_id or "") for rec in top3 if rec.movie.imdb_id]
 
-        holdout = list(window.holdout)
-        return {
+
+def _evaluate_window_db(
+    test_db: Database,
+    window: TemporalWindowV37,
+    *,
+    engine_cls,
+    candidate_limit: int,
+    final_limit: int,
+    als_timeout: float,
+) -> dict:
+    try:
+        eval_date = date.fromisoformat(window.cutoff_date) if window.cutoff_date else date.today()
+    except ValueError:
+        eval_date = date.today()
+
+    # Historical evaluation must not give either side access to films known to release after
+    # the simulated day. Apply the same guard used by 3.7 production to every compared engine.
+    evaluated_cls = availability_engine_class(engine_cls)
+    engine = _build_engine(evaluated_cls, test_db)
+    _wait_for_als(engine.collaborative, als_timeout)
+    candidate_imdb = _candidate_imdb_ids(engine, eval_date, test_db, candidate_limit)
+    engine.adaptive.status()
+
+    final = engine.recommend(
+        when=eval_date,
+        count=max(10, int(final_limit)),
+        record=False,
+        candidate_limit=max(100, int(candidate_limit)),
+    )
+    final_imdb = [str(rec.movie.imdb_id or "") for rec in final if rec.movie.imdb_id]
+    top3 = engine.recommend(
+        when=eval_date,
+        count=3,
+        record=False,
+        candidate_limit=max(100, int(candidate_limit)),
+    )
+    top3_imdb = [str(rec.movie.imdb_id or "") for rec in top3 if rec.movie.imdb_id]
+
+    holdout = list(window.holdout)
+    return {
             "backtest_version": BACKTEST_VERSION,
             "engine": str(getattr(engine_cls, "__name__", "engine")),
             "evaluated_engine": str(getattr(evaluated_cls, "__name__", "engine")),
@@ -230,6 +249,45 @@ def run_window_backtest(
             "candidate_generation": engine.candidate_generation_status(),
             "adaptive": engine.adaptive.status(),
         }
+
+
+def run_window_backtest_group(
+    db_path: str | Path,
+    window: TemporalWindowV37,
+    *,
+    engine_classes: list[type] | tuple[type, ...],
+    candidate_limit: int = 2200,
+    final_limit: int = 100,
+    als_timeout: float = 180.0,
+) -> list[dict]:
+    """Evaluate all formulae on one isolated historical SQLite snapshot.
+
+    The previous implementation copied the full catalog once per formula.  One snapshot per
+    temporal window preserves the exact same hidden-future boundary while cutting temporary
+    database writes by 75% for the four-way 4.6/4.7 comparison.
+    """
+    classes = list(engine_classes)
+    if not classes:
+        return []
+    source_path = Path(db_path).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(source_path)
+    with managed_temp_workspace("cinecalendar-rolling37-") as tmp:
+        temp_path = tmp / "cinecalendar.db"
+        _sqlite_backup(source_path, temp_path)
+        test_db = Database(temp_path)
+        _remove_future(test_db, window)
+        return [
+            _evaluate_window_db(
+                test_db,
+                window,
+                engine_cls=engine_cls,
+                candidate_limit=candidate_limit,
+                final_limit=final_limit,
+                als_timeout=als_timeout,
+            )
+            for engine_cls in classes
+        ]
 
 
 def strict_rolling_verdict(folds: list[dict]) -> dict:
@@ -311,9 +369,8 @@ def compare_on_windows(
     if len(baselines) != len(windows):
         raise ValueError("baseline report/window count mismatch")
 
-    folds: list[dict] = []
-    for window, baseline in zip(windows, baselines):
-        challenger = run_window_backtest(
+    challenger_reports = [
+        run_window_backtest(
             db_path,
             window,
             engine_cls=challenger_cls,
@@ -321,6 +378,29 @@ def compare_on_windows(
             final_limit=final_limit,
             als_timeout=als_timeout,
         )
+        for window in windows
+    ]
+    return comparison_from_reports(
+        windows,
+        baseline_cls=baseline_cls,
+        challenger_cls=challenger_cls,
+        baseline_reports=baselines,
+        challenger_reports=challenger_reports,
+    )
+
+
+def comparison_from_reports(
+    windows: list[TemporalWindowV37],
+    *,
+    baseline_cls,
+    challenger_cls,
+    baseline_reports: list[dict],
+    challenger_reports: list[dict],
+) -> dict:
+    if len(baseline_reports) != len(windows) or len(challenger_reports) != len(windows):
+        raise ValueError("report/window count mismatch")
+    folds: list[dict] = []
+    for window, baseline, challenger in zip(windows, baseline_reports, challenger_reports):
         verdict = quality_verdict(baseline, challenger, min_gain=0.0)
         folds.append(
             {

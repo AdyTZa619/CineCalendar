@@ -9,7 +9,7 @@ from .accuracy_engine_v37 import allowed_local_shares, calibrated_accuracy_engin
 from .quality_manager_v36 import RecommendationQualityManagerV36
 from .recommender_v16 import FastRecommendationEngineV16
 from .recommender_v17 import FastRecommendationEngineV17
-from .rolling_backtest_v37 import compare_on_windows, rolling_windows, run_window_backtest
+from .rolling_backtest_v37 import comparison_from_reports, rolling_windows, run_window_backtest_group
 from .util import utcnow_iso
 
 
@@ -299,31 +299,40 @@ class RecommendationQualityManagerV37:
                 )
 
                 try:
-                    baseline_reports = [
-                        run_window_backtest(
+                    shares = list(allowed_local_shares())
+                    challenger_classes = [
+                        calibrated_accuracy_engine_class(baseline_cls, share)
+                        for share in shares
+                    ]
+                    reports_by_engine: list[list[dict]] = [
+                        [] for _engine in [baseline_cls, *challenger_classes]
+                    ]
+                    for window in windows:
+                        grouped = run_window_backtest_group(
                             self.db.path,
                             window,
-                            engine_cls=baseline_cls,
+                            engine_classes=[baseline_cls, *challenger_classes],
                             candidate_limit=candidate_limit,
                             final_limit=final_limit,
                             als_timeout=als_timeout,
                         )
-                        for window in windows
-                    ]
+                        for bucket, report in zip(reports_by_engine, grouped):
+                            bucket.append(report)
+                    baseline_reports = reports_by_engine[0]
 
                     candidate_results: list[dict] = []
                     selected: dict | None = None
-                    for share in allowed_local_shares():
-                        challenger_cls = calibrated_accuracy_engine_class(baseline_cls, share)
-                        comparison = compare_on_windows(
-                            self.db.path,
+                    for share, challenger_cls, challenger_reports in zip(
+                        shares,
+                        challenger_classes,
+                        reports_by_engine[1:],
+                    ):
+                        comparison = comparison_from_reports(
                             windows,
                             baseline_cls=baseline_cls,
                             challenger_cls=challenger_cls,
-                            candidate_limit=candidate_limit,
-                            final_limit=final_limit,
-                            als_timeout=als_timeout,
                             baseline_reports=baseline_reports,
+                            challenger_reports=challenger_reports,
                         )
                         aggregate = dict(comparison.get("aggregate") or {})
                         item = {

@@ -18,6 +18,9 @@
 - în 3.7, challengerul este construit peste exact baseline-ul V16/V17 aprobat pentru utilizator, iar procentul lane-ului local este calibrat dintre 8%, 14% și 20%;
 - în 4.6, raportul ALS/conținut nu mai este identic pentru toți utilizatorii: 50/50, 60/40 și 80/20 concurează cu baseline-ul 70/30 pe istoricul local;
 - o pondere 4.6 este activată numai dacă trece ferestre temporale ne-suprapuse, recall 8+/9+, NDCG și protecția contra recomandărilor slab evaluate;
+- în 4.7, feedbackul contextual nu invalidează verdictul global, iar un nou backtest este permis numai după un lot relevant de ratinguri noi/modificate sau după schimbarea motorului de clasare;
+- formulele 70/30, 50/50, 60/40 și 80/20 au identități telemetry distincte; rezultatele reale nu mai sunt amestecate sub aceeași etichetă;
+- Live Recommendation Guard 4.7 validează formula activă pe alegeri, vizionări, rata ratingurilor ≥8 și MAE și revine la baseline numai dacă minimum două semnale independente indică regresie;
 - evaluarea 3.7 folosește ferestre temporale ne-suprapuse și elimină din training atât holdout-ul curent, cât și toate ratingurile ulterioare;
 - Availability Guard 3.7 elimină titlurile cu an sau dată de lansare cunoscută după data recomandării, fără să schimbe ordinea filmelor eligibile;
 - Context Intelligence păstrează acum exact motorul aprobat, inclusiv V18/V19, în loc să îl reducă la o clasă V16/V17.
@@ -28,6 +31,7 @@
 - fiecare recomandare vizibilă primește un `exposure_history_id` care este transportat până la acțiunea utilizatorului;
 - două expuneri ale aceluiași film în aceeași zi rămân două funnel-uri distincte;
 - Taste Hub afișează diagnosticul motorului și lanțul de calibrări personale fără a permite UI-ului să forțeze un challenger nevalidat.
+- pagina Recomandări afișează formula activă, progresul validării live, rollback-ul și starea recalibrării economisite;
 - feedbackul 4.4 separă explicit „Ascunde doar filmul” de „Nu-mi recomanda similare”;
 - „Ascunde doar filmul” exclude titlul exact fără să antreneze profilul, ALS, Adaptive Personal sau Watch Success împotriva caracteristicilor lui;
 - feedbackul aplicat în sesiunea curentă poate fi anulat exact, în ordine inversă, din bara laterală sau cu `Ctrl+Z`; Watchlist-ul derivat este refăcut tranzacțional.

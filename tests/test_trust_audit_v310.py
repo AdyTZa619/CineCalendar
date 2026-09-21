@@ -5,7 +5,10 @@ import json
 
 from cinecalendar.db import Database
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
-from cinecalendar.recommender_v16 import ENGINE_VERSION, FastRecommendationEngineV16
+from cinecalendar.recommender_v16 import (
+    FastRecommendationEngineV16,
+    recommendation_engine_identity,
+)
 from cinecalendar.trust_audit import build_trust_outcome_audit
 from cinecalendar.util import utcnow_iso
 
@@ -135,13 +138,14 @@ def test_v16_recording_uses_real_engine_version_and_persists_trust_snapshot(tmp_
             """SELECT rank_position,trust_status,trust_score,support_count,engine_version
                FROM recommendation_trust_audit ORDER BY rank_position"""
         ).fetchall()
-    assert run["engine_version"] == ENGINE_VERSION
+    identity = recommendation_engine_identity(engine)
+    assert run["engine_version"] == identity
     assert run["candidate_count"] == 24
     assert run["result_count"] == 2
     assert [row["trust_status"] for row in rows] == ["trusted", "backfill"]
     assert [row["rank_position"] for row in rows] == [1, 2]
     assert rows[0]["support_count"] == 3
-    assert rows[0]["engine_version"] == ENGINE_VERSION
+    assert rows[0]["engine_version"] == identity
 
 
 def test_trust_audit_correlates_gate_status_with_real_watch_outcomes(tmp_path):
@@ -170,7 +174,7 @@ def test_trust_audit_correlates_gate_status_with_real_watch_outcomes(tmp_path):
 
     assert report["available"] is True
     assert report["recommendations"] == 2
-    assert report["engine_versions"] == {ENGINE_VERSION: 2}
+    assert report["engine_versions"] == {recommendation_engine_identity(engine): 2}
     assert report["by_status"]["trusted"]["confirmed_starts"] == 1
     assert report["by_status"]["trusted"]["watched"] == 1
     assert report["by_status"]["trusted"]["watch_rate"] == 1.0

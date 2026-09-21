@@ -40,6 +40,15 @@ Evaluarea 3.7 folosește ferestre de holdout ne-suprapuse. Pentru o fereastră i
 
 În 4.6, aceeași disciplină se aplică ponderii dintre colaborarea MovieLens și profilul personal de conținut. O combinație nouă devine activă doar după minimum 170 de ratinguri, câștig stabil pe ferestre temporale independente și lipsa regresiilor materiale la filmele de 8+/9+ sau la expunerea celor evaluate slab. Verdictul se aplică la pornirea următoare; recomandarea curentă nu așteaptă backtestul.
 
+În 4.7, verdictul nu mai este invalidat de feedback contextual precum „Nu acum”. După primul
+backtest, recalibrarea așteaptă un lot relevant de ratinguri noi sau modificate (1% din bibliotecă,
+cu minimum 12 și maximum 40), iar ultima formulă validată rămâne activă. Fiecare formulă are o
+identitate separată în outcome telemetry. După activare, o gardă live compară alegerile,
+vizionările, ratingurile de minimum 8 și eroarea estimării cu referința anterioară. Rollback-ul la
+motorul sigur cere minimum două regresii independente și suficient eșantion; un singur rezultat
+slab nu poate retrage formula. Cele patru formule împart aceeași copie SQLite pentru fiecare
+fereastră temporală, reducând numărul copiilor complete de la patru la una per fereastră.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3
@@ -99,7 +108,7 @@ Pentru audit local:
 python scripts/audit_watch_success.py "C:\cale\CineCalendarData\data\cinecalendar.db"
 ```
 
-Pragurile de recomandare nu sunt auto-reglate din câteva clickuri. Calibrarea motorului se face numai cu suficient istoric și cu backtesturi temporale locale.
+Pragurile de recomandare nu sunt auto-reglate din câteva clickuri. Calibrarea motorului se face numai cu suficient istoric și cu backtesturi temporale locale, iar protecția live cere două semnale independente înainte de rollback.
 
 ## Limitări
 

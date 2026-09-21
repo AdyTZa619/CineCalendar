@@ -604,12 +604,72 @@ class PremiumDecisionWindow(DecisionWindow):
         self._clear_layout(self.browse_content)
         if not recs:
             x=QLabel("Nu am găsit recomandări eligibile."); x.setObjectName("Muted"); self.browse_content.addWidget(x); return
+        self.browse_content.addWidget(self.recommendation_protection_card())
         intro=QFrame(); intro.setObjectName("PremiumCard"); il=QHBoxLayout(intro); il.setContentsMargins(18,14,18,14)
         txt=QLabel("Scorul personal estimat este principalul criteriu. IMDb, noutatea și perioada curentă sunt filtre secundare."); txt.setObjectName("Muted"); txt.setWordWrap(True); il.addWidget(txt,1)
         self.browse_content.addWidget(intro)
         grid=QGridLayout(); grid.setHorizontalSpacing(14); grid.setVerticalSpacing(14)
         for i,rec in enumerate(recs): grid.addWidget(self.compact_recommendation_card(rec,i+1),i//2,i%2)
         wrap=QFrame(); wrap.setLayout(grid); self.browse_content.addWidget(wrap); self.browse_content.addStretch(1)
+
+    def recommendation_protection_card(self):
+        status = self.s.quality_manager.status()
+        live = status.get("live_guard") or {}
+        policy = status.get("recalibration_policy") or {}
+        stack = getattr(self.s, "production_stack", {}) or {}
+        als = float(stack.get("als_weight", .70) or .70)
+        content_weight = float(stack.get("content_weight", 1.0 - als) or (1.0 - als))
+        live_state = str(live.get("status") or "baseline")
+
+        box=QFrame(); box.setObjectName("PremiumCard")
+        layout=QVBoxLayout(box); layout.setContentsMargins(20,17,20,17); layout.setSpacing(8)
+        top=QHBoxLayout()
+        heading=QLabel("PROTECȚIA RECOMANDĂRILOR"); heading.setObjectName("Kicker"); top.addWidget(heading)
+        top.addStretch(1)
+        formula=QLabel(f"{als*100:.0f}% ALS / {content_weight*100:.0f}% conținut")
+        formula.setObjectName("Score"); top.addWidget(formula); layout.addLayout(top)
+
+        if live_state == "rolled_back":
+            title="Revenire automată activă"
+            detail="Formula personală a regresat pe rezultate reale; lista folosește din nou motorul sigur."
+        elif live_state == "protected":
+            title="Formula personală este confirmată"
+            detail="Alegerile, vizionările și ratingurile tale reale nu indică o regresie."
+        elif live_state == "collecting":
+            title="Formula personală este verificată în utilizare"
+            detail="Programul strânge rezultate reale; nu retrage formula pe baza câtorva cazuri izolate."
+        else:
+            title="Motor sigur activ"
+            detail="70/30 rămâne activ până când istoricul tău dovedește că alt raport este mai bun."
+        label=QLabel(title); label.setObjectName("BodyStrong"); layout.addWidget(label)
+        note=QLabel(detail); note.setObjectName("Muted"); note.setWordWrap(True); layout.addWidget(note)
+
+        if live_state in {"collecting", "protected"}:
+            active=live.get("active") or {}
+            comparison=live.get("comparison") or {}
+            rated=int(active.get("rated",0) or 0)
+            minimum=int(comparison.get("minimum_rated_each",20) or 20)
+            progress=QProgressBar(); progress.setRange(0,max(1,minimum)); progress.setValue(min(rated,minimum))
+            progress.setFormat(f"Rezultate cu rating: {rated}/{minimum} minim")
+            progress.setTextVisible(True); progress.setFixedHeight(18); layout.addWidget(progress)
+
+        changed=int(policy.get("changed_ratings",0) or 0)
+        required=int(policy.get("required_ratings",0) or 0)
+        policy_state=str(policy.get("state") or "")
+        calibration_state=str(status.get("status") or "")
+        if calibration_state == "running":
+            step=int(status.get("progress_step",0) or 0); total=int(status.get("progress_total",0) or 0)
+            stage=str(status.get("progress_label") or "Calibrez motorul")
+            schedule=f"Calibrare în curs: {stage} • {step}/{total} etape terminate."
+        elif policy_state == "deferred":
+            schedule=f"Backtest economisit: {changed}/{required} ratinguri noi sau modificate; feedbackul temporar nu îl repornește."
+        elif policy_state in {"first_calibration","ranking_changed","ready"}:
+            schedule="Calibrarea personală este pregătită sau rulează în fundal; motorul validat rămâne activ până la verdict."
+        else:
+            schedule="Calibrarea este la zi; deschiderea programului nu repetă backtestul."
+        schedule_label=QLabel(schedule); schedule_label.setObjectName("Muted")
+        schedule_label.setWordWrap(True); layout.addWidget(schedule_label)
+        return box
 
     def compact_recommendation_card(self,rec:Recommendation,index:int):
         m,s=rec.movie,rec.score
