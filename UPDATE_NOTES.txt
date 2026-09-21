@@ -1,31 +1,38 @@
-CineCalendar 4.6.0 – Pondere personală ALS/conținut
+CineCalendar 4.7.0 – Recomandări protejate după rezultate reale
 
 Obiectiv:
-- recomandările să fie optimizate pentru istoricul utilizatorului, nu pentru o pondere universală;
-- orice schimbare a motorului să fie câștigată prin backtest local, nu presupusă;
-- baseline-ul sigur să rămână activ dacă datele nu dovedesc un beneficiu.
+- backtestul costisitor să nu se repete după orice feedback sau la fiecare pornire;
+- fiecare formulă ALS/conținut să poată fi măsurată separat în utilizarea reală;
+- o formulă care regresează după activare să fie retrasă automat, fără reacții la cazuri izolate.
 
-1. Calibrare personală reală
-- raportul consacrat 70% ALS / 30% profil de conținut rămâne baseline;
-- 50/50, 60/40 și 80/20 sunt challengeri, nu setări arbitrare;
-- fiecare variantă este evaluată pe ferestre temporale ne-suprapuse din ratingurile personale;
-- ratingurile viitoare sunt eliminate complet din copia de training pentru fiecare fereastră.
+1. Recalibrare economică
+- feedbackul contextual precum „Nu acum”, „Prea lung” sau „Prea similar” nu mai invalidează calibrarea globală;
+- după primul verdict, ratingurile noi/modificate sunt acumulate până la 1% din bibliotecă, cu prag minim 12 și maxim 40;
+- cele patru formule folosesc o singură copie SQLite per fereastră, reducând cu 75% copiile temporare ale catalogului pentru această comparație;
+- schimbarea reală a motorului de clasare forțează în continuare reevaluarea;
+- ultima formulă validată rămâne activă cât timp schimbările sunt insuficiente sau recalibrarea rulează;
+- Taste Hub și Recomandări afișează starea și progresul evaluării.
 
-2. Protecție contra regresiilor
-- o pondere nouă trebuie să câștige stabil pe majoritatea ferestrelor;
-- recall-ul filmelor evaluate 8+/9+ nu poate regresa material;
-- NDCG și expunerea filmelor evaluate slab au garduri stricte;
-- fără minimum 170 de ratinguri sau fără un câștig măsurat, programul păstrează 70/30;
-- ultimul raport personal validat rămâne activ cât timp recalibrarea rulează.
+2. Validare live și rollback
+- 70/30, 50/50, 60/40 și 80/20 au identități telemetry distincte în istoricul recomandărilor;
+- formula activă este verificată pe alegeri, vizionări, ratinguri ulterioare de minimum 8 și eroarea dintre nota estimată și cea reală;
+- sunt necesare minimum 20 de rezultate cu rating în fiecare cohortă;
+- rollback-ul cere minimum două regresii independente; un singur film slab nu poate retrage motorul;
+- dacă gardurile sunt încălcate, aplicația revine la baseline la pornirea următoare.
 
-3. Aplicare consecventă
-- aceeași pondere este folosită în recomandarea zilei, recomandările generale, cinema românesc și Smart Watchlist;
-- evaluarea rulează local, în fundal, iar ratingurile nu sunt încărcate pe un serviciu extern;
-- verdictul devine activ la o pornire ulterioară, fără schimbarea motorului în mijlocul sesiunii;
-- schema SQLite rămâne v9 și nu necesită migrare.
+3. Vizibil în Recomandări
+- cardul „Protecția recomandărilor” arată formula folosită efectiv;
+- afișează progresul rezultatelor reale, starea motorului sigur și eventualul rollback;
+- arată câte ratinguri relevante mai sunt necesare înainte de următorul backtest.
+
+Compatibilitate:
+- schema SQLite rămâne v9 și nu necesită migrare;
+- toate datele și evaluările rămân locale;
+- verdictul 4.6 existent este păstrat și nu este recalculat doar pentru actualizarea interfeței/protecției.
 
 Versiune:
-- aplicație 4.6.0;
-- production-stack-v4.6.0-personal-hybrid;
-- quality-manager-v4.6.0-personal-hybrid;
+- aplicație 4.7.0;
+- production-stack-v4.7.0-live-protected;
+- quality-manager-v4.7.0-live-protected;
+- recommendation-live-guard-v4.7.0;
 - SQLite schema v9.

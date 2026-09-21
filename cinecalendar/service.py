@@ -6,7 +6,7 @@ from .calendar_engine_v3 import ContextCalendarEngineV35
 from .db import Database
 from .logging_setup import setup_logging
 from .production_engine import build_production_recommender, production_stack_status
-from .quality_manager_v46 import RecommendationQualityManagerV46
+from .quality_manager_v47 import RecommendationQualityManagerV47
 from .recommender_v16 import FastRecommendationEngineV16
 from .temp_workspaces import cleanup_abandoned_workspaces
 from .util import AppPaths
@@ -32,12 +32,14 @@ class CineCalendarService:
 
         # 4.6 keeps the current validated engine and hybrid balance until stricter personal rolling
         # backtests have a verdict. Production and evaluation share the same canonical wrappers.
-        self.quality_manager = RecommendationQualityManagerV46(self.db)
+        self.quality_manager = RecommendationQualityManagerV47(self.db)
+        self.quality_manager.refresh_live_guard()
         engine_cls = self.quality_manager.preferred_engine_class()
         if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
             engine_cls = FastRecommendationEngineV16
 
         self.recommender = build_production_recommender(self.db, engine_cls, self.calendar)
+        self.quality_manager.set_runtime_engine(self.recommender)
         self.production_stack = production_stack_status(self.recommender)
         self.recommender.collaborative.start_background()
 

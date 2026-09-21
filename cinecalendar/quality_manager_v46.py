@@ -7,7 +7,7 @@ import time
 
 from .hybrid_calibration_v46 import allowed_als_weights, calibrated_hybrid_engine_class
 from .quality_manager_v37 import RecommendationQualityManagerV37
-from .rolling_backtest_v37 import compare_on_windows, rolling_windows, run_window_backtest
+from .rolling_backtest_v37 import comparison_from_reports, rolling_windows, run_window_backtest_group
 from .util import utcnow_iso
 
 
@@ -238,8 +238,7 @@ class RecommendationQualityManagerV46:
                     )
                     return
 
-                self._store(
-                    {
+                running_payload = {
                         "manager_version": QUALITY_MANAGER_VERSION,
                         "state_token": active_token,
                         "status": "running",
@@ -249,34 +248,51 @@ class RecommendationQualityManagerV46:
                         "als_weights": list(allowed_als_weights()),
                         "window_count": len(windows),
                         "fallback_als_weight": fallback_weight,
+                        "progress_step": 0,
+                        "progress_total": len(windows),
+                        "progress_label": "Pregătesc baseline-ul 70/30",
                         "started_at": utcnow_iso(),
                     }
-                )
+                self._store(running_payload)
                 try:
-                    baseline_reports = [
-                        run_window_backtest(
+                    weights = list(allowed_als_weights())
+                    challenger_classes = [
+                        calibrated_hybrid_engine_class(baseline_cls, weight)
+                        for weight in weights
+                    ]
+                    reports_by_engine: list[list[dict]] = [
+                        [] for _engine in [baseline_cls, *challenger_classes]
+                    ]
+                    for index, window in enumerate(windows, start=1):
+                        grouped = run_window_backtest_group(
                             self.db.path,
                             window,
-                            engine_cls=baseline_cls,
+                            engine_classes=[baseline_cls, *challenger_classes],
                             candidate_limit=candidate_limit,
                             final_limit=final_limit,
                             als_timeout=als_timeout,
                         )
-                        for window in windows
-                    ]
+                        for bucket, report in zip(reports_by_engine, grouped):
+                            bucket.append(report)
+                        running_payload.update(
+                            progress_step=index,
+                            progress_label=f"Toate formulele: fereastra {index}/{len(windows)}",
+                            updated_at=utcnow_iso(),
+                        )
+                        self._store(running_payload)
+                    baseline_reports = reports_by_engine[0]
                     candidates = []
                     selected = None
-                    for weight in allowed_als_weights():
-                        challenger_cls = calibrated_hybrid_engine_class(baseline_cls, weight)
-                        comparison = compare_on_windows(
-                            self.db.path,
+                    for candidate_index, (weight, challenger_cls, challenger_reports) in enumerate(
+                        zip(weights, challenger_classes, reports_by_engine[1:]),
+                        start=1,
+                    ):
+                        comparison = comparison_from_reports(
                             windows,
                             baseline_cls=baseline_cls,
                             challenger_cls=challenger_cls,
-                            candidate_limit=candidate_limit,
-                            final_limit=final_limit,
-                            als_timeout=als_timeout,
                             baseline_reports=baseline_reports,
+                            challenger_reports=challenger_reports,
                         )
                         aggregate = dict(comparison.get("aggregate") or {})
                         item = {
@@ -292,6 +308,16 @@ class RecommendationQualityManagerV46:
                             selected is None or item["selection_score"] > selected["selection_score"]
                         ):
                             selected = item
+                        running_payload.update(
+                            progress_step=len(windows),
+                            progress_label=f"Am terminat testul {weight*100:.0f}% ALS / {(1-weight)*100:.0f}% conținut",
+                            candidate_summaries=[
+                                {k: value for k, value in row.items() if k != "comparison"}
+                                for row in candidates
+                            ],
+                            updated_at=utcnow_iso(),
+                        )
+                        self._store(running_payload)
 
                     if self.state_token() != active_token:
                         return

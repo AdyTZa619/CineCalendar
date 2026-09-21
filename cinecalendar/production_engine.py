@@ -4,13 +4,16 @@ from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2
 from .availability_guard_v37 import AvailabilityGuardMixinV37, availability_engine_class
 from .calendar_engine_v3 import ContextCalendarEngineV35
 from .context_recommender_v35 import CONTEXT_RECOMMENDER_VERSION, contextual_engine_class
-from .recommender_v16 import FastRecommendationEngineV16
+from .recommender_v16 import FastRecommendationEngineV16, recommendation_engine_identity
 from .watch_success_v33 import WatchSuccessIntentLearnerV33
 from .personalization_v41 import PERSONALIZATION_V41_VERSION, personalization_engine_class
 from .learning_insight_v43 import LEARNING_INSIGHT_VERSION, learning_insight_engine_class
 
 
-PRODUCTION_STACK_VERSION = "production-stack-v4.6.0-personal-hybrid"
+# Ranking identity changes only when recommendation ordering changes.  Operational/UI releases must
+# not invalidate a multi-gigabyte personal backtest by themselves.
+RANKING_STACK_VERSION = "production-stack-v4.6.0-personal-hybrid"
+PRODUCTION_STACK_VERSION = "production-stack-v4.7.0-live-protected"
 
 
 def production_engine_class(base_cls: type) -> type:
@@ -65,6 +68,7 @@ def production_stack_status(engine) -> dict:
         ),
         "als_weight": round(float(getattr(engine, "ALS_WEIGHT", .70)), 2),
         "content_weight": round(float(getattr(engine, "CONTENT_WEIGHT", .30)), 2),
+        "recommendation_engine_identity": recommendation_engine_identity(engine),
         "personalization_version": str(getattr(engine, "PERSONALIZATION_V41_VERSION", "")),
         "personalization_status": (
             engine.personalization_status()

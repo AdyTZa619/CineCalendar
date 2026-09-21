@@ -132,7 +132,7 @@ def test_v36_requires_mean_gain_above_strict_threshold():
     assert RecommendationQualityManagerV36._strict_approval(_comparison(mean=0.011))["approved"] is False
 
 
-def test_service_moves_to_v46_while_preserving_v37_v36_and_v35_chain():
+def test_service_moves_to_v47_while_preserving_v46_v37_and_v35_chain():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -141,8 +141,10 @@ def test_service_moves_to_v46_while_preserving_v37_v36_and_v35_chain():
     composition = (root / "cinecalendar" / "ui_composition.py").read_text(encoding="utf-8")
     init = (root / "cinecalendar" / "__init__.py").read_text(encoding="utf-8")
 
+    quality_v47 = (root / "cinecalendar" / "quality_manager_v47.py").read_text(encoding="utf-8")
     quality_v46 = (root / "cinecalendar" / "quality_manager_v46.py").read_text(encoding="utf-8")
-    assert "RecommendationQualityManagerV46" in service
+    assert "RecommendationQualityManagerV47" in service
+    assert "RecommendationQualityManagerV46" in quality_v47
     assert "RecommendationQualityManagerV37" in quality_v46
     assert "RecommendationQualityManagerV36" not in service
     assert (root / "cinecalendar" / "quality_manager_v36.py").exists()
@@ -153,4 +155,4 @@ def test_service_moves_to_v46_while_preserving_v37_v36_and_v35_chain():
     assert "install_context_ui_v35" in composition
     assert "install_accuracy_ui_v37" in composition
     assert "install_accuracy_ui_v36" not in composition
-    assert '__version__ = "4.6.0"' in init
+    assert '__version__ = "4.7.0"' in init

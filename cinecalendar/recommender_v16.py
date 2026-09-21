@@ -14,6 +14,18 @@ from .util import clamp, utcnow_iso
 ENGINE_VERSION = "16.0.0-top3-trust-gate"
 
 
+def recommendation_engine_identity(engine_or_cls) -> str:
+    """Stable telemetry identity that distinguishes the ranking formula actually shown."""
+    learning = str(getattr(engine_or_cls, "LEARNING_INSIGHT_VERSION", ENGINE_VERSION) or ENGINE_VERSION)
+    hybrid = str(
+        getattr(engine_or_cls, "HYBRID_CALIBRATION_VERSION", "global-baseline-70-30")
+        or "global-baseline-70-30"
+    )
+    als = round(float(getattr(engine_or_cls, "ALS_WEIGHT", .70)), 2)
+    content = round(float(getattr(engine_or_cls, "CONTENT_WEIGHT", 1.0 - als)), 2)
+    return f"{learning}|{hybrid}|als{int(als*100):02d}-content{int(content*100):02d}"
+
+
 class FastRecommendationEngineV16(FastRecommendationEngineV15):
     """V15 + conservative trust gate for the small visible recommendation set.
 
@@ -297,7 +309,7 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
         if not selected:
             return
         now = utcnow_iso()
-        engine_version = str(getattr(self, "LEARNING_INSIGHT_VERSION", ENGINE_VERSION) or ENGINE_VERSION)
+        engine_version = recommendation_engine_identity(self)
         with self.db.tx() as con:
             ensure_trust_audit_schema(con)
             run = con.execute(
