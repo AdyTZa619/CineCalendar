@@ -10,7 +10,7 @@ DATE
 Datele personale, baza SQLite, cache-ul, logurile, backupurile și fișierele updaterului sunt în folderul CineCalendarData de lângă aplicație. Actualizarea bundle-ului nu șterge CineCalendarData. CineCalendar verifică baza la pornire și păstrează un snapshot last-good pentru recovery; a doua instanță a aplicației este blocată înainte să deschidă baza.
 
 RECOMANDĂRI
-Motorul curent combină profilul tău de ratinguri, retrieval ALS/content, contextul calendaristic și semnale locale de vizionare. Din 3.3, fiecare card vizibil are o expunere imuabilă proprie, iar alegerea, skip-ul, Stremio, confirmarea playback-ului și „L-am văzut” sunt evenimente separate legate de acea expunere exactă.
+Motorul curent combină profilul tău de ratinguri, retrieval ALS/content, contextul calendaristic și semnale locale de vizionare. Din 4.6, raportul ALS/conținut este ales local prin backtest pe istoricul tău și rămâne 70/30 dacă niciun challenger nu dovedește un câștig stabil. Din 3.3, fiecare card vizibil are o expunere imuabilă proprie, iar alegerea, skip-ul, Stremio, confirmarea playback-ului și „L-am văzut” sunt evenimente separate legate de acea expunere exactă.
 
 BACKUP
 „Export profile” creează un backup portabil dintr-un singur snapshot SQLite coerent, fără a copia întregul catalog IMDb rebuildabil și fără tokenul TMDb. Importul normal folosește Merge (datele locale mai noi câștigă); Restore este modul autoritar. Importul Merge păstrează informația locală mai nouă; Restore este modul explicit în care backupul devine autoritar.

@@ -6,6 +6,7 @@
 - **ALS nu acoperă toate filmele.** Titlurile fără mapping MovieLens rămân eligibile prin motorul personal de conținut și, dacă este validat local, prin lane-ul suplimentar calibrat.
 - **Calibrarea 3.7 nu promite un motor nou dacă istoricul nu dovedește câștigul.** Dacă 8%, 14% și 20% nu trec ferestrele temporale și gardurile de calitate, programul păstrează baseline-ul V16/V17 validat.
 - **Calibrarea 3.7 este intenționat costisitoare, dar rulează în fundal.** La schimbări relevante de ratinguri/feedback poate executa mai multe backtesturi locale; recomandarea curentă nu așteaptă terminarea lor, iar verdictul se aplică abia la o pornire ulterioară.
+- **Calibrarea hibridă 4.6 necesită minimum 170 de ratinguri și este intenționat conservatoare.** Dacă nici 50/50, 60/40, nici 80/20 nu bate stabil baseline-ul 70/30 pe istoricul local, programul nu schimbă ponderea. Evaluarea rulează în fundal și alegerea validată devine activă la o pornire ulterioară.
 - **Availability Guard poate filtra numai date cunoscute.** Un film cu dată/an de lansare lipsă sau greșite în catalog nu este blocat automat doar prin presupunere.
 - **Watch Success și Startability nu sunt probabilități calibrate.** Sunt semnale bounded; pragurile nu trebuie auto-reglate din puține interacțiuni.
 - **Auditul pentru tuning cere date reale suficiente.** Minimum orientativ: 20 de expuneri auditate și 5 porniri confirmate; mai mult este preferabil.

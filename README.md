@@ -34,8 +34,11 @@ CineCalendar nu presupune că motorul cu numărul cel mai mare este automat mai 
 - Context Intelligence 3.5 ca strat bounded peste motorul aprobat;
 - Availability Guard 3.7, care elimină filmele cu dată/an de lansare cunoscut în viitor fără să reordoneze filmele eligibile;
 - calibrare 3.7 a lane-ului local de conținut la 8%, 14% sau 20%, numai dacă acesta bate baseline-ul pe ferestre temporale independente.
+- calibrare personală 4.6 a raportului ALS/conținut: baseline 70/30 versus challengeri 50/50, 60/40 și 80/20, aleși exclusiv prin istoricul local al utilizatorului.
 
 Evaluarea 3.7 folosește ferestre de holdout ne-suprapuse. Pentru o fereastră istorică, ratingurile din acea fereastră și toate ratingurile ulterioare sunt eliminate din copia de training, iar baseline-ul și challengerul sunt evaluate cu aceeași regulă de disponibilitate a filmelor. Dacă niciun procent nu trece toate gardurile de recall 8+/9+, NDCG, expunere a filmelor slab notate și scor compozit, baseline-ul validat rămâne activ.
+
+În 4.6, aceeași disciplină se aplică ponderii dintre colaborarea MovieLens și profilul personal de conținut. O combinație nouă devine activă doar după minimum 170 de ratinguri, câștig stabil pe ferestre temporale independente și lipsa regresiilor materiale la filmele de 8+/9+ sau la expunerea celor evaluate slab. Verdictul se aplică la pornirea următoare; recomandarea curentă nu așteaptă backtestul.
 
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
