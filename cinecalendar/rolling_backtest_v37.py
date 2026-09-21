@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 import math
-import tempfile
 
 from .availability_guard_v37 import availability_engine_class
 from .db import Database
@@ -18,6 +17,7 @@ from .recommendation_backtest import (
     ranking_quality_metrics,
     visible_outcome_metrics,
 )
+from .temp_workspaces import managed_temp_workspace
 
 
 BACKTEST_VERSION = "rolling-temporal-v3.7.0"
@@ -163,8 +163,8 @@ def run_window_backtest(
     if not source_path.is_file():
         raise FileNotFoundError(source_path)
 
-    with tempfile.TemporaryDirectory(prefix="cinecalendar-rolling37-") as tmp:
-        temp_path = Path(tmp) / "cinecalendar.db"
+    with managed_temp_workspace("cinecalendar-rolling37-") as tmp:
+        temp_path = tmp / "cinecalendar.db"
         _sqlite_backup(source_path, temp_path)
         test_db = Database(temp_path)
         _remove_future(test_db, window)

@@ -6,13 +6,13 @@ from pathlib import Path
 import json
 import math
 import sqlite3
-import tempfile
 import time
 
 from .collaborative_als import CollaborativeALSProvider
 from .db import Database
 from .production_engine import build_production_recommender, production_stack_status
 from .recommender_v16 import FastRecommendationEngineV16
+from .temp_workspaces import managed_temp_workspace
 
 
 @dataclass(frozen=True)
@@ -239,8 +239,8 @@ def run_local_backtest(
     if not holdout:
         raise RuntimeError("Not enough timestamped IMDb ratings for a temporal holdout")
 
-    with tempfile.TemporaryDirectory(prefix="cinecalendar-backtest-") as tmp:
-        temp_path = Path(tmp) / "cinecalendar.db"
+    with managed_temp_workspace("cinecalendar-backtest-") as tmp:
+        temp_path = tmp / "cinecalendar.db"
         _sqlite_backup(source_path, temp_path)
         test_db = Database(temp_path)
         cutoff = _remove_future_signals(test_db, holdout)

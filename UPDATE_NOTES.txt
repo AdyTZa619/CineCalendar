@@ -1,43 +1,34 @@
-CineCalendar 4.4.0 – Feedback Protection
+CineCalendar 4.4.1 – Backtest Temp Safety
 
 Obiectiv:
-- elimină contaminarea profilului când utilizatorul vrea doar să ascundă un titlu;
-- păstrează separat feedbackul contextual, excluderea exactă și feedbackul despre filme similare;
-- face feedbackul din sesiunea curentă reversibil și verificabil.
+- oprește acumularea folderelor cinecalendar-backtest-* în %TEMP%;
+- păstrează evaluarea locală de calitate, dar o face recuperabilă după închideri sau întreruperi;
+- evită repornirea imediată a aceluiași backtest greu după fiecare lansare.
 
-1. „Ascunde doar filmul” este acum exact
-- înlocuiește formularea ambiguă „Nu mă interesează” în interfața de producție;
-- titlul este exclus în continuare din recomandări;
-- acțiunea nu mai modifică profilul de gust și nu mai devine exemplu negativ pentru Adaptive Personal;
-- acțiunea nu mai împinge factorul ALS împotriva filmelor similare;
-- acțiunea nu mai intră în prototipurile Watch Intent / Watch Success;
-- rândurile istorice „not_interested” sunt ignorate defensiv la construirea profilului, chiar dacă au fost create de o versiune veche cu pondere negativă.
+1. Workspace-uri temporare gestionate
+- backtesturile standard și rolling creează acum un marker local cu PID-ul procesului proprietar;
+- la terminare normală, workspace-ul temporar este eliminat ca înainte;
+- dacă procesul este închis în timpul testului, markerul permite recunoașterea sigură a folderului abandonat la următoarea pornire.
 
-2. Similaritatea se schimbă numai explicit
-- „Mai puține ca acesta” rămâne semnalul negativ moderat;
-- „Nu-mi recomanda similare” rămâne semnalul negativ puternic;
-- „Nu acum”, „Prea lung”, „nu am chef acum” și „prea similar cu ce am văzut recent” rămân temporare și nu modifică gustul permanent.
+2. Curățare automată la pornire
+- CineCalendar curăță workspace-urile abandonate cinecalendar-backtest-* și cinecalendar-rolling37-*;
+- directoarele create de versiuni mai vechi, fără marker de proprietar, sunt curățate numai după o perioadă de siguranță;
+- workspace-urile cu un proces proprietar încă activ sunt păstrate;
+- directoarele altor aplicații din %TEMP% nu sunt atinse.
 
-3. Undo real pentru feedback
-- fiecare feedback aplicat în sesiunea curentă păstrează ID-ul exact al rândului SQLite;
-- bara laterală oferă „Anulează: …”, iar Ctrl+Z execută aceeași operație;
-- anulările multiple funcționează în ordine inversă;
-- anularea nu ghicește după titlu și nu modifică expunerile imuabile ale recomandărilor;
-- Watchlist-ul este reconstruit tranzacțional din evenimentele de feedback rămase.
+3. Protecție împotriva relansărilor repetate
+- dacă aplicația a fost închisă în timp ce quality backtest-ul V3.4 era în rulare, următoarea pornire îl marchează ca întrerupt;
+- același test nu mai este repornit imediat la fiecare lansare;
+- retry-ul automat are cooldown, iar motorul validat anterior rămâne fallback.
 
-4. Verificare
-- teste dedicate confirmă că ascunderea unui titlu nu schimbă feature-urile profilului;
-- testele confirmă că acțiunea nu intră în cele patru căi de învățare a similarității;
-- testele confirmă refacerea Watchlist-ului după undo și anularea succesivă a mai multor acțiuni;
-- suita completă, benchmark-ul catalogului 260k, benchmark-ul 4.3.1 și smoke test-ul Windows rămân porți obligatorii înainte de Stable.
-
-Compatibilitate și siguranță:
+4. Compatibilitate
+- formula de scoring nu este schimbată;
+- production-stack rămâne production-stack-v4.4.0-feedback-protection, pentru a nu invalida inutil o calibrare deja măsurată;
 - schema SQLite rămâne v9;
 - Profile Backup rămâne v4;
-- nu sunt șterse ratinguri, expuneri, outcomes sau snapshoturi de explicație;
-- motorul de bază, calibrarea 4.3, semantica și regulile calendaristice nu sunt schimbate.
+- ratingurile, istoricul, outcomes și explicațiile nu sunt modificate.
 
 Versiune:
-- aplicație 4.4.0;
+- aplicație 4.4.1;
 - production-stack-v4.4.0-feedback-protection;
 - SQLite schema v9.

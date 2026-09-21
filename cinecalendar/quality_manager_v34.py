@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import os
 import threading
 import time
 
@@ -12,6 +14,8 @@ from .util import utcnow_iso
 
 QUALITY_MANAGER_VERSION = "quality-manager-v3.4.0"
 QUALITY_SETTING = "recommendation_quality_v34"
+INTERRUPTED_RETRY_COOLDOWN_SECONDS = 6 * 60 * 60
+ERROR_RETRY_COOLDOWN_SECONDS = 60 * 60
 
 
 class RecommendationQualityManager:
@@ -80,6 +84,37 @@ class RecommendationQualityManager:
     def _store(self, payload: dict) -> None:
         self.db.set_setting(QUALITY_SETTING, payload)
 
+    @staticmethod
+    def _age_seconds(value: str | None) -> float | None:
+        if not value:
+            return None
+        try:
+            stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds())
+        except (TypeError, ValueError):
+            return None
+
+    def _retry_cooldown_remaining(self, payload: dict, token: str) -> float:
+        if (
+            str(payload.get("manager_version") or "") != QUALITY_MANAGER_VERSION
+            or str(payload.get("state_token") or "") != token
+        ):
+            return 0.0
+        status = str(payload.get("status") or "")
+        if status in {"running", "interrupted_cooldown"}:
+            age = self._age_seconds(payload.get("started_at"))
+            if age is None:
+                return 0.0
+            return max(0.0, INTERRUPTED_RETRY_COOLDOWN_SECONDS - age)
+        if status == "error":
+            age = self._age_seconds(payload.get("completed_at"))
+            if age is None:
+                return 0.0
+            return max(0.0, ERROR_RETRY_COOLDOWN_SECONDS - age)
+        return 0.0
+
     def start_background(
         self,
         *,
@@ -91,6 +126,25 @@ class RecommendationQualityManager:
         token = self.state_token()
         count = self.rating_count()
         cached = self.cached_report()
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return False
+
+        cooldown = self._retry_cooldown_remaining(cached, token)
+        if cooldown > 0:
+            if str(cached.get("status") or "") == "running":
+                interrupted = dict(cached)
+                interrupted.update(
+                    {
+                        "status": "interrupted_cooldown",
+                        "worker_pid": 0,
+                        "interrupted_at": utcnow_iso(),
+                        "retry_after_seconds": int(cooldown),
+                    }
+                )
+                self._store(interrupted)
+            return False
+
         if (
             str(cached.get("manager_version") or "") == QUALITY_MANAGER_VERSION
             and str(cached.get("state_token") or "") == token
@@ -113,9 +167,6 @@ class RecommendationQualityManager:
             return False
 
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return False
-
             def worker() -> None:
                 if delay_seconds > 0:
                     time.sleep(float(delay_seconds))
@@ -129,6 +180,7 @@ class RecommendationQualityManager:
                         "production_stack_version": PRODUCTION_STACK_VERSION,
                         "status": "running",
                         "rating_count": count,
+                        "worker_pid": int(os.getpid()),
                         "started_at": utcnow_iso(),
                         "preferred_engine": FastRecommendationEngineV16.__name__,
                     }

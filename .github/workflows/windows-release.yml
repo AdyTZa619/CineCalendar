@@ -45,6 +45,7 @@ jobs:
             'cinecalendar\adaptive_preferences_v2.py',
             'cinecalendar\personal_candidates.py',
             'cinecalendar\recommendation_backtest.py',
+            'cinecalendar\temp_workspaces.py',
             'cinecalendar\collaborative_als.py',
             'cinecalendar\daily_genre_ui_patch.py',
             'collaborative-model.json',
