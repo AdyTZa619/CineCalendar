@@ -132,7 +132,7 @@ def test_v36_requires_mean_gain_above_strict_threshold():
     assert RecommendationQualityManagerV36._strict_approval(_comparison(mean=0.011))["approved"] is False
 
 
-def test_service_moves_to_v47_while_preserving_v46_v37_and_v35_chain():
+def test_service_keeps_v47_quality_chain_in_v48_release():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -155,4 +155,4 @@ def test_service_moves_to_v47_while_preserving_v46_v37_and_v35_chain():
     assert "install_context_ui_v35" in composition
     assert "install_accuracy_ui_v37" in composition
     assert "install_accuracy_ui_v36" not in composition
-    assert '__version__ = "4.7.0"' in init
+    assert '__version__ = "4.8.0"' in init

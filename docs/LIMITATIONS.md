@@ -3,6 +3,7 @@
 - **Prima construcție a catalogului necesită internet.** Dataseturile oficiale IMDb sunt descărcate dacă nu există un catalog local utilizabil.
 - **IMDb datasets nu conțin toate metadatele bogate.** Overview, keywords, credits și postere pot necesita TMDb sau cache local.
 - **TMDb necesită token real și respectarea termenilor/brandingului TMDb.** Tokenul rămâne local și nu intră în backup.
+- **Preflight-ul 4.8 nu inventează metadate.** Verifică maximum șase titluri per listă; dacă TMDb/Wikimedia nu răspund sau nu au o potrivire, păstrează clasarea existentă și raportează acoperirea reală.
 - **ALS nu acoperă toate filmele.** Titlurile fără mapping MovieLens rămân eligibile prin motorul personal de conținut și, dacă este validat local, prin lane-ul suplimentar calibrat.
 - **Calibrarea 3.7 nu promite un motor nou dacă istoricul nu dovedește câștigul.** Dacă 8%, 14% și 20% nu trec ferestrele temporale și gardurile de calitate, programul păstrează baseline-ul V16/V17 validat.
 - **Calibrarea 3.7 este intenționat costisitoare, dar rulează în fundal.** În 4.7, feedbackul contextual nu o mai invalidează, iar ratingurile noi/modificate sunt acumulate până la pragul economic; recomandarea curentă nu așteaptă terminarea evaluării, iar verdictul se aplică abia la o pornire ulterioară.

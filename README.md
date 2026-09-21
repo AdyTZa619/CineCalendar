@@ -49,6 +49,14 @@ motorul sigur cere minimum două regresii independente și suficient eșantion; 
 slab nu poate retrage formula. Cele patru formule împart aceeași copie SQLite pentru fiecare
 fereastră temporală, reducând numărul copiilor complete de la patru la una per fereastră.
 
+În 4.8, pagina Recomandări verifică în fundal maximum șase titluri din lista vizibilă folosind
+aceleași surse și același cache care înainte completau cardurile numai după clasare. Dacă sunt
+adăugate genuri, regizori, țări, synopsis/keywords sau durată lipsă, motorul face o singură
+reclasare cu faptele noi. Un poster nou sau o informație exclusiv vizuală nu schimbă ordinea.
+Cardul „Datele recomandărilor” afișează acoperirea reală, numărul de titluri complete și dacă
+reclasarea a fost justificată. Limita de I/O rămâne șase titluri per listă, iar backtestul 4.7 nu
+este invalidat de această completare operațională.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3
