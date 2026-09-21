@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta, timezone
+from pathlib import Path
 
 from cinecalendar.db import Database
-from cinecalendar.feedback import apply_feedback
+from cinecalendar.feedback import (
+    apply_feedback,
+    apply_feedback_with_receipt,
+    daily_contextual_feedback,
+    undo_feedback,
+)
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
 from cinecalendar.personalization_v41 import PersonalizationBrainV41
 from cinecalendar.util import utcnow_iso
@@ -152,3 +159,44 @@ def test_session_feedback_resolves_only_explicit_current_receipts(tmp_path):
     )
 
     assert [kind for kind, _movie_value in context] == ["too_long", "not_now"]
+
+
+def test_daily_context_survives_restart_boundary_and_expires_next_local_day(tmp_path):
+    db = Database(tmp_path / "daily-context.db")
+    movie_id = _insert_movie(db)
+    _profile, receipt = apply_feedback_with_receipt(db, movie_id, "too_long")
+    with db.tx() as con:
+        # 21:30 UTC is already 00:30 on 22 September in Romania (UTC+3).
+        con.execute(
+            "UPDATE feedback SET created_at=? WHERE id=?",
+            ("2026-09-21T21:30:00+00:00", receipt.feedback_id),
+        )
+
+    romania_summer = timezone(timedelta(hours=3))
+    assert daily_contextual_feedback(
+        db, on_date=date(2026, 9, 22), local_tz=romania_summer
+    ) == (("too_long", movie_id),)
+    assert daily_contextual_feedback(
+        db, on_date=date(2026, 9, 23), local_tz=romania_summer
+    ) == ()
+
+
+def test_daily_context_deduplicates_repeated_clicks_and_undo_removes_last_reason(tmp_path):
+    db = Database(tmp_path / "daily-context-undo.db")
+    movie_id = _insert_movie(db)
+    _profile, first = apply_feedback_with_receipt(db, movie_id, "too_similar")
+    _profile, second = apply_feedback_with_receipt(db, movie_id, "too_similar")
+
+    assert daily_contextual_feedback(db) == (("too_similar", movie_id),)
+    undo_feedback(db, second.feedback_id)
+    assert daily_contextual_feedback(db) == (("too_similar", movie_id),)
+    undo_feedback(db, first.feedback_id)
+    assert daily_contextual_feedback(db) == ()
+
+
+def test_daily_context_excludes_rejected_title_after_ui_restart():
+    premium = (
+        Path(__file__).resolve().parents[1] / "cinecalendar" / "premium_ui.py"
+    ).read_text(encoding="utf-8")
+    assert "contextual_exclusions = {movie_id for _kind, movie_id in contextual_feedback}" in premium
+    assert "exclude_ids = set(self.session_skips) | contextual_exclusions" in premium

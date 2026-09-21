@@ -10,7 +10,7 @@ from .personalization_v41 import PERSONALIZATION_V41_VERSION, personalization_en
 from .learning_insight_v43 import LEARNING_INSIGHT_VERSION, learning_insight_engine_class
 
 
-PRODUCTION_STACK_VERSION = "production-stack-v4.5.0-immediate-context"
+PRODUCTION_STACK_VERSION = "production-stack-v4.5.1-daily-context"
 
 
 def production_engine_class(base_cls: type) -> type:
