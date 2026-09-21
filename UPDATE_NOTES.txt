@@ -1,27 +1,28 @@
-CineCalendar 4.4.2 – Feedback contextual precis
+CineCalendar 4.5.0 – Feedback care schimbă imediat alegerea
 
 Obiectiv:
-- motivele temporare schimbă numai partea relevantă a recomandării;
-- „Nu acum” nu mai este confundat cu o antipatie pentru gen, regizor sau țară;
-- o acțiune eșuată nu mai poate ascunde filmul doar în interfață.
+- motivul ales produce o schimbare vizibilă chiar la următoarea recomandare;
+- feedbackul rămâne temporar, limitat la sesiunea curentă;
+- calitatea personală rămâne filtrul de bază, iar motivul ordonează alternativele bune.
 
-1. Învățare limitată la motivul ales
-- „Prea lung pentru moment” influențează numai categoria de durată;
-- „Nu am chef de genul acesta acum” influențează temporar doar genul și temele;
-- „Prea similar” influențează temporar identitatea de conținut (gen, teme și regizor), nu durata, țara, deceniul sau popularitatea;
-- „Nu acum” exclude doar titlul din sesiunea curentă și nu antrenează un profil negativ de similaritate.
+1. Efect imediat și verificabil
+- „Prea lung pentru moment” mută următoarea alegere în categoria standard imediat mai scurtă: peste 120 → maximum 120 minute, 91–120 → maximum 90, 61–90 → maximum 60;
+- „Nu am chef de genul acesta acum” caută imediat alt gen sau altă atmosferă între candidații buni;
+- „Prea similar” preferă imediat alternativa bună cea mai diferită ca gen, teme și regizor;
+- „Nu acum” exclude exact titlul pe durata sesiunii.
 
-2. Siguranță în interfață
-- titlul este exclus din sesiune numai după ce feedbackul a fost salvat cu succes;
-- anularea unuia dintre mai multe motive pentru același film păstrează excluderea cât timp mai există un feedback contextual activ în sesiune.
+2. Fără contaminarea gustului
+- motivele sunt transmise direct motorului numai din acțiunile sesiunii curente;
+- ordonarea contextuală nu rescrie ratingul estimat sau profilul permanent;
+- Ctrl+Z elimină motivul din contextul activ și recalculează alegerea.
 
-3. Verificare
-- teste de regresie pentru fiecare tip de feedback contextual;
-- documentația schemei SQLite este sincronizată cu versiunea reală v9;
-- ratingurile, istoricul, outcomes, explicațiile și schema bazei de date nu sunt modificate.
+3. Compatibilitate
+- filtrul manual de durată și dispoziție rămâne disponibil;
+- ratingurile, istoricul, outcomes, explicațiile și schema SQLite v9 nu sunt modificate.
 
 Versiune:
-- aplicație 4.4.2;
-- production-stack-v4.4.2-reason-scoped-feedback;
+- aplicație 4.5.0;
+- production-stack-v4.5.0-immediate-context;
+- personalization-v4.5.0-immediate-context;
 - Watch Success v4 reason-scoped;
 - SQLite schema v9.
