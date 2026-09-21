@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import os
 import threading
 import time
 
@@ -13,6 +15,8 @@ from .util import utcnow_iso
 
 QUALITY_MANAGER_VERSION = "quality-manager-v3.7.0-personal-calibration"
 QUALITY_SETTING = "recommendation_quality_v37"
+INTERRUPTED_RETRY_COOLDOWN_SECONDS = 6 * 60 * 60
+ERROR_RETRY_COOLDOWN_SECONDS = 60 * 60
 
 
 class RecommendationQualityManagerV37:
@@ -53,6 +57,37 @@ class RecommendationQualityManagerV37:
 
     def _store(self, payload: dict) -> None:
         self.db.set_setting(QUALITY_SETTING, payload)
+
+    @staticmethod
+    def _age_seconds(value: str | None) -> float | None:
+        if not value:
+            return None
+        try:
+            stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds())
+        except (TypeError, ValueError):
+            return None
+
+    def _retry_cooldown_remaining(self, payload: dict, token: str) -> float:
+        if (
+            str(payload.get("manager_version") or "") != QUALITY_MANAGER_VERSION
+            or str(payload.get("state_token") or "") != token
+        ):
+            return 0.0
+        status = str(payload.get("status") or "")
+        if status in {"running", "interrupted_cooldown"}:
+            age = self._age_seconds(payload.get("started_at"))
+            if age is None:
+                return 0.0
+            return max(0.0, INTERRUPTED_RETRY_COOLDOWN_SECONDS - age)
+        if status == "error":
+            age = self._age_seconds(payload.get("completed_at"))
+            if age is None:
+                return 0.0
+            return max(0.0, ERROR_RETRY_COOLDOWN_SECONDS - age)
+        return 0.0
 
     @staticmethod
     def _baseline_class_from_name(name: str):
@@ -160,6 +195,26 @@ class RecommendationQualityManagerV37:
     ) -> bool:
         count = self.rating_count()
         current = self.cached_report()
+        current_token = self.state_token()
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return False
+
+        cooldown = self._retry_cooldown_remaining(current, current_token)
+        if cooldown > 0:
+            if str(current.get("status") or "") == "running":
+                interrupted = dict(current)
+                interrupted.update(
+                    {
+                        "status": "interrupted_cooldown",
+                        "worker_pid": 0,
+                        "interrupted_at": utcnow_iso(),
+                        "retry_after_seconds": int(cooldown),
+                    }
+                )
+                self._store(interrupted)
+            return False
+
         fallback_snapshot = self._fallback_snapshot(current)
         fallback_engine = self._engine_from_snapshot(fallback_snapshot)
         fallback_name = (
@@ -185,15 +240,12 @@ class RecommendationQualityManagerV37:
 
         if (
             str(current.get("manager_version") or "") == QUALITY_MANAGER_VERSION
-            and str(current.get("state_token") or "") == self.state_token()
+            and str(current.get("state_token") or "") == current_token
             and str(current.get("status") or "") == "completed"
         ):
             return False
 
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return False
-
             def worker() -> None:
                 if delay_seconds > 0:
                     time.sleep(float(delay_seconds))
@@ -236,6 +288,7 @@ class RecommendationQualityManagerV37:
                         "state_token": token,
                         "status": "running",
                         "rating_count": self.rating_count(),
+                        "worker_pid": int(os.getpid()),
                         "baseline_engine": baseline_cls.__name__,
                         "shares": list(allowed_local_shares()),
                         "window_count": len(windows),
