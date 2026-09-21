@@ -295,7 +295,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         row = QHBoxLayout()
         details = QPushButton("Detalii"); details.clicked.connect(lambda _, r=rec: self.open_details(r)); row.addWidget(details)
         watch = QPushButton("Watchlist"); watch.clicked.connect(lambda _, mid=m.id: self.feedback(mid, "want_to_watch")); row.addWidget(watch)
-        no = QPushButton("Nu"); no.clicked.connect(lambda _, mid=m.id: self.feedback(mid, "not_interested")); row.addWidget(no)
+        no = QPushButton("Ascunde doar filmul"); no.clicked.connect(lambda _, mid=m.id: self.feedback(mid, "not_interested")); row.addWidget(no)
         row.addStretch(1); l.addLayout(row)
         main.addLayout(l, 1)
         return card

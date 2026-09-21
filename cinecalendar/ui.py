@@ -160,7 +160,7 @@ class CineCalendarUI:
         ttk.Label(right,text="De ce pentru tine: "+s.personal_reason,style="Card.TLabel",wraplength=820).pack(anchor="w",pady=2)
         ttk.Label(right,text="De ce acum: "+s.calendar_reason,style="Card.TLabel",wraplength=820).pack(anchor="w",pady=2)
         btn=ttk.Frame(right,style="Card.TFrame"); btn.pack(fill="x",pady=(12,0))
-        actions=[("Am văzut","seen"),("Vreau să văd","want_to_watch"),("Nu mă interesează","not_interested"),("Nu-mi recomanda filme de genul acesta","never_similar"),("Mai multe ca acesta","more_like_this"),("Mai puține ca acesta","less_like_this")]
+        actions=[("Am văzut","seen"),("Vreau să văd","want_to_watch"),("Ascunde doar filmul","not_interested"),("Nu-mi recomanda filme de genul acesta","never_similar"),("Mai multe ca acesta","more_like_this"),("Mai puține ca acesta","less_like_this")]
         for label,kind in actions:
             ttk.Button(btn,text=label,command=lambda k=kind,mid=m.id:self._feedback(mid,k)).pack(side="left",padx=(0,5),pady=2)
         ttk.Button(btn,text="De ce mi-ai recomandat asta?",command=lambda r=rec:self._explain(r)).pack(side="right",pady=2)

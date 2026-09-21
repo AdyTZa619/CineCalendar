@@ -340,7 +340,7 @@ class PremiumDecisionWindow(DecisionWindow):
             ("Prea lung pentru moment", "too_long"),
             ("Nu am chef de genul ăsta acum", "mood_mismatch"),
             ("Prea similar cu ce am văzut/recomandat", "too_similar"),
-            ("Nu mă interesează", "not_interested"),
+            ("Ascunde doar filmul (nu schimbă gustul)", "not_interested"),
             ("Nu-mi recomanda similare", "never_similar"),
         )
         for label, kind in choices:

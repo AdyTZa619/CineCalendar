@@ -10,7 +10,7 @@ from typing import Callable, Any
 
 import requests
 from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer, QUrl, QSize
-from PySide6.QtGui import QDesktopServices, QPixmap, QIcon, QColor, QPainter, QFont
+from PySide6.QtGui import QDesktopServices, QPixmap, QIcon, QColor, QPainter, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QStackedWidget, QScrollArea, QFrame, QFileDialog, QMessageBox, QDialog, QFormLayout,
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .backup import export_profile, import_profile
 from .catalog import bootstrap_official_imdb_catalog, import_imdb_datasets
-from .feedback import apply_feedback
+from .feedback import FeedbackReceipt, apply_feedback_with_receipt, undo_feedback
 from .imdb_import import import_imdb_csv, add_manual_rating
 from .imdb_sync import backfill_public_rating_metadata, sync_public_ratings
 from .library_repair import repair_rated_library
@@ -130,10 +130,13 @@ class CineCalendarWindow(QMainWindow):
         self._poster_enqueued: set[str] = set()
         self._poster_active = 0
         self._poster_limit = 6
+        self._feedback_undo_stack: list[FeedbackReceipt] = []
         self.setWindowTitle(f"CineCalendar {APP_VERSION}")
         self.resize(1440, 900); self.setMinimumSize(1100, 700)
         self._set_icon()
         self._build_shell(); self.apply_theme(); self.show_page("today")
+        self.undo_feedback_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
+        self.undo_feedback_shortcut.activated.connect(self.undo_last_feedback)
         self.watch_timer = QTimer(self); self.watch_timer.timeout.connect(self.scan_ratings_folder); self.watch_timer.start(15000)
         QTimer.singleShot(1200, self.auto_catalog_if_needed)
         self.imdb_sync_timer = QTimer(self)
@@ -194,6 +197,11 @@ class CineCalendarWindow(QMainWindow):
         for key, label in self.NAV:
             b=QPushButton(label); b.setProperty("nav", True); b.clicked.connect(lambda _, k=key:self.show_page(k)); sv.addWidget(b); self.nav_buttons[key]=b
         sv.addStretch(1)
+        self.undo_feedback_button = QPushButton("Anulează ultimul feedback")
+        self.undo_feedback_button.setEnabled(False)
+        self.undo_feedback_button.setToolTip("Anulează exact ultima acțiune de feedback din sesiunea curentă (Ctrl+Z).")
+        self.undo_feedback_button.clicked.connect(self.undo_last_feedback)
+        sv.addWidget(self.undo_feedback_button)
         self.status = QLabel("Pregătit"); self.status.setObjectName("Muted"); self.status.setWordWrap(True); sv.addWidget(self.status)
         self.progress = QProgressBar(); self.progress.setVisible(False); self.progress.setRange(0,0); sv.addWidget(self.progress)
         version = QLabel(f"v{APP_VERSION}"); version.setObjectName("Muted"); sv.addWidget(version)
@@ -278,7 +286,7 @@ class CineCalendarWindow(QMainWindow):
         p=QLabel("De ce pentru tine: "+s.personal_reason); p.setWordWrap(True); right.addWidget(p)
         now=QLabel("De ce acum: "+s.calendar_reason); now.setWordWrap(True); right.addWidget(now)
         tag=QLabel(f"Relevanță calendaristică: {s.calendar_kind}"); tag.setObjectName("Muted"); right.addWidget(tag)
-        buttons=QGridLayout(); actions=[("Am văzut","seen"),("Vreau să văd","want_to_watch"),("Nu mă interesează","not_interested"),("Nu-mi recomanda similare","never_similar"),("Mai multe ca acesta","more_like_this"),("Mai puține ca acesta","less_like_this")]
+        buttons=QGridLayout(); actions=[("Am văzut","seen"),("Vreau să văd","want_to_watch"),("Ascunde doar filmul","not_interested"),("Nu-mi recomanda similare","never_similar"),("Mai multe ca acesta","more_like_this"),("Mai puține ca acesta","less_like_this")]
         for n,(label,kind) in enumerate(actions):
             b=QPushButton(label); b.clicked.connect(lambda _,mid=m.id,k=kind:self.feedback(mid,k)); buttons.addWidget(b,n//3,n%3)
         exp=QPushButton("De ce mi-ai recomandat asta?"); exp.clicked.connect(lambda _,r=rec:ScoreDialog(r,self).exec()); buttons.addWidget(exp,2,0,1,2)
@@ -401,13 +409,45 @@ class CineCalendarWindow(QMainWindow):
 
     def feedback(self,movie_id:int,kind:str):
         try:
-            apply_feedback(self.db,movie_id,kind)
+            _profile, receipt = apply_feedback_with_receipt(self.db,movie_id,kind)
+            self._feedback_undo_stack.append(receipt)
+            self._refresh_feedback_undo_button()
             if kind in {"not_now","too_long","mood_mismatch","too_similar"}:
-                self.set_status("Feedback contextual salvat; nu modifică permanent profilul tău de gust.")
+                self.set_status("Feedback contextual salvat; nu modifică permanent gustul. Ctrl+Z îl anulează.")
+            elif kind == "not_interested":
+                self.set_status("Filmul a fost ascuns fără să afecteze filmele similare. Ctrl+Z îl readuce.")
             else:
-                self.set_status("Feedback salvat; profilul a fost recalculat.")
+                self.set_status("Feedback salvat; profilul a fost recalculat. Ctrl+Z îl anulează.")
             self.show_page(self.current_page)
         except Exception as exc: QMessageBox.critical(self,"Feedback",str(exc))
+
+    def _refresh_feedback_undo_button(self):
+        if not hasattr(self, "undo_feedback_button"):
+            return
+        if self._feedback_undo_stack:
+            receipt = self._feedback_undo_stack[-1]
+            self.undo_feedback_button.setText(f"Anulează: {receipt.label}")
+            self.undo_feedback_button.setEnabled(True)
+        else:
+            self.undo_feedback_button.setText("Anulează ultimul feedback")
+            self.undo_feedback_button.setEnabled(False)
+
+    def undo_last_feedback(self):
+        if not self._feedback_undo_stack:
+            return
+        receipt = self._feedback_undo_stack[-1]
+        try:
+            undone = undo_feedback(self.db, receipt.feedback_id)
+            self._feedback_undo_stack.pop()
+            if undone.kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}:
+                skips = getattr(self, "session_skips", None)
+                if isinstance(skips, set):
+                    skips.discard(int(undone.movie_id))
+            self._refresh_feedback_undo_button()
+            self.set_status(f"Feedback anulat: {undone.label}.")
+            self.show_page(self.current_page)
+        except Exception as exc:
+            QMessageBox.critical(self, "Anulare feedback", str(exc))
 
     def page_calendar(self):
         page,content=self.page_shell("Calendar","Repere ortodoxe, seculare, istorice și sezoniere")

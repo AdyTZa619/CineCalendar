@@ -23,7 +23,6 @@ _FEEDBACK_SIGNALS = {
     "want_to_watch": (0.85, 60.0),
     "more_like_this": (0.70, 75.0),
     "less_like_this": (-0.55, 45.0),
-    "not_interested": (-0.80, 75.0),
     "never_similar": (-1.00, 120.0),
 }
 
@@ -185,7 +184,7 @@ class WatchIntentLearner:
             feedback_rows = con.execute(
                 """SELECT m.*,f.kind AS intent_kind,f.created_at AS intent_at
                    FROM feedback f JOIN movies m ON m.id=f.movie_id
-                   WHERE f.kind IN ('want_to_watch','more_like_this','less_like_this','not_interested','never_similar')
+                   WHERE f.kind IN ('want_to_watch','more_like_this','less_like_this','never_similar')
                    ORDER BY f.id DESC LIMIT 400"""
             ).fetchall()
             rating_rows = con.execute(

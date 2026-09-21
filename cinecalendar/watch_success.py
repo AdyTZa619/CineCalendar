@@ -30,7 +30,6 @@ _FEEDBACK_SIGNALS = {
     "want_to_watch": (0.65, 60.0, 0.75),
     "more_like_this": (0.70, 75.0, 0.85),
     "less_like_this": (-0.55, 45.0, 0.85),
-    "not_interested": (-0.80, 75.0, 1.00),
     "never_similar": (-1.00, 120.0, 1.20),
     "not_now": (-0.34, 3.0, 0.45),
     "too_long": (-0.32, 14.0, 0.55),
@@ -135,7 +134,7 @@ class WatchSuccessIntentLearner(WatchIntentLearner):
                 """SELECT m.*,f.kind AS intent_kind,f.created_at AS intent_at
                    FROM feedback f JOIN movies m ON m.id=f.movie_id
                    WHERE f.kind IN (
-                       'want_to_watch','more_like_this','less_like_this','not_interested','never_similar',
+                       'want_to_watch','more_like_this','less_like_this','never_similar',
                        'not_now','too_long','mood_mismatch','too_similar'
                    )
                    ORDER BY f.id DESC LIMIT 400"""
