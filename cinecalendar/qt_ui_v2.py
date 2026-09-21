@@ -347,7 +347,7 @@ class DecisionWindow(CineCalendarWindow):
         ml = QLabel(" • ".join(meta)); ml.setObjectName("Muted"); ml.setWordWrap(True); l.addWidget(ml)
         why = QLabel(s.personal_reason); why.setWordWrap(True); l.addWidget(why)
         row = QHBoxLayout(); exp = QPushButton("De ce?"); exp.clicked.connect(lambda _, r=rec:ScoreDialog(r,self).exec()); row.addWidget(exp)
-        no = QPushButton("Nu mă interesează"); no.clicked.connect(lambda _, mid=m.id:self.feedback(mid,"not_interested")); row.addWidget(no)
+        no = QPushButton("Ascunde doar filmul"); no.clicked.connect(lambda _, mid=m.id:self.feedback(mid,"not_interested")); row.addWidget(no)
         if m.imdb_id:
             ib = QPushButton("IMDb"); ib.clicked.connect(lambda _, iid=m.imdb_id:QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))); row.addWidget(ib)
         row.addStretch(1); l.addLayout(row)

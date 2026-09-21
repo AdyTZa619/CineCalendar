@@ -1,52 +1,43 @@
-CineCalendar 4.3.1 – Performance Audit
+CineCalendar 4.4.0 – Feedback Protection
 
 Obiectiv:
-- optimizează stratul Learning Insight 4.3 și Istoricul fără să schimbe formula de scoring sau regulile de quality-gate;
-- păstrează reacția corectă la ratinguri și metadata noi;
-- adaugă măsurători și benchmark-uri care detectează regresiile de performanță înainte de Stable.
+- elimină contaminarea profilului când utilizatorul vrea doar să ascundă un titlu;
+- păstrează separat feedbackul contextual, excluderea exactă și feedbackul despre filme similare;
+- face feedbackul din sesiunea curentă reversibil și verificabil.
 
-1. Cache semantic
-- semnăturile locale synopsis + keywords sunt reutilizate pentru payload-uri identice;
-- cache-ul este limitat la 16.384 intrări;
-- cheia este conținutul efectiv al synopsisului și keyword-urilor, deci metadata modificată generează automat o semnătură nouă;
-- Taste Hub poate expune hit/miss și dimensiunea cache-ului prin statusul runtime.
+1. „Ascunde doar filmul” este acum exact
+- înlocuiește formularea ambiguă „Nu mă interesează” în interfața de producție;
+- titlul este exclus în continuare din recomandări;
+- acțiunea nu mai modifică profilul de gust și nu mai devine exemplu negativ pentru Adaptive Personal;
+- acțiunea nu mai împinge factorul ALS împotriva filmelor similare;
+- acțiunea nu mai intră în prototipurile Watch Intent / Watch Success;
+- rândurile istorice „not_interested” sunt ignorate defensiv la construirea profilului, chiar dacă au fost create de o versiune veche cu pondere negativă.
 
-2. O singură verificare a modelelor per rundă
-- semantică și calibrarea își verifică starea o singură dată înainte de procesarea shortlist-ului;
-- cele 3 recomandări nu mai repetă aceleași interogări SQLite de freshness;
-- invalidarea după ratinguri/outcome-uri rămâne activă;
-- tokenul semantic include acum și ultima modificare a metadata filmelor notate.
+2. Similaritatea se schimbă numai explicit
+- „Mai puține ca acesta” rămâne semnalul negativ moderat;
+- „Nu-mi recomanda similare” rămâne semnalul negativ puternic;
+- „Nu acum”, „Prea lung”, „nu am chef acum” și „prea similar cu ce am văzut recent” rămân temporare și nu modifică gustul permanent.
 
-3. Istoric scalabil
-- filtrul de status este calculat și aplicat direct în SQLite;
-- LIMIT se aplică după filtrare, nu înainte;
-- un rezultat mai vechi care corespunde filtrului nu mai poate fi exclus accidental de rânduri mai noi cu alt status;
-- indexuri dedicate accelerează root exposures, acțiunile expunerii și filtrarea pe versiune de motor.
+3. Undo real pentru feedback
+- fiecare feedback aplicat în sesiunea curentă păstrează ID-ul exact al rândului SQLite;
+- bara laterală oferă „Anulează: …”, iar Ctrl+Z execută aceeași operație;
+- anulările multiple funcționează în ordine inversă;
+- anularea nu ghicește după titlu și nu modifică expunerile imuabile ale recomandărilor;
+- Watchlist-ul este reconstruit tranzacțional din evenimentele de feedback rămase.
 
-4. Dashboard și outcome queries
-- schema SQLite urcă la v9;
-- indexuri noi pentru engine_version + context_date și context_date pe recommendation_outcomes;
-- datele, scorurile și snapshoturile existente nu sunt rescrise;
-- migrarea păstrează backupul pre-migration, quick_check, last-good snapshot și rollback.
+4. Verificare
+- teste dedicate confirmă că ascunderea unui titlu nu schimbă feature-urile profilului;
+- testele confirmă că acțiunea nu intră în cele patru căi de învățare a similarității;
+- testele confirmă refacerea Watchlist-ului după undo și anularea succesivă a mai multor acțiuni;
+- suita completă, benchmark-ul catalogului 260k, benchmark-ul 4.3.1 și smoke test-ul Windows rămân porți obligatorii înainte de Stable.
 
-5. Telemetrie locală de performanță
-- Learning Insight păstrează numai ferestre limitate de timpi în memorie;
-- sunt disponibile count, last, P50 și P95 pentru prepare/enhance;
-- măsurarea nu trimite date în exterior și nu afectează scoring-ul.
-
-6. CI și benchmark
-- nou benchmark cu 8.000 de expuneri verifică Istoric filtrat, dashboard și cache semantic;
-- benchmark-ul rulează în CI alături de benchmark-ul existent pe catalogul de 260k;
-- testele acoperă cache-ul, invalidarea metadata, filtrarea înainte de LIMIT și pregătirea o singură dată per rundă.
-
-Siguranță:
-- calibrarea, semantica, explorarea controlată și pragurile 4.3 rămân neschimbate;
-- 4.3.1 nu introduce candidați noi și nu modifică shortlist-ul de bază;
-- Profile Backup rămâne v4, iar formatul datelor utilizatorului nu este schimbat;
-- modificările sunt limitate la cache, query/read-path, indexuri, instrumentare locală și teste.
+Compatibilitate și siguranță:
+- schema SQLite rămâne v9;
+- Profile Backup rămâne v4;
+- nu sunt șterse ratinguri, expuneri, outcomes sau snapshoturi de explicație;
+- motorul de bază, calibrarea 4.3, semantica și regulile calendaristice nu sunt schimbate.
 
 Versiune:
-- aplicație 4.3.1;
-- Learning Insight learning-insight-v4.3.1;
-- production-stack-v4.3.1;
+- aplicație 4.4.0;
+- production-stack-v4.4.0-feedback-protection;
 - SQLite schema v9.

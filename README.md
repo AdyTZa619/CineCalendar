@@ -11,6 +11,14 @@ CineCalendar este o aplicație Windows portabilă pentru recomandări personale 
 
 Datele sunt păstrate în `CineCalendarData` lângă bundle. Update-ul nu șterge acest director.
 
+## Feedback protejat 4.4
+
+„Nu acum”, „Prea lung pentru moment” și motivele contextuale rămân semnale temporare și nu
+rescriu gustul permanent. „Ascunde doar filmul” exclude numai titlul ales; numai acțiunile
+explicite „Mai puține ca acesta” și „Nu-mi recomanda similare” pot învăța o preferință negativă
+pentru caracteristicile comune. Ultimele acțiuni de feedback din sesiune pot fi anulate în ordine
+inversă din bara laterală sau cu `Ctrl+Z`, inclusiv cu refacerea stării Watchlist.
+
 ## Motorul curent
 
 CineCalendar nu presupune că motorul cu numărul cel mai mare este automat mai bun. V16/V17 formează baseline-ul de gust măsurat local, iar versiunile ulterioare pot intra în producție numai dacă propriul istoric al utilizatorului dovedește îmbunătățirea.
@@ -46,7 +54,7 @@ Datele 3.2 rămân compatibile. Cazurile istorice fără ID explicit sunt recupe
 
 ## SQLite și migrare
 
-Schema curentă rămâne **v5**. În 3.3 s-a schimbat mecanismul de aplicare a migrărilor:
+Schema curentă este **v9**. În 3.3 s-a schimbat mecanismul de aplicare a migrărilor:
 
 - pașii cu `ALTER TABLE` sunt verificați înainte de aplicare;
 - migrarea poate relua în siguranță o schemă parțial modificată;
@@ -57,7 +65,7 @@ Schema curentă rămâne **v5**. În 3.3 s-a schimbat mecanismul de aplicare a m
 
 ## Backup profil
 
-Formatul de profil este v2 și nu copiază întregul catalog IMDb rebuildabil. Include filmele referite de starea utilizatorului, ratingurile, feedbackul, watchlist-ul, recommendation history/runs și trust telemetry.
+Formatul de profil este v4 și nu copiază întregul catalog IMDb rebuildabil. Include filmele referite de starea utilizatorului, ratingurile, feedbackul, watchlist-ul, recommendation history/runs, outcomes, explicațiile salvate și trust telemetry.
 
 `import_profile(..., mode="merge")` este modul implicit și sigur: un backup mai vechi nu suprascrie ratinguri, setări sau watchlist mai noi. `mode="restore"` este explicit și face backupul autoritar pentru starea utilizatorului. Tokenul TMDb și stările tranzitorii nu sunt exportate.
 

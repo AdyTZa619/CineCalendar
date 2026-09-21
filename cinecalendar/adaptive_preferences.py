@@ -50,7 +50,6 @@ class AdaptivePreferenceLearner:
     _FEEDBACK_TARGETS = {
         "more_like_this": (0.82, 1.00),
         "less_like_this": (-0.35, 0.75),
-        "not_interested": (-0.72, 0.95),
         "never_similar": (-0.95, 1.15),
     }
 
@@ -190,7 +189,7 @@ class AdaptivePreferenceLearner:
             rows = con.execute(
                 """SELECT m.*,f.kind,f.weight AS feedback_weight,f.created_at AS feedback_created_at
                    FROM feedback f JOIN movies m ON m.id=f.movie_id
-                   WHERE f.kind IN ('more_like_this','less_like_this','not_interested','never_similar')"""
+                   WHERE f.kind IN ('more_like_this','less_like_this','never_similar')"""
             ).fetchall()
         out: list[_Sample] = []
         for row in rows:

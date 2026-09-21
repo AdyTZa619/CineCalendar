@@ -26,13 +26,16 @@
 - fiecare recomandare vizibilă primește un `exposure_history_id` care este transportat până la acțiunea utilizatorului;
 - două expuneri ale aceluiași film în aceeași zi rămân două funnel-uri distincte;
 - Taste Hub afișează diagnosticul motorului și calibrarea Accuracy 3.7 fără a modifica rezultatele prin UI.
+- feedbackul 4.4 separă explicit „Ascunde doar filmul” de „Nu-mi recomanda similare”;
+- „Ascunde doar filmul” exclude titlul exact fără să antreneze profilul, ALS, Adaptive Personal sau Watch Success împotriva caracteristicilor lui;
+- feedbackul aplicat în sesiunea curentă poate fi anulat exact, în ordine inversă, din bara laterală sau cu `Ctrl+Z`; Watchlist-ul derivat este refăcut tranzacțional.
 
 ## Persistență și siguranță
-- SQLite WAL, schema curentă v5, `quick_check` la startup și snapshot automat `last_good` pentru recovery;
+- SQLite WAL, schema curentă v9, `quick_check` la startup și snapshot automat `last_good` pentru recovery;
 - expunerile de recomandare sunt rădăcini imuabile; `chosen`, `skip_today`, `trailer_opened`, `stremio_opened`, `playback_confirmed` și `watched` sunt evenimente append-only;
 - feedbackul nu mai modifică expunerea originală;
 - migrațiile sunt idempotente, verificate cu `foreign_key_check`/`quick_check` și precedate de snapshot SQLite când este necesară o schimbare/reparație;
-- backup profil v2 compact, exportat dintr-un singur snapshot WAL consistent;
+- backup profil v4 compact, exportat dintr-un singur snapshot WAL consistent;
 - import `merge` păstrează datele locale mai noi, iar `restore` este explicit autoritar;
 - tokenul TMDb și stările tranzitorii nu intră în backup.
 

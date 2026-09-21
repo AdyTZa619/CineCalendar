@@ -50,7 +50,6 @@ def _rating_confidence(rating: int) -> float:
 _FEEDBACK_CONFIDENCE = {
     "more_like_this": 1.50,
     "less_like_this": -1.25,
-    "not_interested": -2.00,
     "never_similar": -3.00,
     "want_to_watch": 0.25,
 }

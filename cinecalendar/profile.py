@@ -91,6 +91,11 @@ def build_profile(db: Database) -> dict:
 
     feedback_adjust: dict[str,float] = defaultdict(float)
     for row in feedback:
+        # `not_interested` means "hide this exact title". It is an exclusion decision, not
+        # evidence that every genre/theme/director attached to the film is disliked. Historical
+        # rows may still carry the pre-4.4 negative weight, so guard by kind as well as weight.
+        if str(row["kind"] or "") == "not_interested":
+            continue
         movie = _movie_from_row(row)
         if not movie.semantic:
             movie.semantic = extract_semantic(movie)
