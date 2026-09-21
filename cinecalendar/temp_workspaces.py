@@ -26,6 +26,37 @@ def _pid_is_running(pid: int) -> bool:
         return False
     if pid == os.getpid():
         return True
+
+    if os.name == "nt":
+        # os.kill(pid, 0) is not a harmless existence probe on Windows: Python maps ordinary
+        # signals to TerminateProcess. Query the process handle instead.
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            process_query_limited_information = 0x1000
+            still_active = 259
+            handle = kernel32.OpenProcess(
+                process_query_limited_information,
+                False,
+                wintypes.DWORD(pid),
+            )
+            if not handle:
+                # Access denied means the process exists but cannot be queried by this account.
+                return ctypes.get_last_error() == 5
+            try:
+                exit_code = wintypes.DWORD()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return True
+                return int(exit_code.value) == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            # Failure to prove that another process is dead must never cause its workspace to be
+            # deleted. A later startup can retry the cleanup.
+            return True
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
