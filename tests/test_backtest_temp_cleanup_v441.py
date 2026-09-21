@@ -11,6 +11,11 @@ from cinecalendar.quality_manager_v34 import (
     QUALITY_SETTING,
     RecommendationQualityManager,
 )
+from cinecalendar.quality_manager_v37 import (
+    QUALITY_MANAGER_VERSION as QUALITY_MANAGER_V37_VERSION,
+    QUALITY_SETTING as QUALITY_V37_SETTING,
+    RecommendationQualityManagerV37,
+)
 from cinecalendar import temp_workspaces
 from cinecalendar.temp_workspaces import (
     OWNER_FILE,
@@ -99,6 +104,36 @@ def test_interrupted_quality_backtest_enters_cooldown_instead_of_restarting(
             "worker_pid": 999999,
             "started_at": utcnow_iso(),
             "preferred_engine": "FastRecommendationEngineV16",
+        },
+    )
+
+    assert manager.start_background(delay_seconds=0.0) is False
+    report = manager.cached_report()
+    assert report["status"] == "interrupted_cooldown"
+    assert int(report["retry_after_seconds"]) > 0
+    assert int(report["worker_pid"]) == 0
+
+
+def test_interrupted_rolling_quality_backtest_enters_cooldown_instead_of_restarting(
+    tmp_path,
+    monkeypatch,
+):
+    db = Database(tmp_path / "rolling-cooldown.db")
+    monkeypatch.setattr(RecommendationQualityManagerV37, "MIN_RATINGS", 0)
+
+    manager = RecommendationQualityManagerV37(db)
+    token = manager.state_token()
+    db.set_setting(
+        QUALITY_V37_SETTING,
+        {
+            "manager_version": QUALITY_MANAGER_V37_VERSION,
+            "state_token": token,
+            "status": "running",
+            "rating_count": 0,
+            "worker_pid": 999999,
+            "started_at": utcnow_iso(),
+            "preferred_engine": "FastRecommendationEngineV16",
+            "fallback_snapshot": {},
         },
     )
 
