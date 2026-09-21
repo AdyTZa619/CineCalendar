@@ -12,6 +12,11 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__ as APP_VERSION
+from .candidate_metadata_v48 import (
+    CandidateMetadataPreflight,
+    MAX_PREFLIGHT_TITLES,
+    coverage_report,
+)
 from .feedback import daily_contextual_feedback
 from .open_metadata import OpenMovieMetadataProvider
 from .profile import get_profile, top_profile_features
@@ -199,6 +204,8 @@ class PremiumDecisionWindow(DecisionWindow):
         self.browse_content = None
         self.today_result: tuple[Recommendation | None, list[Recommendation]] | None = None
         self.browse_result: list[Recommendation] = []
+        self.browse_generation = 0
+        self.recommendation_metadata_report: dict = {"state": "idle"}
         super().__init__(service)
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Premium")
 
@@ -586,13 +593,25 @@ class PremiumDecisionWindow(DecisionWindow):
 
     def _load_browse_async(self):
         if self.browse_worker and self.browse_worker.isRunning(): return
+        if self.metadata_worker and self.metadata_worker.isRunning():
+            self.set_status("Finalizez verificarea datelor listei curente…",True)
+            QTimer.singleShot(250,self._load_browse_async)
+            return
+        if self.current_page != "recommendations": return
+        self.browse_generation += 1
         self.set_status("Calculez recomandările…",True)
         worker=WorkerThread(lambda progress:self.s.recommender.recommend(date.today(),12,exclude_ids=set(self.session_skips),record=False,slot="browse",candidate_limit=45000,mode="decide"),self)
         self.browse_worker=worker
         def success(recs):
             self.browse_worker=None; self.browse_result=list(recs); self.set_status("Recomandările sunt gata.",False)
+            coverage=coverage_report(self.browse_result)
+            self.recommendation_metadata_report={
+                "state":"checking", "before":coverage, "after":coverage,
+                "attempted":0, "changed_titles":0, "ranking_fields_added":{},
+                "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
+            }
             if self.current_page=="recommendations":
-                self._render_browse(self.browse_result); self._ensure_metadata(self.browse_result[:6],"recommendations")
+                self._render_browse(self.browse_result); self._ensure_metadata(self.browse_result,"recommendations")
         def failure(message):
             self.browse_worker=None; self.set_status("Recomandările au eșuat.",False)
             if self.current_page=="recommendations" and self.browse_content is not None:
@@ -605,6 +624,7 @@ class PremiumDecisionWindow(DecisionWindow):
         if not recs:
             x=QLabel("Nu am găsit recomandări eligibile."); x.setObjectName("Muted"); self.browse_content.addWidget(x); return
         self.browse_content.addWidget(self.recommendation_protection_card())
+        self.browse_content.addWidget(self.recommendation_metadata_card())
         intro=QFrame(); intro.setObjectName("PremiumCard"); il=QHBoxLayout(intro); il.setContentsMargins(18,14,18,14)
         txt=QLabel("Scorul personal estimat este principalul criteriu. IMDb, noutatea și perioada curentă sunt filtre secundare."); txt.setObjectName("Muted"); txt.setWordWrap(True); il.addWidget(txt,1)
         self.browse_content.addWidget(intro)
@@ -671,6 +691,51 @@ class PremiumDecisionWindow(DecisionWindow):
         schedule_label.setWordWrap(True); layout.addWidget(schedule_label)
         return box
 
+    def recommendation_metadata_card(self):
+        report=dict(self.recommendation_metadata_report or {})
+        coverage=dict(report.get("after") or report.get("before") or {})
+        total=int(coverage.get("total",0) or 0)
+        complete=int(coverage.get("ranking_complete",0) or 0)
+        average=int(coverage.get("average_percent",0) or 0)
+        posters=int(coverage.get("poster_complete",0) or 0)
+        state=str(report.get("state") or "idle")
+
+        box=QFrame(); box.setObjectName("PremiumCard")
+        layout=QVBoxLayout(box); layout.setContentsMargins(20,17,20,17); layout.setSpacing(8)
+        top=QHBoxLayout()
+        heading=QLabel("DATELE RECOMANDĂRILOR"); heading.setObjectName("Kicker"); top.addWidget(heading)
+        top.addStretch(1)
+        score=QLabel(f"{average}% semnale disponibile" if total else "în așteptare")
+        score.setObjectName("Score"); top.addWidget(score); layout.addLayout(top)
+
+        if state == "checking":
+            title="Verific metadatele înainte de clasarea finală"
+            detail="Lista este deja utilizabilă; verificarea rulează în fundal pentru maximum 6 candidați relevanți."
+        elif state == "failed":
+            title="Clasarea sigură a fost păstrată"
+            detail="Sursa publică nu a răspuns; programul nu a modificat ordinea pe baza unor date incomplete."
+        elif bool(report.get("reranked")):
+            title="Clasare recalculată după completarea datelor"
+            fields=sum(len(value) for value in (report.get("ranking_fields_added") or {}).values())
+            detail=f"Au fost adăugate {fields} câmpuri factuale care influențează gustul; ordinea finală a fost calculată o singură dată din nou."
+        elif int(report.get("changed_titles",0) or 0) > 0:
+            title="Detalii completate; ordinea a rămas neschimbată"
+            detail="S-au completat numai elemente vizuale sau informative, fără un motiv factual de reclasare."
+        else:
+            title="Clasare bazată pe datele disponibile"
+            detail="Nu au apărut câmpuri noi care să justifice schimbarea ordinii recomandărilor."
+        label=QLabel(title); label.setObjectName("BodyStrong"); layout.addWidget(label)
+        note=QLabel(detail); note.setObjectName("Muted"); note.setWordWrap(True); layout.addWidget(note)
+
+        facts=QLabel(
+            f"{complete}/{total} titluri au toate semnalele de clasare urmărite • "
+            f"{posters}/{total} au poster • maximum "
+            f"{int(report.get('io_limit',MAX_PREFLIGHT_TITLES) or MAX_PREFLIGHT_TITLES)} verificări per listă"
+            if total else "Acoperirea va fi calculată după prima listă."
+        )
+        facts.setObjectName("Muted"); facts.setWordWrap(True); layout.addWidget(facts)
+        return box
+
     def compact_recommendation_card(self,rec:Recommendation,index:int):
         m,s=rec.movie,rec.score
         box=QFrame(); box.setObjectName("PremiumCard"); box.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Minimum)
@@ -728,6 +793,9 @@ class PremiumDecisionWindow(DecisionWindow):
 
     # ---------- metadata enrichment ----------
     def _ensure_metadata(self,recs:Iterable[Recommendation],page_key:str):
+        if page_key == "recommendations":
+            self._ensure_recommendation_metadata(list(recs))
+            return
         if self.metadata_worker and self.metadata_worker.isRunning(): return
         targets=[]
         for rec in recs:
@@ -761,6 +829,74 @@ class PremiumDecisionWindow(DecisionWindow):
                 elif page_key=="recommendations":self._render_browse(self.browse_result)
         def fail(_):
             self.metadata_worker=None; self.set_status("Recomandările sunt gata; unele descrieri nu au putut fi completate.",False)
+        worker.success.connect(done); worker.failure.connect(fail); worker.start()
+
+    def _ensure_recommendation_metadata(self,recs:list[Recommendation]):
+        if self.metadata_worker and self.metadata_worker.isRunning(): return
+        generation=int(self.browse_generation)
+        token=str(self.db.get_setting("tmdb_token","") or "").strip()
+
+        def fn(progress):
+            preflight=CandidateMetadataPreflight(self.db,token)
+            report=preflight.run(
+                recs,
+                attempted_ids=self.metadata_attempted,
+                limit=MAX_PREFLIGHT_TITLES,
+                progress=progress,
+            )
+            final=list(recs)
+            report["reranked"]=False
+            if report.get("ranking_change"):
+                progress("Recalculez ordinea cu metadatele factuale noi…")
+                final=list(self.s.recommender.recommend(
+                    date.today(),12,
+                    exclude_ids=set(self.session_skips),
+                    record=False,
+                    slot="browse",
+                    candidate_limit=45000,
+                    mode="decide",
+                ))
+                report["reranked"]=True
+                report["after"]=coverage_report(final)
+            return {"report":report,"recommendations":final}
+
+        worker=WorkerThread(fn,self); self.metadata_worker=worker
+        worker.message.connect(lambda message:self.set_status(message,True))
+
+        def done(payload):
+            self.metadata_worker=None
+            if generation != int(self.browse_generation):
+                if self.current_page=="recommendations" and self.browse_result:
+                    self._ensure_recommendation_metadata(list(self.browse_result))
+                return
+            self.recommendation_metadata_report=dict(payload.get("report") or {})
+            self.browse_result=list(payload.get("recommendations") or recs)
+            changed=int(self.recommendation_metadata_report.get("changed_titles",0) or 0)
+            self.set_status(
+                "Clasarea finală folosește metadatele verificate." if changed
+                else "Recomandările sunt gata; ordinea nu a necesitat modificări.",
+                False,
+            )
+            if self.current_page=="recommendations":
+                self._render_browse(self.browse_result)
+
+        def fail(message):
+            self.metadata_worker=None
+            if generation != int(self.browse_generation):
+                if self.current_page=="recommendations" and self.browse_result:
+                    self._ensure_recommendation_metadata(list(self.browse_result))
+                return
+            coverage=coverage_report(recs)
+            self.recommendation_metadata_report={
+                "state":"failed", "before":coverage, "after":coverage,
+                "attempted":0, "changed_titles":0, "ranking_fields_added":{},
+                "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
+                "error":str(message),
+            }
+            self.set_status("Recomandările sunt gata; sursa de metadate nu a răspuns.",False)
+            if self.current_page=="recommendations":
+                self._render_browse(self.browse_result)
+
         worker.success.connect(done); worker.failure.connect(fail); worker.start()
 
     def open_details(self,rec:Recommendation):

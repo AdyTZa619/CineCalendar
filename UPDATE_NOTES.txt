@@ -1,38 +1,36 @@
-CineCalendar 4.7.0 – Recomandări protejate după rezultate reale
+CineCalendar 4.8.0 – Metadate verificate înainte de clasarea finală
 
 Obiectiv:
-- backtestul costisitor să nu se repete după orice feedback sau la fiecare pornire;
-- fiecare formulă ALS/conținut să poată fi măsurată separat în utilizarea reală;
-- o formulă care regresează după activare să fie retrasă automat, fără reacții la cazuri izolate.
+- recomandările vizibile să nu fie ordonate cu date lipsă care pot fi completate în siguranță;
+- completarea să rămână limitată, transparentă și blândă cu SSD-ul;
+- ordinea să nu fie schimbată pentru un poster sau pentru o eroare de rețea.
 
-1. Recalibrare economică
-- feedbackul contextual precum „Nu acum”, „Prea lung” sau „Prea similar” nu mai invalidează calibrarea globală;
-- după primul verdict, ratingurile noi/modificate sunt acumulate până la 1% din bibliotecă, cu prag minim 12 și maxim 40;
-- cele patru formule folosesc o singură copie SQLite per fereastră, reducând cu 75% copiile temporare ale catalogului pentru această comparație;
-- schimbarea reală a motorului de clasare forțează în continuare reevaluarea;
-- ultima formulă validată rămâne activă cât timp schimbările sunt insuficiente sau recalibrarea rulează;
-- Taste Hub și Recomandări afișează starea și progresul evaluării.
+1. Candidate Metadata Preflight
+- pagina Recomandări verifică în fundal maximum 6 titluri relevante din lista calculată;
+- folosește TMDb când există token local și Wikimedia ca fallback;
+- păstrează cache-ul local și politica existentă de completare numai a câmpurilor lipsă;
+- volumul maxim de titluri verificate rămâne același ca în 4.7, unde completarea se făcea după afișare.
 
-2. Validare live și rollback
-- 70/30, 50/50, 60/40 și 80/20 au identități telemetry distincte în istoricul recomandărilor;
-- formula activă este verificată pe alegeri, vizionări, ratinguri ulterioare de minimum 8 și eroarea dintre nota estimată și cea reală;
-- sunt necesare minimum 20 de rezultate cu rating în fiecare cohortă;
-- rollback-ul cere minimum două regresii independente; un singur film slab nu poate retrage motorul;
-- dacă gardurile sunt încălcate, aplicația revine la baseline la pornirea următoare.
+2. Reclasare justificată
+- o singură reclasare este permisă când au fost adăugate genuri, regizori, țări, synopsis/keywords sau durată;
+- un poster nou ori altă completare exclusiv vizuală nu modifică ordinea;
+- dacă sursele nu răspund sau nu găsesc date, lista sigură existentă este păstrată;
+- algoritmul și ponderile validate în 4.7 nu sunt schimbate, deci backtestul costisitor nu este repornit doar pentru această actualizare.
 
 3. Vizibil în Recomandări
-- cardul „Protecția recomandărilor” arată formula folosită efectiv;
-- afișează progresul rezultatelor reale, starea motorului sigur și eventualul rollback;
-- arată câte ratinguri relevante mai sunt necesare înainte de următorul backtest.
+- noul card „Datele recomandărilor” arată procentul semnalelor disponibile;
+- afișează câte titluri au toate câmpurile de clasare și câte au poster;
+- confirmă explicit dacă ordinea a fost recalculată sau păstrată;
+- arată limita de maximum 6 verificări per listă.
 
 Compatibilitate:
 - schema SQLite rămâne v9 și nu necesită migrare;
-- toate datele și evaluările rămân locale;
-- verdictul 4.6 existent este păstrat și nu este recalculat doar pentru actualizarea interfeței/protecției.
+- protecția live și recalibrarea economică 4.7 rămân active;
+- datele personale, tokenul TMDb și cache-ul rămân locale.
 
 Versiune:
-- aplicație 4.7.0;
-- production-stack-v4.7.0-live-protected;
+- aplicație 4.8.0;
+- production-stack-v4.8.0-metadata-preflight;
+- candidate-metadata-v4.8.0;
 - quality-manager-v4.7.0-live-protected;
-- recommendation-live-guard-v4.7.0;
 - SQLite schema v9.
