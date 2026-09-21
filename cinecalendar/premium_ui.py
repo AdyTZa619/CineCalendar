@@ -332,6 +332,14 @@ class PremiumDecisionWindow(DecisionWindow):
         # The shared feedback method excludes the title only after persistence succeeds.
         self.feedback(int(movie_id), str(kind))
 
+    def active_contextual_feedback(self) -> tuple[tuple[str, int], ...]:
+        kinds = {"not_now", "too_long", "mood_mismatch", "too_similar"}
+        return tuple(
+            (str(receipt.kind), int(receipt.movie_id))
+            for receipt in self._feedback_undo_stack
+            if receipt.kind in kinds
+        )
+
     def contextual_feedback_menu(self, movie_id: int, button: QPushButton) -> None:
         menu = QMenu(self)
         choices = (
@@ -426,7 +434,16 @@ class PremiumDecisionWindow(DecisionWindow):
         if self.today_worker and self.today_worker.isRunning():
             return
         self.set_status("Calculez alegerea zilei…", True)
-        worker = WorkerThread(lambda progress: self.s.recommender.decision_pick(date.today(), self.session_skips, self.decision_mode), self)
+        contextual_feedback = self.active_contextual_feedback()
+        worker = WorkerThread(
+            lambda progress: self.s.recommender.decision_pick(
+                date.today(),
+                self.session_skips,
+                self.decision_mode,
+                contextual_feedback=contextual_feedback,
+            ),
+            self,
+        )
         self.today_worker = worker
         def success(result):
             self.today_worker = None

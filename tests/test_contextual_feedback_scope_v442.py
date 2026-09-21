@@ -4,7 +4,8 @@ import json
 
 from cinecalendar.db import Database
 from cinecalendar.feedback import apply_feedback
-from cinecalendar.models import Movie
+from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
+from cinecalendar.personalization_v41 import PersonalizationBrainV41
 from cinecalendar.util import utcnow_iso
 from cinecalendar.watch_success import WatchSuccessIntentLearner, feedback_feature_vector
 
@@ -91,3 +92,63 @@ def test_explicit_similarity_feedback_still_uses_the_full_feature_vector():
     assert "runtime:>150" in scoped
     assert "country:romania" in scoped
     assert "director:director test" in scoped
+
+
+def _candidate(movie_id: int, title: str, genre: str, director: str, final: float) -> Recommendation:
+    return Recommendation(
+        Movie(
+            id=movie_id,
+            title=title,
+            year=2024,
+            runtime_min=100,
+            genres=[genre],
+            directors=[director],
+            countries=["Romania"],
+            semantic={genre.casefold(): 1.0},
+            num_votes=20_000,
+        ),
+        ScoreBreakdown(final=final, predicted_rating=8.0, confidence=0.8),
+    )
+
+
+def test_too_long_immediately_moves_to_the_next_shorter_runtime_band():
+    rejected = _movie()
+    assert PersonalizationBrainV41.contextual_runtime_max([("too_long", rejected)]) == 120
+    rejected.runtime_min = 110
+    assert PersonalizationBrainV41.contextual_runtime_max([("too_long", rejected)]) == 90
+    rejected.runtime_min = 80
+    assert PersonalizationBrainV41.contextual_runtime_max([("too_long", rejected)]) == 60
+
+
+def test_too_similar_immediately_prefers_a_distinct_good_alternative():
+    rejected = Movie(
+        id=10,
+        title="Rejected",
+        genres=["Drama"],
+        directors=["Same Director"],
+        semantic={"history": 1.0},
+    )
+    very_similar = _candidate(11, "Very similar", "Drama", "Same Director", 0.90)
+    distinct = _candidate(12, "Distinct", "Comedy", "Other Director", 0.87)
+
+    selected = PersonalizationBrainV41.apply_contextual_session(
+        [very_similar, distinct],
+        [("too_similar", rejected)],
+        2,
+    )
+
+    assert selected[0].movie.id == 12
+    assert selected[0].score.final == 0.87
+    assert any(name == "Motivul ales acum" for name, _points, _reason in selected[0].score.contributions) is False
+
+
+def test_session_feedback_resolves_only_explicit_current_receipts(tmp_path):
+    db = Database(tmp_path / "session-context.db")
+    movie_id = _insert_movie(db)
+    brain = PersonalizationBrainV41(db)
+
+    context = brain.resolve_contextual_session(
+        [("too_long", movie_id), ("not_now", movie_id), ("invalid", movie_id), ("too_similar", -1)]
+    )
+
+    assert [kind for kind, _movie_value in context] == ["too_long", "not_now"]

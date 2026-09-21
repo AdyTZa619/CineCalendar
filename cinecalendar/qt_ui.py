@@ -416,7 +416,13 @@ class CineCalendarWindow(QMainWindow):
                 self.session_skips.add(int(movie_id))
             self._refresh_feedback_undo_button()
             if kind in {"not_now","too_long","mood_mismatch","too_similar"}:
-                self.set_status("Feedback contextual salvat; nu modifică permanent gustul. Ctrl+Z îl anulează.")
+                effect = {
+                    "not_now": "Următoarea alegere exclude filmul acesta.",
+                    "too_long": "Următoarea alegere va fi dintr-o categorie de durată mai scurtă.",
+                    "mood_mismatch": "Următoarea alegere va schimba genul sau atmosfera.",
+                    "too_similar": "Următoarea alegere va căuta mai multă varietate.",
+                }.get(kind, "")
+                self.set_status(f"{effect} Feedbackul nu modifică permanent gustul. Ctrl+Z anulează.")
             elif kind == "not_interested":
                 self.set_status("Filmul a fost ascuns fără să afecteze filmele similare. Ctrl+Z îl readuce.")
             else:

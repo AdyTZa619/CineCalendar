@@ -8,10 +8,12 @@ import threading
 from typing import Iterable
 
 from .recommendation import row_to_movie
-from .util import clamp, json_loads
+from .util import clamp, cosine_sparse, json_loads
+from .watch_success import feedback_feature_vector
 
-PERSONALIZATION_V41_VERSION = "personalization-v4.1.0"
+PERSONALIZATION_V41_VERSION = "personalization-v4.5.0-immediate-context"
 QUALITY_SETTING = "personalization_v41_quality"
+CONTEXTUAL_SESSION_KINDS = {"not_now", "too_long", "mood_mismatch", "too_similar"}
 
 
 @dataclass(frozen=True)
@@ -708,6 +710,95 @@ class PersonalizationBrainV41:
             return None, 181
         return None, None
 
+    def resolve_contextual_session(self, feedback) -> list[tuple[str, object]]:
+        """Resolve current-session feedback receipts to movies without consulting older history."""
+        normalized: list[tuple[str, int]] = []
+        for item in feedback or ():
+            try:
+                kind, movie_id = item
+                movie_id = int(movie_id)
+            except (TypeError, ValueError):
+                continue
+            kind = str(kind or "")
+            if kind in CONTEXTUAL_SESSION_KINDS and movie_id > 0:
+                normalized.append((kind, movie_id))
+        if not normalized:
+            return []
+
+        ids = sorted({movie_id for _kind, movie_id in normalized})
+        marks = ",".join("?" for _ in ids)
+        with self.db.connect() as con:
+            rows = con.execute(f"SELECT * FROM movies WHERE id IN ({marks})", ids).fetchall()
+        movies = {int(row["id"]): row_to_movie(row) for row in rows}
+        return [(kind, movies[movie_id]) for kind, movie_id in normalized if movie_id in movies]
+
+    @staticmethod
+    def contextual_runtime_max(context: Iterable[tuple[str, object]]) -> int | None:
+        """Choose the next standard duration band below every title rejected as too long."""
+        limits: list[int] = []
+        for kind, movie in context:
+            if kind != "too_long":
+                continue
+            runtime = getattr(movie, "runtime_min", None)
+            if runtime is None:
+                continue
+            runtime = int(runtime)
+            if runtime > 120:
+                limits.append(120)
+            elif runtime > 90:
+                limits.append(90)
+            elif runtime > 60:
+                limits.append(60)
+        return min(limits) if limits else None
+
+    @staticmethod
+    def apply_contextual_session(recs, context, count: int):
+        """Immediately reorder good candidates according to reasons selected in this session."""
+        recs = list(recs)
+        requested = max(1, int(count))
+        if not recs or not context:
+            return recs[:requested]
+
+        ranked = []
+        for position, rec in enumerate(recs):
+            penalty = 0.0
+            reasons: list[str] = []
+            for kind, rejected in context:
+                if kind not in {"mood_mismatch", "too_similar"}:
+                    continue
+                rejected_vec = feedback_feature_vector(kind, rejected)
+                candidate_vec = feedback_feature_vector(kind, rec.movie)
+                similarity = clamp(cosine_sparse(rejected_vec, candidate_vec))
+                if similarity <= 0:
+                    continue
+                if kind == "mood_mismatch":
+                    penalty += 0.055 * similarity
+                    reasons.append("alt gen/altă atmosferă")
+                else:
+                    penalty += 0.085 * similarity
+                    reasons.append("mai puțin similar cu alegerea respinsă")
+            penalty = min(0.12, penalty)
+            ranked.append((float(rec.score.final) - penalty, -position, rec, penalty, reasons))
+
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        selected = []
+        for _value, _position, rec, penalty, reasons in ranked[:requested]:
+            if penalty > 0:
+                reason = "; ".join(dict.fromkeys(reasons))
+                rec.score.contributions = [
+                    item for item in rec.score.contributions if item[0] != "Motivul ales acum"
+                ]
+                rec.score.contributions.insert(
+                    0,
+                    (
+                        "Motivul ales acum",
+                        0.0,
+                        "Ordinea alternativelor respectă imediat feedbackul din sesiunea curentă: " + reason + ".",
+                    ),
+                )
+            selected.append(rec)
+        return selected
+
 
 def personalization_engine_class(base_cls: type) -> type:
     if bool(getattr(base_cls, "_cinecalendar_v41_personalization", False)):
@@ -765,10 +856,17 @@ def personalization_engine_class(base_cls: type) -> type:
                     recorder(enhanced, when, slot, len(base))
             return enhanced
 
-        def decision_pick(self, when=None, exclude_ids=None, mode="decide"):
+        def decision_pick(
+            self, when=None, exclude_ids=None, mode="decide", *, contextual_feedback=None,
+        ):
             when = when or date.today()
             runtime_max, runtime_min = self.personalization_v41.choose_runtime_bounds()
-            if runtime_max is None and runtime_min is None:
+            context = self.personalization_v41.resolve_contextual_session(contextual_feedback)
+            contextual_max = self.personalization_v41.contextual_runtime_max(context)
+            if contextual_max is not None:
+                runtime_max = min(runtime_max, contextual_max) if runtime_max is not None else contextual_max
+                runtime_min = None
+            if runtime_max is None and runtime_min is None and not context:
                 return super().decision_pick(when, exclude_ids, mode)
             pool = self.recommend(
                 when=when,
@@ -781,7 +879,8 @@ def personalization_engine_class(base_cls: type) -> type:
                 runtime_max=runtime_max,
                 runtime_min=runtime_min,
             )
-            return (pool[0] if pool else None, pool[1:3])
+            selected = self.personalization_v41.apply_contextual_session(pool, context, 3)
+            return (selected[0] if selected else None, selected[1:3])
 
         def personalization_status(self) -> dict:
             return self.personalization_v41.status()
