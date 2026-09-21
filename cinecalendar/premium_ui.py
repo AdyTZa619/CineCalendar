@@ -329,8 +329,7 @@ class PremiumDecisionWindow(DecisionWindow):
         return "Descrierea și imaginea se completează automat din surse deschise. Nu trebuie să adaugi nimic manual."
 
     def apply_contextual_feedback(self, movie_id: int, kind: str) -> None:
-        if kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}:
-            self.session_skips.add(int(movie_id))
+        # The shared feedback method excludes the title only after persistence succeeds.
         self.feedback(int(movie_id), str(kind))
 
     def contextual_feedback_menu(self, movie_id: int, button: QPushButton) -> None:

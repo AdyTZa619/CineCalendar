@@ -1,34 +1,27 @@
-CineCalendar 4.4.1 – Backtest Temp Safety
+CineCalendar 4.4.2 – Feedback contextual precis
 
 Obiectiv:
-- oprește acumularea folderelor cinecalendar-backtest-* în %TEMP%;
-- păstrează evaluarea locală de calitate, dar o face recuperabilă după închideri sau întreruperi;
-- evită repornirea imediată a aceluiași backtest greu după fiecare lansare.
+- motivele temporare schimbă numai partea relevantă a recomandării;
+- „Nu acum” nu mai este confundat cu o antipatie pentru gen, regizor sau țară;
+- o acțiune eșuată nu mai poate ascunde filmul doar în interfață.
 
-1. Workspace-uri temporare gestionate
-- backtesturile standard și rolling creează acum un marker local cu PID-ul procesului proprietar;
-- la terminare normală, workspace-ul temporar este eliminat ca înainte;
-- dacă procesul este închis în timpul testului, markerul permite recunoașterea sigură a folderului abandonat la următoarea pornire.
+1. Învățare limitată la motivul ales
+- „Prea lung pentru moment” influențează numai categoria de durată;
+- „Nu am chef de genul acesta acum” influențează temporar doar genul și temele;
+- „Prea similar” influențează temporar identitatea de conținut (gen, teme și regizor), nu durata, țara, deceniul sau popularitatea;
+- „Nu acum” exclude doar titlul din sesiunea curentă și nu antrenează un profil negativ de similaritate.
 
-2. Curățare automată la pornire
-- CineCalendar curăță workspace-urile abandonate cinecalendar-backtest-* și cinecalendar-rolling37-*;
-- directoarele create de versiuni mai vechi, fără marker de proprietar, sunt curățate numai după o perioadă de siguranță;
-- workspace-urile cu un proces proprietar încă activ sunt păstrate;
-- directoarele altor aplicații din %TEMP% nu sunt atinse.
+2. Siguranță în interfață
+- titlul este exclus din sesiune numai după ce feedbackul a fost salvat cu succes;
+- anularea unuia dintre mai multe motive pentru același film păstrează excluderea cât timp mai există un feedback contextual activ în sesiune.
 
-3. Protecție împotriva relansărilor repetate
-- dacă aplicația a fost închisă în timp ce quality backtest-ul V3.4 era în rulare, următoarea pornire îl marchează ca întrerupt;
-- același test nu mai este repornit imediat la fiecare lansare;
-- retry-ul automat are cooldown, iar motorul validat anterior rămâne fallback.
-
-4. Compatibilitate
-- formula de scoring nu este schimbată;
-- production-stack rămâne production-stack-v4.4.0-feedback-protection, pentru a nu invalida inutil o calibrare deja măsurată;
-- schema SQLite rămâne v9;
-- Profile Backup rămâne v4;
-- ratingurile, istoricul, outcomes și explicațiile nu sunt modificate.
+3. Verificare
+- teste de regresie pentru fiecare tip de feedback contextual;
+- documentația schemei SQLite este sincronizată cu versiunea reală v9;
+- ratingurile, istoricul, outcomes, explicațiile și schema bazei de date nu sunt modificate.
 
 Versiune:
-- aplicație 4.4.1;
-- production-stack-v4.4.0-feedback-protection;
+- aplicație 4.4.2;
+- production-stack-v4.4.2-reason-scoped-feedback;
+- Watch Success v4 reason-scoped;
 - SQLite schema v9.

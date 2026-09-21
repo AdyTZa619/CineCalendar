@@ -3,7 +3,7 @@ from __future__ import annotations
 from .watch_success import WatchSuccessIntentLearner
 
 
-MODEL_VERSION = "watch-success-v3.3-exposure"
+MODEL_VERSION = "watch-success-v4.4.2-exposure-scoped"
 
 
 class WatchSuccessIntentLearnerV33(WatchSuccessIntentLearner):

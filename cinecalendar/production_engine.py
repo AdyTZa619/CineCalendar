@@ -10,7 +10,7 @@ from .personalization_v41 import PERSONALIZATION_V41_VERSION, personalization_en
 from .learning_insight_v43 import LEARNING_INSIGHT_VERSION, learning_insight_engine_class
 
 
-PRODUCTION_STACK_VERSION = "production-stack-v4.4.0-feedback-protection"
+PRODUCTION_STACK_VERSION = "production-stack-v4.4.2-reason-scoped-feedback"
 
 
 def production_engine_class(base_cls: type) -> type:
