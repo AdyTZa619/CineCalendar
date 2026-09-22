@@ -18,6 +18,41 @@ MANAGED_PREFIXES = (
 )
 LEGACY_GRACE_SECONDS = 30 * 60
 MAX_OWNED_AGE_SECONDS = 24 * 60 * 60
+DEFAULT_MAX_SNAPSHOT_BYTES = 3 * 1024 * 1024 * 1024
+DEFAULT_RESERVE_BYTES = 2 * 1024 * 1024 * 1024
+
+
+class BacktestStorageError(RuntimeError):
+    """Raised before a backtest can consume an unsafe amount of temporary disk space."""
+
+
+def backtest_storage_guard(
+    source_path: str | Path,
+    *,
+    temp_root: str | Path | None = None,
+    max_snapshot_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES,
+    reserve_bytes: int = DEFAULT_RESERVE_BYTES,
+) -> dict:
+    source = Path(source_path).expanduser().resolve()
+    root = Path(temp_root).expanduser().resolve() if temp_root is not None else Path(tempfile.gettempdir()).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    source_bytes = source.stat().st_size
+    for suffix in ("-wal", "-shm"):
+        companion = Path(str(source) + suffix)
+        if companion.is_file():
+            source_bytes += companion.stat().st_size
+    # SQLite backup may temporarily need extra pages while the isolated copy is modified.
+    required = max(source_bytes, int(source_bytes * 1.25))
+    free = int(shutil.disk_usage(root).free)
+    if required > int(max_snapshot_bytes):
+        raise BacktestStorageError(
+            f"Backtest amânat: copia estimată ({required / 1024**3:.2f} GB) depășește limita sigură de {max_snapshot_bytes / 1024**3:.2f} GB."
+        )
+    if free - required < int(reserve_bytes):
+        raise BacktestStorageError(
+            f"Backtest amânat: sunt necesari aproximativ {required / 1024**3:.2f} GB și trebuie păstrați liberi {reserve_bytes / 1024**3:.2f} GB."
+        )
+    return {"source_bytes": source_bytes, "required_bytes": required, "free_bytes": free}
 
 
 def _pid_is_running(pid: int) -> bool:

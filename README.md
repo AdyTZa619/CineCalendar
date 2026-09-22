@@ -63,6 +63,12 @@ astfel încât protecția live măsoară exact formula care a produs recomandare
 listei finale, iar o deschidere produce un singur set de expuneri. Erorile surselor sunt separate
 în stări complete, parțiale și eșuate și sunt afișate explicit.
 
+În 4.9, preflight-ul alege maximum șase verificări cu impact dintre 36 de finaliști și respectă
+un buget total de timp, astfel încât o sursă lentă nu ține blocată pagina. TMDb selectează postere
+w500 cu prioritate română/engleză, iar Wikidata/Wikipedia rămâne fallback fără cheie și cu cache.
+Lista finală are 12 filme, fiecare card permite alegerea directă, iar protecția live se reîmprospătează
+după alegere, vizionare sau rating. Backtesturile verifică spațiul liber înainte de orice copie SQLite.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3

@@ -10,12 +10,14 @@ from .semantic import extract_semantic
 from .util import json_dumps, json_loads, utcnow_iso
 
 API_BASE="https://api.themoviedb.org/3"
-IMG_BASE="https://image.tmdb.org/t/p/w342"
+IMG_BASE="https://image.tmdb.org/t/p/w500"
 
 class TmdbProvider:
-    def __init__(self, db: Database, token: str):
+    def __init__(self, db: Database, token: str, request_timeout=(5.0, 12.0)):
         self.db=db; self.token=token.strip()
         if not self.token: raise ValueError("Lipsește TMDb API Read Access Token.")
+        self.request_timeout=request_timeout
+        self.last_status="idle"; self.last_error=""
         self.session=requests.Session(); self.session.headers.update({"Authorization":f"Bearer {self.token}","accept":"application/json"})
 
     def _get(self,path:str,params:dict|None=None,cache_hours:int=168)->dict:
@@ -24,9 +26,16 @@ class TmdbProvider:
             row=con.execute("SELECT payload_json,expires_at FROM metadata_cache WHERE provider='tmdb' AND cache_key=?",(key,)).fetchone()
         if row and row["expires_at"]:
             try:
-                if datetime.fromisoformat(row["expires_at"])>datetime.now(timezone.utc): return json_loads(row["payload_json"],{})
+                if datetime.fromisoformat(row["expires_at"])>datetime.now(timezone.utc):
+                    self.last_status="cache"
+                    return json_loads(row["payload_json"],{})
             except ValueError: pass
-        resp=self.session.get(API_BASE+path,params=params,timeout=20); resp.raise_for_status(); data=resp.json()
+        try:
+            resp=self.session.get(API_BASE+path,params=params,timeout=self.request_timeout); resp.raise_for_status(); data=resp.json()
+        except requests.RequestException as exc:
+            self.last_status="error"; self.last_error=str(exc)
+            raise
+        self.last_status="success"; self.last_error=""
         expires=(datetime.now(timezone.utc)+timedelta(hours=cache_hours)).replace(microsecond=0).isoformat()
         with self.db.tx() as con:
             con.execute("""INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at) VALUES('tmdb',?,?,?,?)
@@ -44,7 +53,10 @@ class TmdbProvider:
         results=found.get("movie_results") or []
         if not results: return movie
         tmdb_id=int(results[0]["id"])
-        details=self._get(f"/movie/{tmdb_id}",{"append_to_response":"credits,keywords,external_ids"})
+        details=self._get(
+            f"/movie/{tmdb_id}",
+            {"append_to_response":"credits,keywords,external_ids,images", "include_image_language":"ro,en,null"},
+        )
         changed_fields: list[str] = ["tmdb_id"]
         original_title = str(details.get("original_title") or "").strip()
         if not movie.original_title and original_title:
@@ -76,7 +88,7 @@ class TmdbProvider:
         if not movie.keywords and keywords:
             movie.keywords=keywords
             changed_fields.append("keywords")
-        poster=details.get("poster_path")
+        poster=self._best_poster(details)
         if not movie.poster_url and poster:
             movie.poster_url=IMG_BASE+poster
             changed_fields.append("poster_url")
@@ -94,6 +106,22 @@ class TmdbProvider:
                     updated_at=stamp,
                 )
         return movie
+
+    @staticmethod
+    def _best_poster(details: dict) -> str:
+        """Prefer a useful Romanian/English poster, then TMDb's canonical poster."""
+        posters=list((details.get("images") or {}).get("posters") or [])
+        language_priority={"ro":3,"en":2,None:1,"":1}
+        def quality(item):
+            language=language_priority.get(item.get("iso_639_1"),0)
+            votes=int(item.get("vote_count") or 0)
+            average=float(item.get("vote_average") or 0.0)
+            width=int(item.get("width") or 0)
+            return (language, min(votes,100), average, width)
+        posters=[item for item in posters if item.get("file_path")]
+        if posters:
+            return str(max(posters,key=quality)["file_path"])
+        return str(details.get("poster_path") or "")
 
 
 

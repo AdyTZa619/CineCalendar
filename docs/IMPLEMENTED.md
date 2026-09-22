@@ -23,6 +23,8 @@
 - Live Recommendation Guard 4.7 validează formula activă pe alegeri, vizionări, rata ratingurilor ≥8 și MAE și revine la baseline numai dacă minimum două semnale independente indică regresie;
 - Candidate Metadata Preflight 4.8 verifică maximum șase recomandări vizibile și cere o singură reclasare numai când apar câmpuri factuale noi folosite de motor;
 - corecția 4.8.1 înregistrează identitatea completă a formulei în fluxul UI și afișează numai lista finală după preflight, eliminând expunerile duplicate ale aceleiași încărcări;
+- în 4.9, cele șase verificări sunt alese după impact din 36 de finaliști, cu buget total de timp, timeout și oprire după erori repetate;
+- TMDb selectează posterul w500 preferând româna, apoi engleza și calitatea, iar Wikimedia rămâne fallback cu cache;
 - completările exclusiv vizuale, precum posterul, actualizează cardul fără să schimbe ordinea recomandărilor;
 - evaluarea 3.7 folosește ferestre temporale ne-suprapuse și elimină din training atât holdout-ul curent, cât și toate ratingurile ulterioare;
 - Availability Guard 3.7 elimină titlurile cu an sau dată de lansare cunoscută după data recomandării, fără să schimbe ordinea filmelor eligibile;
@@ -37,12 +39,15 @@
 - pagina Recomandări afișează formula activă, progresul validării live, rollback-ul și starea recalibrării economisite;
 - pagina Recomandări afișează acoperirea metadatelor de clasare, limita de verificare și dacă ordinea a fost recalculată justificat;
 - pagina Recomandări afișează numărul de alegeri/ratinguri atribuite formulei active și distinge verificarea completă, parțială și eșuată a surselor;
+- cardurile din Recomandări permit alegerea directă și păstrează ID-ul expunerii exacte;
+- protecția recomandărilor arată acoperirea ALS și se actualizează după alegeri, vizionări și ratinguri;
 - feedbackul 4.4 separă explicit „Ascunde doar filmul” de „Nu-mi recomanda similare”;
 - „Ascunde doar filmul” exclude titlul exact fără să antreneze profilul, ALS, Adaptive Personal sau Watch Success împotriva caracteristicilor lui;
 - feedbackul aplicat în sesiunea curentă poate fi anulat exact, în ordine inversă, din bara laterală sau cu `Ctrl+Z`; Watchlist-ul derivat este refăcut tranzacțional.
 
 ## Persistență și siguranță
 - SQLite WAL, schema curentă v9, `quick_check` la startup și snapshot automat `last_good` pentru recovery;
+- backtesturile au un buget dur de snapshot și rezervă de spațiu liber înainte să scrie copia temporară;
 - expunerile de recomandare sunt rădăcini imuabile; `chosen`, `skip_today`, `trailer_opened`, `stremio_opened`, `playback_confirmed` și `watched` sunt evenimente append-only;
 - feedbackul nu mai modifică expunerea originală;
 - migrațiile sunt idempotente, verificate cu `foreign_key_check`/`quick_check` și precedate de snapshot SQLite când este necesară o schimbare/reparație;

@@ -98,6 +98,7 @@ def install_performance_ui_patch(window_cls) -> None:
                     self.set_status("Nu am găsit un export IMDb nou și valid în folderul urmărit.", False)
                 return
             result = results[0]
+            self.refresh_live_recommendation_guard()
             self.set_status(
                 f"Export IMDb nou importat: {len(result.new_ratings)} ratinguri noi, "
                 f"{len(result.changed_ratings)} modificate.",

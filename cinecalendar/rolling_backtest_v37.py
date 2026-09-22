@@ -17,7 +17,7 @@ from .recommendation_backtest import (
     ranking_quality_metrics,
     visible_outcome_metrics,
 )
-from .temp_workspaces import managed_temp_workspace
+from .temp_workspaces import backtest_storage_guard, managed_temp_workspace
 
 
 BACKTEST_VERSION = "rolling-temporal-v3.7.0"
@@ -162,6 +162,7 @@ def run_window_backtest(
     source_path = Path(db_path).expanduser().resolve()
     if not source_path.is_file():
         raise FileNotFoundError(source_path)
+    backtest_storage_guard(source_path)
 
     with managed_temp_workspace("cinecalendar-rolling37-") as tmp:
         temp_path = tmp / "cinecalendar.db"
@@ -272,6 +273,7 @@ def run_window_backtest_group(
     source_path = Path(db_path).expanduser().resolve()
     if not source_path.is_file():
         raise FileNotFoundError(source_path)
+    backtest_storage_guard(source_path)
     with managed_temp_workspace("cinecalendar-rolling37-") as tmp:
         temp_path = tmp / "cinecalendar.db"
         _sqlite_backup(source_path, temp_path)

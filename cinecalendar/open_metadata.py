@@ -25,8 +25,12 @@ USER_AGENT = "CineCalendar/2.1 personal desktop movie recommender (Wikimedia met
 
 
 class OpenMovieMetadataProvider:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, request_timeout=(5.0, 12.0), summary_timeout=(4.0, 8.0)):
         self.db = db
+        self.request_timeout = request_timeout
+        self.summary_timeout = summary_timeout
+        self.last_status = "idle"
+        self.last_error = ""
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
 
@@ -58,7 +62,7 @@ class OpenMovieMetadataProvider:
             )
 
     @staticmethod
-    def _article_summary(session: requests.Session, article_url: str) -> dict:
+    def _article_summary(session: requests.Session, article_url: str, timeout=(4.0, 8.0)) -> dict:
         if not article_url:
             return {}
         parsed = urlparse(article_url)
@@ -69,7 +73,7 @@ class OpenMovieMetadataProvider:
         if not title:
             return {}
         url = f"https://{host}/api/rest_v1/page/summary/{quote(title, safe='')}"
-        response = session.get(url, timeout=(8, 15))
+        response = session.get(url, timeout=timeout)
         if response.status_code != 200:
             return {}
         data = response.json()
@@ -98,7 +102,7 @@ class OpenMovieMetadataProvider:
           OPTIONAL {{ ?enArticle schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }}
           SERVICE wikibase:label {{ bd:serviceParam wikibase:language "ro,en". }}
         }} LIMIT 30'''
-        response = self.session.get(WDQS, params={"query": query, "format": "json"}, timeout=(10, 25))
+        response = self.session.get(WDQS, params={"query": query, "format": "json"}, timeout=self.request_timeout)
         response.raise_for_status()
         bindings = response.json().get("results", {}).get("bindings", [])
         if not bindings:
@@ -132,7 +136,7 @@ class OpenMovieMetadataProvider:
         article = first.get("roArticle", {}).get("value") or first.get("enArticle", {}).get("value") or ""
         summary = {}
         try:
-            summary = self._article_summary(self.session, article)
+            summary = self._article_summary(self.session, article, self.summary_timeout)
         except requests.RequestException:
             summary = {}
 
@@ -154,10 +158,16 @@ class OpenMovieMetadataProvider:
             return movie
         key = f"movie:v2:{movie.imdb_id}"
         payload = self._cached(key)
+        if payload is not None:
+            self.last_status = "cache"
         if payload is None:
             try:
                 payload = self._fetch(movie.imdb_id)
-            except requests.RequestException:
+                self.last_status = "success" if payload else "empty"
+                self.last_error = ""
+            except requests.RequestException as exc:
+                self.last_status = "error"
+                self.last_error = str(exc)
                 return movie
             self._store(key, payload, days=30 if payload else 7)
         if not payload:

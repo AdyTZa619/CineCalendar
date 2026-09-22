@@ -15,6 +15,7 @@ from . import __version__ as APP_VERSION
 from .candidate_metadata_v48 import (
     CandidateMetadataPreflight,
     MAX_PREFLIGHT_TITLES,
+    PREFLIGHT_POOL_SIZE,
     coverage_report,
 )
 from .feedback import daily_contextual_feedback
@@ -600,15 +601,16 @@ class PremiumDecisionWindow(DecisionWindow):
         if self.current_page != "recommendations": return
         self.browse_generation += 1
         self.set_status("Calculez recomandările…",True)
-        worker=WorkerThread(lambda progress:self.s.recommender.recommend(date.today(),12,exclude_ids=set(self.session_skips),record=False,slot="browse",candidate_limit=45000,mode="decide"),self)
+        worker=WorkerThread(lambda progress:self.s.recommender.recommend(date.today(),PREFLIGHT_POOL_SIZE,exclude_ids=set(self.session_skips),record=False,slot="browse",candidate_limit=45000,mode="decide"),self)
         self.browse_worker=worker
         def success(recs):
             self.browse_worker=None; self.browse_result=list(recs); self.set_status("Recomandările sunt gata.",False)
-            coverage=coverage_report(self.browse_result)
+            coverage=coverage_report(self.browse_result[:12])
             self.recommendation_metadata_report={
                 "state":"checking", "before":coverage, "after":coverage,
                 "attempted":0, "changed_titles":0, "ranking_fields_added":{},
                 "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
+                "pool_size":len(self.browse_result),
             }
             if self.current_page=="recommendations":
                 # Keep the loading panel until preflight finishes. Rendering this provisional
@@ -694,6 +696,16 @@ class PremiumDecisionWindow(DecisionWindow):
             schedule="Calibrarea este la zi; deschiderea programului nu repetă backtestul."
         schedule_label=QLabel(schedule); schedule_label.setObjectName("Muted")
         schedule_label.setWordWrap(True); layout.addWidget(schedule_label)
+        try:
+            collaborative=dict(self.s.recommender.collaborative.status() or {})
+        except Exception:
+            collaborative={}
+        mapped=int(collaborative.get("mapped_ratings",0) or 0)
+        total_ratings=int(collaborative.get("total_ratings",0) or 0)
+        if total_ratings:
+            percent=round(100.0*mapped/total_ratings)
+            mapping=QLabel(f"Acoperire ALS: {mapped:,}/{total_ratings:,} ratinguri mapate ({percent}%).")
+            mapping.setObjectName("Muted"); mapping.setWordWrap(True); layout.addWidget(mapping)
         return box
 
     def recommendation_metadata_card(self):
@@ -715,7 +727,8 @@ class PremiumDecisionWindow(DecisionWindow):
 
         if state == "checking":
             title="Verific metadatele înainte de clasarea finală"
-            detail="Verificarea rulează înainte de afișarea listei finale pentru maximum 6 candidați relevanți."
+            pool=int(report.get("pool_size",total) or total)
+            detail=f"Aleg maximum 6 verificări cu impact dintre {pool} de finaliști, înainte de afișarea listei finale."
         elif state == "failed":
             title="Clasarea sigură a fost păstrată"
             failed=int(report.get("failed",0) or 0); attempted=int(report.get("attempted",0) or 0)
@@ -741,10 +754,12 @@ class PremiumDecisionWindow(DecisionWindow):
         label=QLabel(title); label.setObjectName("BodyStrong"); layout.addWidget(label)
         note=QLabel(detail); note.setObjectName("Muted"); note.setWordWrap(True); layout.addWidget(note)
 
+        timed_out=bool(report.get("timed_out"))
+        timeout_note=" • limita de timp a protejat afișarea" if timed_out else ""
         facts=QLabel(
             f"{complete}/{total} titluri au toate semnalele de clasare urmărite • "
             f"{posters}/{total} au poster • maximum "
-            f"{int(report.get('io_limit',MAX_PREFLIGHT_TITLES) or MAX_PREFLIGHT_TITLES)} verificări per listă"
+            f"{int(report.get('io_limit',MAX_PREFLIGHT_TITLES) or MAX_PREFLIGHT_TITLES)} verificări per listă{timeout_note}"
             if total else "Acoperirea va fi calculată după prima listă."
         )
         facts.setObjectName("Muted"); facts.setWordWrap(True); layout.addWidget(facts)
@@ -762,7 +777,11 @@ class PremiumDecisionWindow(DecisionWindow):
         meta=QLabel(" • ".join(self.movie_chips(m,5))); meta.setObjectName("Muted"); meta.setWordWrap(True); l.addWidget(meta)
         overview=QLabel(self.overview_text(m)); overview.setWordWrap(True); overview.setMaximumHeight(66); overview.setObjectName("Muted"); l.addWidget(overview)
         reason=QLabel(self.human_reason(rec)); reason.setWordWrap(True); reason.setMaximumHeight(58); l.addWidget(reason)
-        row=QHBoxLayout(); details=QPushButton("Detalii"); details.clicked.connect(lambda _,r=rec:self.open_details(r)); row.addWidget(details)
+        row=QHBoxLayout()
+        choose=QPushButton("Aleg filmul"); choose.setProperty("accent",True)
+        choose.clicked.connect(lambda _checked=False, mid=m.id, eid=getattr(rec,"exposure_history_id",None): self.choose_decision(mid,eid))
+        row.addWidget(choose)
+        details=QPushButton("Detalii"); details.clicked.connect(lambda _,r=rec:self.open_details(r)); row.addWidget(details)
         watch=QPushButton("Watchlist"); watch.clicked.connect(lambda _,mid=m.id:self.feedback(mid,"want_to_watch")); row.addWidget(watch)
         no=QPushButton("Nu acum / motiv")
         no.clicked.connect(lambda _checked=False, mid=m.id, b=no: self.contextual_feedback_menu(mid, b))
@@ -858,7 +877,9 @@ class PremiumDecisionWindow(DecisionWindow):
                 limit=MAX_PREFLIGHT_TITLES,
                 progress=progress,
             )
-            final=list(recs)
+            report["pool_before"]=dict(report.get("before") or {})
+            report["before"]=coverage_report(recs[:12])
+            final=list(recs[:12])
             report["reranked"]=False
             if report.get("ranking_change"):
                 progress("Recalculez ordinea cu metadatele factuale noi…")
@@ -871,6 +892,8 @@ class PremiumDecisionWindow(DecisionWindow):
                     mode="decide",
                 ))
                 report["reranked"]=True
+                report["after"]=coverage_report(final)
+            else:
                 report["after"]=coverage_report(final)
             return {"report":report,"recommendations":final}
 

@@ -155,6 +155,14 @@ class CineCalendarWindow(QMainWindow):
         except Exception:
             pass
 
+    def refresh_live_recommendation_guard(self):
+        """Refresh cheap outcome metrics without starting a calibration/backtest."""
+        try:
+            return self.s.quality_manager.refresh_live_guard()
+        except Exception as exc:
+            self.s.log.warning("Live recommendation guard refresh failed: %s", exc)
+            return {}
+
     def colors(self): return DARK if self.theme == "dark" else LIGHT
 
     def apply_theme(self):
@@ -533,6 +541,8 @@ class CineCalendarWindow(QMainWindow):
         if not p:return
         try:
             r=import_imdb_csv(self.db,p); build_profile(self.db)
+            if r.new_ratings or r.changed_ratings:
+                self.refresh_live_recommendation_guard()
             if r.skipped_same_file: msg="Acest fișier a fost deja importat; nu l-am reimportat."
             else:
                 details=[]
@@ -568,6 +578,8 @@ class CineCalendarWindow(QMainWindow):
 
         def done(result):
             self.worker = None
+            if result.new_ratings or result.changed_ratings:
+                self.refresh_live_recommendation_guard()
             self._romanian_prepare_signature = None
             self.set_status(
                 f"Bibliotecă reparată: {result.after.complete:,}/{result.after.total:,} titluri complete.",
@@ -658,6 +670,8 @@ class CineCalendarWindow(QMainWindow):
         self.worker = WorkerThread(fn, self)
         def done(r):
             self.db.set_setting("imdb_public_sync_last_error", "")
+            if r.new_ratings or r.changed_ratings:
+                self.refresh_live_recommendation_guard()
             reconciled = len(r.reconciled_duplicates)
             if silent:
                 suffix = f" • {reconciled} duplicate reparate" if reconciled else ""
@@ -718,7 +732,7 @@ class CineCalendarWindow(QMainWindow):
         v=d.values()
         try:
             if not v["title"]: raise ValueError("Introdu un titlu.")
-            add_manual_rating(self.db,**v); build_profile(self.db); self.set_status("Rating salvat; profil recalculat."); self.show_page("ratings")
+            add_manual_rating(self.db,**v); build_profile(self.db); self.refresh_live_recommendation_guard(); self.set_status("Rating salvat; profil recalculat."); self.show_page("ratings")
         except Exception as exc: QMessageBox.critical(self,"Rating",str(exc))
 
     def scan_ratings_folder(self):
@@ -726,7 +740,7 @@ class CineCalendarWindow(QMainWindow):
         try:
             w=RatingsFolderWatcher(self.db,self.db.get_setting("ratings_folder",str(Path.home()/"Downloads"))); results=w.scan()
             if results:
-                build_profile(self.db); r=results[0]; self.set_status(f"Export IMDb nou importat: {len(r.new_ratings)} ratinguri noi, {len(r.changed_ratings)} modificate.")
+                build_profile(self.db); r=results[0]; self.refresh_live_recommendation_guard(); self.set_status(f"Export IMDb nou importat: {len(r.new_ratings)} ratinguri noi, {len(r.changed_ratings)} modificate.")
                 if self.current_page in {"ratings","romanian_list"}: self.show_page(self.current_page)
                 # A CSV can be older than the live profile. Reconcile immediately so
                 # historical exports cannot reintroduce ratings removed/corrected on IMDb.

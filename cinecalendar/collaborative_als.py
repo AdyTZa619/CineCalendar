@@ -85,6 +85,7 @@ class CollaborativeALSProvider:
         self._user_factor: np.ndarray | None = None
         self._global_score_reference: np.ndarray | None = None
         self._mapped_ratings = 0
+        self._total_ratings = 0
 
     def start_background(self) -> None:
         with self._lock:
@@ -103,11 +104,15 @@ class CollaborativeALSProvider:
 
     def status(self) -> dict:
         with self._lock:
+            total = int(self._total_ratings)
+            mapped = int(self._mapped_ratings)
             return {
                 "state": self._state,
                 "version": self._version,
                 "error": self._error,
-                "mapped_ratings": int(self._mapped_ratings),
+                "mapped_ratings": mapped,
+                "total_ratings": total,
+                "mapping_coverage": (mapped / total) if total else 0.0,
                 "training_users": int(self._manifest.get("training_users", 0) or 0),
                 "training_items": int(self._manifest.get("training_items", 0) or 0),
                 "algorithm": self._manifest.get("algorithm", "implicit ALS"),
@@ -260,6 +265,7 @@ class CollaborativeALSProvider:
 
         values: dict[int, float] = {}
         mapped_ratings = 0
+        total_ratings = len(ratings)
         for row in ratings:
             item = mapping.get(str(row["imdb_id"] or ""))
             if item is None:
@@ -284,6 +290,7 @@ class CollaborativeALSProvider:
                 self._user_factor = None
                 self._global_score_reference = None
                 self._mapped_ratings = mapped_ratings
+                self._total_ratings = total_ratings
             return None, None, mapped_ratings
 
         indices = np.fromiter(values.keys(), dtype=np.int32, count=len(values))
@@ -310,6 +317,7 @@ class CollaborativeALSProvider:
             self._user_factor = user_factor
             self._global_score_reference = global_reference
             self._mapped_ratings = mapped_ratings
+            self._total_ratings = total_ratings
         return user_items, user_factor, mapped_ratings
 
     def score_candidates(self, imdb_ids: Iterable[str]) -> tuple[dict[str, float], dict[str, float], int]:
