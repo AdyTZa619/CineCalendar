@@ -12,7 +12,7 @@ from .collaborative_als import CollaborativeALSProvider
 from .db import Database
 from .production_engine import build_production_recommender, production_stack_status
 from .recommender_v16 import FastRecommendationEngineV16
-from .temp_workspaces import managed_temp_workspace
+from .temp_workspaces import backtest_storage_guard, managed_temp_workspace
 
 
 @dataclass(frozen=True)
@@ -232,6 +232,7 @@ def run_local_backtest(
     source_path = Path(db_path).expanduser().resolve()
     if not source_path.is_file():
         raise FileNotFoundError(source_path)
+    backtest_storage_guard(source_path)
     source_db = Database(source_path)
     with source_db.connect() as con:
         source_rating_count = int(con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0])

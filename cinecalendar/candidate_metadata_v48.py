@@ -9,6 +9,7 @@ overwritten here.
 """
 
 from dataclasses import dataclass
+import time
 from typing import Callable, Iterable
 
 from .models import Movie, Recommendation
@@ -16,8 +17,12 @@ from .open_metadata import OpenMovieMetadataProvider
 from .tmdb import TmdbProvider
 
 
-CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.8.1"
+CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.0"
 MAX_PREFLIGHT_TITLES = 6
+PREFLIGHT_POOL_SIZE = 36
+PREFLIGHT_VISIBLE_SIZE = 12
+PREFLIGHT_BUDGET_SECONDS = 12.0
+MAX_CONSECUTIVE_PROVIDER_FAILURES = 2
 
 _RANKING_FIELDS = (
     "genres",
@@ -89,12 +94,22 @@ class CandidateMetadataPreflight:
         if self.token.strip():
             factory = self.tmdb_factory or TmdbProvider
             try:
-                tmdb = factory(self.db, self.token.strip())
+                try:
+                    tmdb = factory(self.db, self.token.strip(), request_timeout=(2.0, 3.0))
+                except TypeError:
+                    tmdb = factory(self.db, self.token.strip())
             except Exception:
                 tmdb = None
         factory = self.open_factory or OpenMovieMetadataProvider
         try:
-            open_provider = factory(self.db)
+            try:
+                open_provider = factory(
+                    self.db,
+                    request_timeout=(2.0, 3.0),
+                    summary_timeout=(2.0, 3.0),
+                )
+            except TypeError:
+                open_provider = factory(self.db)
         except Exception:
             open_provider = None
         return tmdb, open_provider
@@ -105,6 +120,7 @@ class CandidateMetadataPreflight:
         *,
         attempted_ids: set[int] | None = None,
         limit: int = MAX_PREFLIGHT_TITLES,
+        budget_seconds: float = PREFLIGHT_BUDGET_SECONDS,
         progress: Callable[[str], None] | None = None,
     ) -> dict:
         recs = list(recommendations)
@@ -123,21 +139,32 @@ class CandidateMetadataPreflight:
                 "ranking_change": False,
                 "visual_added": 0,
                 "providers": [],
+                "timed_out": False,
+                "selected_ranks": [],
+                "pool_size": len(recs),
                 "before": before_coverage,
                 "after": before_coverage,
                 "io_limit": MAX_PREFLIGHT_TITLES,
             }
-        for rec in recs:
+        candidates: list[tuple[float, int, Recommendation]] = []
+        for rank, rec in enumerate(recs, start=1):
             movie = rec.movie
             if not movie.id or not movie.imdb_id or int(movie.id) in attempted_ids:
                 continue
             snapshot = metadata_snapshot(movie)
             if all(snapshot.values()):
                 continue
-            targets.append(rec)
-            attempted_ids.add(int(movie.id))
-            if len(targets) >= bounded_limit:
-                break
+            missing_ranking = sum(not snapshot[field] for field in _RANKING_FIELDS)
+            # Facts missing from the visible top 12 can directly change what the user sees.
+            # Candidates immediately below the cut also matter because a factual rerank can
+            # promote them. Poster-only gaps are useful, but never outrank missing taste facts.
+            visible_bonus = 18.0 if rank <= PREFLIGHT_VISIBLE_SIZE else max(0.0, 12.0 - abs(rank - PREFLIGHT_VISIBLE_SIZE))
+            impact = missing_ranking * 25.0 + visible_bonus + (2.0 if not snapshot["poster"] else 0.0)
+            candidates.append((impact, rank, rec))
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        selected = candidates[:bounded_limit]
+        targets = [item[2] for item in selected]
+        selected_ranks = [item[1] for item in selected]
 
         tmdb, open_provider = self._providers()
         ranking_added: dict[int, list[str]] = {}
@@ -145,11 +172,18 @@ class CandidateMetadataPreflight:
         changed_titles = 0
         failed = 0
         providers_used: set[str] = set()
+        started = time.monotonic()
+        timed_out = False
+        consecutive_provider_failures = 0
 
         for index, rec in enumerate(targets, start=1):
+            if time.monotonic() - started >= max(0.1, float(budget_seconds)):
+                timed_out = True
+                break
             if progress:
                 progress(f"Verific datele recomandărilor… {index}/{len(targets)}")
             movie = rec.movie
+            attempted_ids.add(int(movie.id))
             before = metadata_snapshot(movie)
             # With no usable provider this title was attempted but could not be checked.
             # A missing optional TMDb token alone is not an error because Wikimedia is the
@@ -159,19 +193,29 @@ class CandidateMetadataPreflight:
                 try:
                     tmdb.enrich_by_imdb(movie)
                     providers_used.add("TMDb")
+                    if getattr(tmdb, "last_status", "") == "error":
+                        had_error = True
                 except Exception:
                     had_error = True
             current = metadata_snapshot(movie)
-            if open_provider is not None and not all(current.values()):
+            remaining = max(0.0, float(budget_seconds) - (time.monotonic() - started))
+            if open_provider is not None and not all(current.values()) and remaining >= 2.0:
                 try:
                     open_provider.enrich_by_imdb(movie)
                     providers_used.add("Wikidata/Wikipedia")
+                    if getattr(open_provider, "last_status", "") == "error":
+                        had_error = True
                 except Exception:
                     had_error = True
+            elif open_provider is not None and not all(current.values()) and remaining < 2.0:
+                timed_out = True
             after = metadata_snapshot(movie)
             if had_error and before == after:
                 # One unavailable public result must not block the recommendation page.
                 failed += 1
+                consecutive_provider_failures += 1
+            else:
+                consecutive_provider_failures = 0
             added = ranking_fields_added(before, after)
             if added:
                 ranking_added[int(movie.id)] = added
@@ -179,10 +223,13 @@ class CandidateMetadataPreflight:
                 visual_added += 1
             if before != after:
                 changed_titles += 1
+            if consecutive_provider_failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES:
+                break
 
-        if targets and failed == len(targets):
+        attempted = len(attempted_ids.intersection({int(rec.movie.id) for rec in targets}))
+        if attempted and failed == attempted:
             state = "failed"
-        elif failed:
+        elif failed or timed_out or attempted < len(targets):
             state = "partial"
         else:
             state = "completed"
@@ -190,13 +237,17 @@ class CandidateMetadataPreflight:
         return {
             "version": CANDIDATE_METADATA_VERSION,
             "state": state,
-            "attempted": len(targets),
+            "attempted": attempted,
             "changed_titles": changed_titles,
             "failed": failed,
             "ranking_fields_added": ranking_added,
             "ranking_change": bool(ranking_added),
             "visual_added": visual_added,
             "providers": sorted(providers_used),
+            "timed_out": timed_out,
+            "selected_ranks": selected_ranks,
+            "pool_size": len(recs),
+            "elapsed_ms": int(round((time.monotonic() - started) * 1000.0)),
             "before": before_coverage,
             "after": coverage_report(recs),
             "io_limit": MAX_PREFLIGHT_TITLES,

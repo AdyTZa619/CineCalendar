@@ -18,10 +18,24 @@ from cinecalendar.quality_manager_v37 import (
 )
 from cinecalendar import temp_workspaces
 from cinecalendar.temp_workspaces import (
+    BacktestStorageError,
     OWNER_FILE,
+    backtest_storage_guard,
     cleanup_abandoned_workspaces,
     managed_temp_workspace,
 )
+
+
+def test_backtest_storage_guard_rejects_snapshot_over_hard_limit(tmp_path):
+    source = tmp_path / "cinecalendar.db"
+    source.write_bytes(b"x" * 1024)
+
+    try:
+        backtest_storage_guard(source, temp_root=tmp_path, max_snapshot_bytes=512, reserve_bytes=0)
+    except BacktestStorageError as exc:
+        assert "limita sigură" in str(exc)
+    else:
+        raise AssertionError("unsafe snapshot was accepted")
 from cinecalendar.util import utcnow_iso
 
 

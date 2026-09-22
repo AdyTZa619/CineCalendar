@@ -266,6 +266,10 @@ def install_decision_action_patch(window_cls) -> None:
         try:
             record_decision_action(self.db, movie_id, "chosen", exposure_id)
             set_today_choice(self.db, movie_id, exposure_id)
+            try:
+                self.s.quality_manager.refresh_live_guard()
+            except Exception as guard_error:
+                self.s.log.warning("Live guard refresh after choice failed: %s", guard_error)
             if hasattr(self, "today_result"):
                 self.today_result = None
             self.set_status("Filmul a fost ales pentru azi; expunerea originală a rămas intactă.", False)

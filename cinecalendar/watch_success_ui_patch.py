@@ -133,6 +133,12 @@ def install_watch_success_ui_patch(window_cls) -> None:
     original_page_today = window_cls.page_today
     original_human_reason = window_cls.human_reason
 
+    def refresh_guard(self):
+        try:
+            self.s.quality_manager.refresh_live_guard()
+        except Exception as exc:
+            self.s.log.warning("Live guard refresh after watch action failed: %s", exc)
+
     def human_reason(self, rec):
         reason = _startability_reason(rec)
         if reason:
@@ -148,6 +154,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
         exposure_id = _window_exposure(self, int(movie.id))
         try:
             record_watch_event(self.db, int(movie.id), "trailer_opened", exposure_id)
+            refresh_guard(self)
             self.set_status(
                 "Am deschis căutarea pentru trailer. Este un semnal slab de interes, nu o vizionare.",
                 False,
@@ -183,6 +190,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
         try:
             record_watch_event(self.db, int(movie.id), "stremio_opened", exposure_id)
             set_today_choice(self.db, int(movie.id), exposure_id)
+            refresh_guard(self)
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -214,6 +222,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
         try:
             record_watch_event(self.db, int(movie.id), "playback_confirmed", exposure_id)
             set_today_choice(self.db, int(movie.id), exposure_id)
+            refresh_guard(self)
             self.set_status(
                 "Am notat că filmul a pornit. Acesta este semnalul puternic de Watch Success.",
                 False,
@@ -230,6 +239,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
         exposure_id = _window_exposure(self, int(movie.id))
         try:
             record_watch_event(self.db, int(movie.id), "watched", exposure_id)
+            refresh_guard(self)
         except Exception as exc:
             QMessageBox.warning(
                 self,

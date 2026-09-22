@@ -133,6 +133,19 @@ def test_tmdb_fallback_does_not_overwrite_existing_imdb_director(tmp_path, monke
     assert "directors" not in provenance
 
 
+def test_tmdb_poster_selection_prefers_romanian_then_quality():
+    details = {
+        "poster_path": "/default.jpg",
+        "images": {"posters": [
+            {"file_path": "/en.jpg", "iso_639_1": "en", "vote_count": 100, "vote_average": 9, "width": 2000},
+            {"file_path": "/ro-low.jpg", "iso_639_1": "ro", "vote_count": 1, "vote_average": 4, "width": 500},
+            {"file_path": "/ro-best.jpg", "iso_639_1": "ro", "vote_count": 8, "vote_average": 7, "width": 1000},
+        ]},
+    }
+
+    assert TmdbProvider._best_poster(details) == "/ro-best.jpg"
+
+
 def test_schema_v6_has_metadata_provenance(tmp_path):
     db = Database(tmp_path / "schema.db")
     with db.connect() as con:

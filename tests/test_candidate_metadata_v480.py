@@ -115,6 +115,21 @@ def test_preflight_is_bounded_to_six_titles_and_marks_factual_rerank():
     assert report["after"]["ranking_complete"] == 6
 
 
+def test_preflight_selects_high_impact_gaps_from_the_candidate_pool():
+    complete = dict(
+        genres=["Drama"], directors=["Director"], countries=["Romania"],
+        overview="Overview", runtime_min=95,
+    )
+    recs = [_rec(index, **complete) for index in range(1, 8)]
+    recs.append(_rec(8))
+
+    report = CandidateMetadataPreflight(object(), open_factory=_FillRankingProvider).run(recs, limit=1)
+
+    assert report["selected_ranks"] == [8]
+    assert report["attempted"] == 1
+    assert recs[7].movie.genres == ["Drama"]
+
+
 def test_visual_only_metadata_never_requests_a_rerank():
     rec = _rec(
         1,
@@ -175,3 +190,5 @@ def test_recommendations_ui_exposes_coverage_and_reranks_only_after_new_facts():
     success = source.split("def success(recs):", 1)[1].split("def failure(message):", 1)[0]
     assert "_ensure_metadata" in success
     assert "_render_browse" not in success
+    assert "PREFLIGHT_POOL_SIZE" in source
+    assert 'choose=QPushButton("Aleg filmul")' in source
