@@ -57,6 +57,12 @@ Cardul „Datele recomandărilor” afișează acoperirea reală, numărul de ti
 reclasarea a fost justificată. Limita de I/O rămâne șase titluri per listă, iar backtestul 4.7 nu
 este invalidat de această completare operațională.
 
+În 4.8.1, expunerile create de interfață păstrează identitatea completă a formulei ALS/conținut,
+astfel încât protecția live măsoară exact formula care a produs recomandarea. Pagina nu mai
+înregistrează lista provizorie înaintea reclasării: preflight-ul se termină înainte de afișarea
+listei finale, iar o deschidere produce un singur set de expuneri. Erorile surselor sunt separate
+în stări complete, parțiale și eșuate și sunt afișate explicit.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3

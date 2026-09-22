@@ -16,7 +16,7 @@ from .open_metadata import OpenMovieMetadataProvider
 from .tmdb import TmdbProvider
 
 
-CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.8.0"
+CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.8.1"
 MAX_PREFLIGHT_TITLES = 6
 
 _RANKING_FIELDS = (
@@ -151,7 +151,10 @@ class CandidateMetadataPreflight:
                 progress(f"Verific datele recomandărilor… {index}/{len(targets)}")
             movie = rec.movie
             before = metadata_snapshot(movie)
-            had_error = False
+            # With no usable provider this title was attempted but could not be checked.
+            # A missing optional TMDb token alone is not an error because Wikimedia is the
+            # public fallback used in that configuration.
+            had_error = tmdb is None and open_provider is None
             if tmdb is not None:
                 try:
                     tmdb.enrich_by_imdb(movie)
@@ -177,9 +180,16 @@ class CandidateMetadataPreflight:
             if before != after:
                 changed_titles += 1
 
+        if targets and failed == len(targets):
+            state = "failed"
+        elif failed:
+            state = "partial"
+        else:
+            state = "completed"
+
         return {
             "version": CANDIDATE_METADATA_VERSION,
-            "state": "completed",
+            "state": state,
             "attempted": len(targets),
             "changed_titles": changed_titles,
             "failed": failed,

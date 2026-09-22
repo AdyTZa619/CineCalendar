@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from .recommender_v16 import ENGINE_VERSION
+from .recommender_v16 import recommendation_engine_identity
 from .recommendation_history_v43 import record_explanation_snapshot
 from .trust_audit import ensure_trust_audit_schema, record_trust_snapshot, validate_exposure_history_id
 from .util import utcnow_iso
@@ -61,9 +61,9 @@ def _record_exposures(window, recs, ctx: date, slot: str) -> list[int]:
         return kept_ids
 
     now = utcnow_iso()
-    engine_version = str(
-        getattr(window.s.recommender, "LEARNING_INSIGHT_VERSION", ENGINE_VERSION) or ENGINE_VERSION
-    )
+    # The live guard compares outcomes against the complete production formula identity
+    # (for example ALS 60/content 40), not only the shared V16 learning label.
+    engine_version = recommendation_engine_identity(window.s.recommender)
     with window.db.tx() as con:
         ensure_trust_audit_schema(con)
         run = con.execute(

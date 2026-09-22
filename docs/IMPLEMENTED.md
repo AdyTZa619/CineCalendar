@@ -22,6 +22,7 @@
 - formulele 70/30, 50/50, 60/40 și 80/20 au identități telemetry distincte; rezultatele reale nu mai sunt amestecate sub aceeași etichetă;
 - Live Recommendation Guard 4.7 validează formula activă pe alegeri, vizionări, rata ratingurilor ≥8 și MAE și revine la baseline numai dacă minimum două semnale independente indică regresie;
 - Candidate Metadata Preflight 4.8 verifică maximum șase recomandări vizibile și cere o singură reclasare numai când apar câmpuri factuale noi folosite de motor;
+- corecția 4.8.1 înregistrează identitatea completă a formulei în fluxul UI și afișează numai lista finală după preflight, eliminând expunerile duplicate ale aceleiași încărcări;
 - completările exclusiv vizuale, precum posterul, actualizează cardul fără să schimbe ordinea recomandărilor;
 - evaluarea 3.7 folosește ferestre temporale ne-suprapuse și elimină din training atât holdout-ul curent, cât și toate ratingurile ulterioare;
 - Availability Guard 3.7 elimină titlurile cu an sau dată de lansare cunoscută după data recomandării, fără să schimbe ordinea filmelor eligibile;
@@ -35,6 +36,7 @@
 - Taste Hub afișează diagnosticul motorului și lanțul de calibrări personale fără a permite UI-ului să forțeze un challenger nevalidat.
 - pagina Recomandări afișează formula activă, progresul validării live, rollback-ul și starea recalibrării economisite;
 - pagina Recomandări afișează acoperirea metadatelor de clasare, limita de verificare și dacă ordinea a fost recalculată justificat;
+- pagina Recomandări afișează numărul de alegeri/ratinguri atribuite formulei active și distinge verificarea completă, parțială și eșuată a surselor;
 - feedbackul 4.4 separă explicit „Ascunde doar filmul” de „Nu-mi recomanda similare”;
 - „Ascunde doar filmul” exclude titlul exact fără să antreneze profilul, ALS, Adaptive Personal sau Watch Success împotriva caracteristicilor lui;
 - feedbackul aplicat în sesiunea curentă poate fi anulat exact, în ordine inversă, din bara laterală sau cu `Ctrl+Z`; Watchlist-ul derivat este refăcut tranzacțional.

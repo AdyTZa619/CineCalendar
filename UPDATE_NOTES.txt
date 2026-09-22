@@ -1,36 +1,37 @@
-CineCalendar 4.8.0 – Metadate verificate înainte de clasarea finală
+CineCalendar 4.8.1 – Telemetrie corectă pentru recomandările reale
 
 Obiectiv:
-- recomandările vizibile să nu fie ordonate cu date lipsă care pot fi completate în siguranță;
-- completarea să rămână limitată, transparentă și blândă cu SSD-ul;
-- ordinea să nu fie schimbată pentru un poster sau pentru o eroare de rețea.
+- formula ALS/conținut afișată să fie aceeași formulă măsurată de protecția live;
+- o singură deschidere a paginii Recomandări să producă un singur set final de expuneri;
+- erorile surselor de metadate să fie raportate explicit, nu confundate cu lipsa datelor noi.
 
-1. Candidate Metadata Preflight
-- pagina Recomandări verifică în fundal maximum 6 titluri relevante din lista calculată;
-- folosește TMDb când există token local și Wikimedia ca fallback;
-- păstrează cache-ul local și politica existentă de completare numai a câmpurilor lipsă;
-- volumul maxim de titluri verificate rămâne același ca în 4.7, unde completarea se făcea după afișare.
+1. Identitatea formulei reparată cap-coadă
+- expunerile create de interfața reală folosesc identitatea completă a motorului, inclusiv 70/30,
+  50/50, 60/40 sau 80/20;
+- outcome telemetry și Live Recommendation Guard pot atribui alegerile și ratingurile formulei
+  care a produs efectiv recomandarea;
+- cardul „Protecția recomandărilor” afișează separat alegerile și ratingurile atribuite formulei active.
 
-2. Reclasare justificată
-- o singură reclasare este permisă când au fost adăugate genuri, regizori, țări, synopsis/keywords sau durată;
-- un poster nou ori altă completare exclusiv vizuală nu modifică ordinea;
-- dacă sursele nu răspund sau nu găsesc date, lista sigură existentă este păstrată;
-- algoritmul și ponderile validate în 4.7 nu sunt schimbate, deci backtestul costisitor nu este repornit doar pentru această actualizare.
+2. O singură expunere finală
+- lista provizorie nu mai este afișată și înregistrată înaintea preflight-ului;
+- utilizatorul vede direct lista finală, după verificarea limitată a metadatelor;
+- reclasarea justificată nu mai creează o a doua expunere pentru aceleași carduri.
 
-3. Vizibil în Recomandări
-- noul card „Datele recomandărilor” arată procentul semnalelor disponibile;
-- afișează câte titluri au toate câmpurile de clasare și câte au poster;
-- confirmă explicit dacă ordinea a fost recalculată sau păstrată;
-- arată limita de maximum 6 verificări per listă.
+3. Stare reală a surselor
+- Candidate Metadata Preflight distinge între `completed`, `partial` și `failed`;
+- cardul vizual arată câte titluri nu au putut fi verificate;
+- dacă sursele nu răspund, clasarea locală sigură rămâne disponibilă și ordinea nu este schimbată
+  pe baza unor date incomplete.
 
-Compatibilitate:
-- schema SQLite rămâne v9 și nu necesită migrare;
-- protecția live și recalibrarea economică 4.7 rămân active;
-- datele personale, tokenul TMDb și cache-ul rămân locale.
+Validare:
+- teste de integrare pentru identitatea completă a formulei în fluxul UI;
+- test de regresie pentru o singură expunere la repaint;
+- test pentru eșec simultan TMDb + Wikimedia;
+- schema SQLite rămâne v9 și nu necesită migrare.
 
 Versiune:
-- aplicație 4.8.0;
-- production-stack-v4.8.0-metadata-preflight;
-- candidate-metadata-v4.8.0;
+- aplicație 4.8.1;
+- production-stack-v4.8.0-metadata-preflight (neschimbat; corecția nu repornește backtestul);
+- candidate-metadata-v4.8.1;
 - quality-manager-v4.7.0-live-protected;
 - SQLite schema v9.
