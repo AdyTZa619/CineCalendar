@@ -611,7 +611,9 @@ class PremiumDecisionWindow(DecisionWindow):
                 "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
             }
             if self.current_page=="recommendations":
-                self._render_browse(self.browse_result); self._ensure_metadata(self.browse_result,"recommendations")
+                # Keep the loading panel until preflight finishes. Rendering this provisional
+                # list and then the reranked list would persist two exposure sets for one action.
+                self._ensure_metadata(self.browse_result,"recommendations")
         def failure(message):
             self.browse_worker=None; self.set_status("Recomandările au eșuat.",False)
             if self.current_page=="recommendations" and self.browse_content is not None:
@@ -668,10 +670,13 @@ class PremiumDecisionWindow(DecisionWindow):
             active=live.get("active") or {}
             comparison=live.get("comparison") or {}
             rated=int(active.get("rated",0) or 0)
+            chosen=int(active.get("chosen",0) or 0)
             minimum=int(comparison.get("minimum_rated_each",20) or 20)
             progress=QProgressBar(); progress.setRange(0,max(1,minimum)); progress.setValue(min(rated,minimum))
             progress.setFormat(f"Rezultate cu rating: {rated}/{minimum} minim")
             progress.setTextVisible(True); progress.setFixedHeight(18); layout.addWidget(progress)
+            measured=QLabel(f"Rezultate atribuite formulei active: {chosen} alegeri • {rated} cu rating")
+            measured.setObjectName("Muted"); measured.setWordWrap(True); layout.addWidget(measured)
 
         changed=int(policy.get("changed_ratings",0) or 0)
         required=int(policy.get("required_ratings",0) or 0)
@@ -710,10 +715,19 @@ class PremiumDecisionWindow(DecisionWindow):
 
         if state == "checking":
             title="Verific metadatele înainte de clasarea finală"
-            detail="Lista este deja utilizabilă; verificarea rulează în fundal pentru maximum 6 candidați relevanți."
+            detail="Verificarea rulează înainte de afișarea listei finale pentru maximum 6 candidați relevanți."
         elif state == "failed":
             title="Clasarea sigură a fost păstrată"
-            detail="Sursa publică nu a răspuns; programul nu a modificat ordinea pe baza unor date incomplete."
+            failed=int(report.get("failed",0) or 0); attempted=int(report.get("attempted",0) or 0)
+            detail=(
+                f"Sursele publice nu au răspuns pentru {failed}/{attempted} titluri verificate; programul nu a modificat ordinea pe baza unor date incomplete."
+                if attempted else
+                "Sursele publice nu au răspuns; programul a păstrat clasarea locală și nu a folosit date incomplete."
+            )
+        elif state == "partial":
+            title="Date completate parțial; clasarea rămâne protejată"
+            failed=int(report.get("failed",0) or 0); attempted=int(report.get("attempted",0) or 0)
+            detail=f"Sursele publice nu au răspuns pentru {failed}/{attempted} titluri verificate. Au fost folosite numai datele factuale confirmate."
         elif bool(report.get("reranked")):
             title="Clasare recalculată după completarea datelor"
             fields=sum(len(value) for value in (report.get("ranking_fields_added") or {}).values())
@@ -872,11 +886,17 @@ class PremiumDecisionWindow(DecisionWindow):
             self.recommendation_metadata_report=dict(payload.get("report") or {})
             self.browse_result=list(payload.get("recommendations") or recs)
             changed=int(self.recommendation_metadata_report.get("changed_titles",0) or 0)
-            self.set_status(
-                "Clasarea finală folosește metadatele verificate." if changed
-                else "Recomandările sunt gata; ordinea nu a necesitat modificări.",
-                False,
-            )
+            state=str(self.recommendation_metadata_report.get("state") or "completed")
+            failed=int(self.recommendation_metadata_report.get("failed",0) or 0)
+            if state == "failed":
+                message="Recomandările sunt gata; sursele de metadate nu au răspuns."
+            elif state == "partial":
+                message=f"Recomandările sunt gata; {failed} titluri nu au putut fi verificate."
+            elif changed:
+                message="Clasarea finală folosește metadatele verificate."
+            else:
+                message="Recomandările sunt gata; ordinea nu a necesitat modificări."
+            self.set_status(message,False)
             if self.current_page=="recommendations":
                 self._render_browse(self.browse_result)
 
