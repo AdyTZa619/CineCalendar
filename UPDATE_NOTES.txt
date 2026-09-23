@@ -1,11 +1,11 @@
-CineCalendar 4.9.3 – Postere și metadate pentru recomandările vizibile
+CineCalendar 4.9.4 – Diagnostic și reverificare pentru metadatele lipsă
 
-Noutăți 4.9.3:
-- toate cele 12 recomandări vizibile au prioritate la completarea TMDb;
-- un candidat din afara listei nu mai consumă verificarea înaintea unui card vizibil incomplet;
-- explicațiile lungi măresc cardul și nu mai acoperă butoanele;
-- acțiunile sunt așezate compact, iar lista trece la o coloană pe ferestre înguste;
-- scrollul orizontal al paginii a fost eliminat.
+Noutăți 4.9.4:
+- fiecare recomandare incompletă arată motivul concret: negăsită, date parțiale, eroare temporară sau limită de timp;
+- cardul de stare însumează problemele actuale, fără să pretindă că metadatele sunt complete;
+- „Reîncearcă doar lipsurile” reverifică numai recomandările vizibile incomplete;
+- reverificarea elimină cache-ul TMDb/Wikimedia numai pentru titlurile selectate, inclusiv răspunsurile goale păstrate anterior;
+- datele existente nu sunt suprascrise, iar ordinea se recalculează numai dacă apar fapte noi relevante.
 
 Fluxul IMDb păstrat din 4.9.2:
 - utilizatorul să dea nota o singură dată, pe IMDb;
@@ -30,14 +30,14 @@ Fluxul IMDb păstrat din 4.9.2:
 - profilul personal, rezultatul recomandării și Live Guard sunt actualizate prin fluxul existent.
 
 Validare:
-- teste pentru persistență, deduplicare, așteptarea notei și rezolvarea după import;
-- teste pentru programarea verificărilor și păstrarea sincronizării periodice;
+- teste pentru diagnostic „negăsit”, eroare de provider și completare parțială;
+- test care confirmă că retry-ul curăță doar cache-ul filmelor selectate;
 - formula de ranking și schema SQLite rămân neschimbate;
 - nu a fost pornit niciun backtest.
 
 Versiune:
-- aplicație 4.9.3;
+- aplicație 4.9.4;
 - production-stack-v4.8.0-metadata-preflight (formula de ranking rămâne neschimbată);
-- candidate-metadata-v4.9.3;
+- candidate-metadata-v4.9.4;
 - quality-manager-v4.7.0-live-protected;
 - SQLite schema v9.
