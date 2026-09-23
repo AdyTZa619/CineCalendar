@@ -49,13 +49,13 @@ def _movie(db: Database, idx: int, title: str) -> int:
 
 def test_schema_v9_adds_read_path_indexes(tmp_path):
     db = Database(tmp_path / "schema-v9.db")
-    assert SCHEMA_VERSION == 9
+    assert SCHEMA_VERSION == 10
     with db.connect() as con:
         current = con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
         hist = {row[1] for row in con.execute("PRAGMA index_list(recommendation_history)")}
         trust = {row[1] for row in con.execute("PRAGMA index_list(recommendation_trust_audit)")}
         outcomes = {row[1] for row in con.execute("PRAGMA index_list(recommendation_outcomes)")}
-    assert current == 9
+    assert current == 10
     assert "ix_rec_hist_root_context_id" in hist
     assert "ix_rec_hist_exposure_action_id" in hist
     assert "ix_rec_trust_engine_history" in trust

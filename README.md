@@ -89,6 +89,11 @@ parțiale, a apărut o eroare temporară sau s-a atins limita de timp. Butonul �
 lipsurile” șterge exclusiv cache-ul furnizorilor pentru filmele incomplete vizibile și le verifică
 din nou, fără să atingă metadatele deja confirmate sau formula de ranking.
 
+În 4.10, urmărirea notei IMDb este stocată într-o coadă SQLite auditată. Fiecare film păstrează
+starea, numărul încercărilor, ultima și următoarea verificare, eroarea individuală și IMDb ID-ul
+care a confirmat nota. Reverificările folosesc backoff până la 24 de ore, iar auditul recuperează
+automat filmele marcate văzute care au rămas fără rating și fără intrare în coadă.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3

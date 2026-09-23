@@ -1,43 +1,31 @@
-CineCalendar 4.9.4 – Diagnostic și reverificare pentru metadatele lipsă
+CineCalendar 4.10.0 – Sincronizare IMDb urmărită și verificabilă
 
-Noutăți 4.9.4:
-- fiecare recomandare incompletă arată motivul concret: negăsită, date parțiale, eroare temporară sau limită de timp;
-- cardul de stare însumează problemele actuale, fără să pretindă că metadatele sunt complete;
-- „Reîncearcă doar lipsurile” reverifică numai recomandările vizibile incomplete;
-- reverificarea elimină cache-ul TMDb/Wikimedia numai pentru titlurile selectate, inclusiv răspunsurile goale păstrate anterior;
-- datele existente nu sunt suprascrise, iar ordinea se recalculează numai dacă apar fapte noi relevante.
+Noutăți 4.10.0:
+- filmele marcate văzute sunt urmărite într-o coadă SQLite dedicată, nu într-o listă opacă;
+- fiecare film arată starea, numărul încercărilor, ultima verificare, următoarea verificare și eroarea proprie;
+- retry-ul folosește backoff gradual de la 10 minute până la maximum 24 de ore;
+- „Verifică IMDb acum” forțează o verificare manuală fără să aștepte backofful;
+- o sincronizare automată rapidă nu pornește dacă nicio intrare nu este scadentă;
+- nota închide coada numai dacă IMDb ID-ul remote, filmul local și ratingul importat corespund;
+- aliasurile IMDb confirmate sunt acceptate și păstrează ID-ul remote care a furnizat nota;
+- auditul recuperează automat un film marcat văzut care a rămas fără rating și fără intrare în coadă;
+- pagina Ratinguri IMDb arată intrările active și rezolvate, inclusiv conflictele de identitate.
 
-Fluxul IMDb păstrat din 4.9.2:
-- utilizatorul să dea nota o singură dată, pe IMDb;
-- CineCalendar să lege filmul văzut de nota care apare ulterior în profilul public;
-- profilul și recomandările să folosească automat ratingul importat.
-
-1. Flux după vizionare
-- butonul devine „L-am văzut • nota din IMDb”;
-- filmul este exclus imediat dintre recomandările nevăzute;
-- dacă are IMDb ID, intră într-o coadă locală persistentă „aștept nota IMDb”;
-- CineCalendar nu afișează și nu cere un câmp propriu de notare.
-
-2. Sincronizare rapidă și sigură
-- profilul IMDb este reverificat după aproximativ 2 minute și 10 minute;
-- dacă nota nu a apărut încă, rămâne activă sincronizarea normală la 30 de minute;
-- închiderea aplicației nu pierde urmărirea: sincronizarea de la următoarea pornire continuă fluxul;
-- nu se fac verificări dacă nu există niciun film care așteaptă nota.
-
-3. Confirmare vizibilă
-- pagina Ratinguri IMDb arată filmele pentru care se așteaptă nota;
-- după import, statusul afișează titlul și nota reală preluată;
-- profilul personal, rezultatul recomandării și Live Guard sunt actualizate prin fluxul existent.
+Protecții:
+- coada veche din 4.9.2–4.9.4 este migrată automat la prima pornire;
+- ratingurile locale existente nu sunt șterse sau suprascrise de audit;
+- o indisponibilitate IMDb este înregistrată per film, iar datele locale rămân utilizabile;
+- formula de ranking, ponderile ALS/conținut și backtestul nu au fost modificate.
 
 Validare:
-- teste pentru diagnostic „negăsit”, eroare de provider și completare parțială;
-- test care confirmă că retry-ul curăță doar cache-ul filmelor selectate;
-- formula de ranking și schema SQLite rămân neschimbate;
-- nu a fost pornit niciun backtest.
+- teste pentru backoff, stare de eroare și verificare manuală;
+- test care refuză închiderea cozii cu alt IMDb ID;
+- test pentru recuperarea unui film văzut lipsă din coadă;
+- teste de migrare SQLite v10 și păstrarea cozii legacy.
 
 Versiune:
-- aplicație 4.9.4;
-- production-stack-v4.8.0-metadata-preflight (formula de ranking rămâne neschimbată);
+- aplicație 4.10.0;
+- production-stack-v4.8.0-metadata-preflight;
 - candidate-metadata-v4.9.4;
 - quality-manager-v4.7.0-live-protected;
-- SQLite schema v9.
+- SQLite schema v10.

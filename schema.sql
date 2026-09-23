@@ -1,4 +1,4 @@
--- CineCalendar SQLite schema v9
+-- CineCalendar SQLite schema v10
 -- Canonical reference kept in sync with migrations in cinecalendar/db.py.
 
 PRAGMA foreign_keys=ON;
@@ -159,6 +159,22 @@ CREATE TABLE recommendation_explanations(
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE imdb_rating_followups(
+  movie_id INTEGER PRIMARY KEY REFERENCES movies(id) ON DELETE CASCADE,
+  imdb_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  queued_at TEXT NOT NULL,
+  last_checked_at TEXT,
+  next_check_at TEXT,
+  last_error TEXT NOT NULL DEFAULT '',
+  matched_imdb_id TEXT,
+  resolved_rating INTEGER,
+  resolved_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE schema_migrations(
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
@@ -205,3 +221,4 @@ CREATE INDEX ix_rec_outcome_movie ON recommendation_outcomes(movie_id);
 CREATE INDEX ix_rec_outcome_rating_date ON recommendation_outcomes(rating_date);
 CREATE INDEX ix_rec_outcome_engine_context ON recommendation_outcomes(engine_version,context_date);
 CREATE INDEX ix_rec_outcome_context ON recommendation_outcomes(context_date);
+CREATE INDEX ix_imdb_followup_status_next ON imdb_rating_followups(status,next_check_at);

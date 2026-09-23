@@ -25,9 +25,14 @@ from .feedback import FeedbackReceipt, apply_feedback_with_receipt, undo_feedbac
 from .imdb_import import import_imdb_csv, add_manual_rating
 from .imdb_sync import backfill_public_rating_metadata, sync_public_ratings
 from .imdb_rating_followup import (
+    audit_imdb_rating_followups,
+    begin_imdb_followup_check,
     cancel_imdb_rating_followup,
+    due_imdb_rating_followups,
     pending_imdb_rating_followups,
     queue_imdb_rating_followup_values,
+    recent_imdb_rating_followups,
+    record_imdb_followup_failure,
     resolve_imdb_rating_followups,
 )
 from .library_repair import repair_rated_library
@@ -543,7 +548,7 @@ class CineCalendarWindow(QMainWindow):
         content.addStretch(1); return page
 
     def page_ratings(self):
-        page,content=self.page_shell("Ratinguri IMDb","Sincronizare automată din profilul public IMDb + fallback CSV",[("Sincronizează IMDb acum",lambda:self.sync_imdb_public(silent=False),True),("Import IMDb ratings.csv",self.import_ratings,False),("Adaugă rating",self.manual_rating,False)])
+        page,content=self.page_shell("Ratinguri IMDb","Sincronizare automată din profilul public IMDb + fallback CSV",[("Verifică IMDb acum",lambda:self.sync_imdb_public(silent=False),True),("Import IMDb ratings.csv",self.import_ratings,False),("Adaugă rating",self.manual_rating,False)])
         total,rated,cand=self.catalog_count(); box=self.card(); l=QVBoxLayout(box)
         h=QLabel(f"{rated:,} ratinguri   •   {total:,} titluri în baza locală   •   {cand:,} candidați nevăzuți"); h.setObjectName("CardTitle"); l.addWidget(h)
         pub=QCheckBox("Sincronizează automat profilul public IMDb"); pub.setChecked(bool(self.db.get_setting("imdb_public_sync_enabled",True))); pub.toggled.connect(lambda v:self.db.set_setting("imdb_public_sync_enabled",bool(v))); l.addWidget(pub)
@@ -555,6 +560,7 @@ class CineCalendarWindow(QMainWindow):
             if last_ok else "Profilul public IMDb nu a fost încă sincronizat cu succes."
         )
         sync_state.setObjectName("Muted"); sync_state.setWordWrap(True); l.addWidget(sync_state)
+        followup_audit = audit_imdb_rating_followups(self.db, recover=True)
         pending_notes = pending_imdb_rating_followups(self.db)
         if pending_notes:
             names = ", ".join(item["title"] for item in pending_notes[-3:])
@@ -564,6 +570,47 @@ class CineCalendarWindow(QMainWindow):
                 pending_text += f" și încă {more}"
             waiting = QLabel(pending_text + ". Importul este automat; nu introduci nota din nou aici.")
             waiting.setObjectName("BodyStrong"); waiting.setWordWrap(True); l.addWidget(waiting)
+        followup_state = QLabel(
+            f"Urmărire IMDb: {followup_audit.active} în așteptare • "
+            f"{followup_audit.overdue} scadente • {followup_audit.stuck} blocate • "
+            f"{followup_audit.identity_mismatches} conflicte de identitate."
+        )
+        followup_state.setObjectName("Muted"); followup_state.setWordWrap(True); l.addWidget(followup_state)
+        followups = recent_imdb_rating_followups(self.db, limit=10)
+        if followups:
+            status_names = {
+                "waiting": "Așteaptă verificarea",
+                "rating_not_found": "Rating negăsit încă",
+                "profile_unavailable": "Profil indisponibil",
+                "identity_mismatch": "IMDb ID neconfirmat",
+                "found": "Găsit",
+            }
+            followup_table = QTableWidget(len(followups), 6)
+            followup_table.setHorizontalHeaderLabels(
+                ["Film", "Stare", "Încercări", "Ultima verificare", "Următoarea", "Detaliu"]
+            )
+            followup_table.setEditTriggers(QTableWidget.NoEditTriggers)
+            followup_table.setSelectionBehavior(QTableWidget.SelectRows)
+            followup_table.verticalHeader().setVisible(False)
+            for row_index, item in enumerate(followups):
+                detail = str(item.get("last_error") or "")
+                if item.get("status") == "found":
+                    detail = f"{item.get('resolved_rating')}/10 • {item.get('matched_imdb_id') or item.get('imdb_id')}"
+                values = (
+                    item.get("title") or "Film",
+                    status_names.get(str(item.get("status") or ""), str(item.get("status") or "—")),
+                    str(item.get("attempt_count") or 0),
+                    str(item.get("last_checked_at") or "—")[:19].replace("T", " "),
+                    str(item.get("next_check_at") or "—")[:19].replace("T", " "),
+                    detail or "—",
+                )
+                for column, value in enumerate(values):
+                    followup_table.setItem(row_index, column, QTableWidgetItem(str(value)))
+            followup_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            for column in range(1, 6):
+                followup_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            followup_table.setMaximumHeight(290)
+            l.addWidget(followup_table)
         if last_error:
             sync_error=QLabel("Ultima eroare IMDb: "+last_error)
             sync_error.setObjectName("Muted"); sync_error.setWordWrap(True); l.addWidget(sync_error)
@@ -679,7 +726,7 @@ class CineCalendarWindow(QMainWindow):
         self.worker.failure.connect(fail)
         self.worker.start()
 
-    def sync_imdb_public(self, silent: bool = True):
+    def sync_imdb_public(self, silent: bool = True, followup_only: bool = False):
         # The checkbox controls background syncing only. A manual click must
         # always be allowed to run a one-off synchronization.
         if silent and not self.db.get_setting("imdb_public_sync_enabled", True):
@@ -693,8 +740,13 @@ class CineCalendarWindow(QMainWindow):
         url = str(self.db.get_setting("imdb_public_ratings_url", "") or "").strip()
         if not url:
             return
+        audit_imdb_rating_followups(self.db, recover=True)
+        if followup_only and not due_imdb_rating_followups(self.db):
+            return
         self.set_status("Verific ratingurile noi de pe IMDb…", True)
+        checked_followups: set[int] = set()
         def fn(progress):
+            checked_followups.update(begin_imdb_followup_check(self.db, force=not silent))
             # The imported IMDb export remains the historical canonical baseline.
             # Public sync updates new/changed ratings and repairs identity aliases;
             # metadata backfill then fills missing fields across the whole rated library.
@@ -714,7 +766,12 @@ class CineCalendarWindow(QMainWindow):
         self.worker = WorkerThread(fn, self)
         def done(r):
             self.db.set_setting("imdb_public_sync_last_error", "")
-            imported_followups, pending_followups = resolve_imdb_rating_followups(self.db)
+            audit_imdb_rating_followups(self.db, recover=True)
+            imported_followups, pending_followups = resolve_imdb_rating_followups(
+                self.db,
+                profile_ratings=r.profile_ratings,
+                checked_movie_ids=checked_followups,
+            )
             if r.new_ratings or r.changed_ratings:
                 self.refresh_live_recommendation_guard()
             reconciled = len(r.reconciled_duplicates)
@@ -767,6 +824,7 @@ class CineCalendarWindow(QMainWindow):
                 friendly = "IMDb nu a putut fi citit automat acum."
             detail = raw[:240]
             self.db.set_setting("imdb_public_sync_last_error", detail)
+            record_imdb_followup_failure(self.db, checked_followups, detail)
             self.s.log.warning("IMDb public sync failed: %s", raw)
             if silent:
                 # Startup sync is best-effort. Do not leave the whole application looking broken:
@@ -787,7 +845,7 @@ class CineCalendarWindow(QMainWindow):
         """Check soon after a watched film, then rely on the regular 30-minute sync."""
         def sync_if_pending():
             if pending_imdb_rating_followups(self.db):
-                self.sync_imdb_public(silent=True)
+                self.sync_imdb_public(silent=True, followup_only=True)
         QTimer.singleShot(2 * 60 * 1000, sync_if_pending)
         QTimer.singleShot(10 * 60 * 1000, sync_if_pending)
 

@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
-# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v9 through
+# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v10 through
 # idempotent Python helpers so an interrupted ALTER TABLE can be resumed safely.
 MIGRATIONS: dict[int, str] = {
 1: r'''
@@ -219,6 +219,25 @@ CREATE INDEX IF NOT EXISTS ix_rec_outcome_engine_context
   ON recommendation_outcomes(engine_version,context_date);
 CREATE INDEX IF NOT EXISTS ix_rec_outcome_context
   ON recommendation_outcomes(context_date);
+''',
+10: r'''
+CREATE TABLE IF NOT EXISTS imdb_rating_followups(
+  movie_id INTEGER PRIMARY KEY REFERENCES movies(id) ON DELETE CASCADE,
+  imdb_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  queued_at TEXT NOT NULL,
+  last_checked_at TEXT,
+  next_check_at TEXT,
+  last_error TEXT NOT NULL DEFAULT '',
+  matched_imdb_id TEXT,
+  resolved_rating INTEGER,
+  resolved_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_imdb_followup_status_next
+  ON imdb_rating_followups(status,next_check_at);
 '''
 }
 
@@ -336,6 +355,8 @@ class Database:
         if not self._table_exists(con, "recommendation_outcomes"):
             return True
         if not self._table_exists(con, "recommendation_explanations"):
+            return True
+        if not self._table_exists(con, "imdb_rating_followups"):
             return True
         return False
 
@@ -546,6 +567,62 @@ class Database:
                ON recommendation_outcomes(context_date)"""
         )
 
+    def _apply_v10(self, con: sqlite3.Connection) -> None:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS imdb_rating_followups(
+              movie_id INTEGER PRIMARY KEY REFERENCES movies(id) ON DELETE CASCADE,
+              imdb_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'waiting',
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              queued_at TEXT NOT NULL,
+              last_checked_at TEXT,
+              next_check_at TEXT,
+              last_error TEXT NOT NULL DEFAULT '',
+              matched_imdb_id TEXT,
+              resolved_rating INTEGER,
+              resolved_at TEXT,
+              updated_at TEXT NOT NULL
+            )"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_imdb_followup_status_next
+               ON imdb_rating_followups(status,next_check_at)"""
+        )
+
+        # Preserve the 4.9.2 JSON queue when upgrading. Invalid/deleted movie references are
+        # ignored; the legacy setting remains readable by older recovery bundles.
+        from .util import json_loads, utcnow_iso
+        row = con.execute(
+            "SELECT value_json FROM settings WHERE key='imdb_rating_followups_v1'"
+        ).fetchone()
+        legacy = json_loads(row[0], []) if row else []
+        now = utcnow_iso()
+        if isinstance(legacy, list):
+            for item in legacy:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    movie_id = int(item.get("movie_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                imdb_id = str(item.get("imdb_id") or "").strip()
+                title = str(item.get("title") or "Film").strip() or "Film"
+                exists = con.execute(
+                    "SELECT 1 FROM movies WHERE id=? AND imdb_id=?",
+                    (movie_id, imdb_id),
+                ).fetchone()
+                if not exists:
+                    continue
+                queued_at = str(item.get("queued_at") or now)
+                con.execute(
+                    """INSERT OR IGNORE INTO imdb_rating_followups(
+                         movie_id,imdb_id,title,status,attempt_count,queued_at,next_check_at,
+                         last_error,updated_at
+                       ) VALUES(?,?,?,'waiting',0,?,?,'',?)""",
+                    (movie_id, imdb_id, title, queued_at, queued_at, now),
+                )
+
     def connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -608,6 +685,7 @@ class Database:
                 (7, self._apply_v7),
                 (8, self._apply_v8),
                 (9, self._apply_v9),
+                (10, self._apply_v10),
             ):
                 con.execute("BEGIN IMMEDIATE")
                 try:
