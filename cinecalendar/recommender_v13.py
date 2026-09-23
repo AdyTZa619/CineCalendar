@@ -277,7 +277,7 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
             readable = [self._human_adaptive_feature(str(item.get("feature") or "")) for item in reasons[:3]]
             readable = [x for x in readable if x]
             reason_text = (
-                f"Modelul local, învățat din ratingurile și feedbackul tău, estimează {predicted:.1f}/10"
+                f"Componenta adaptivă locală estimează {predicted:.1f}/10 înainte de combinarea cu celelalte semnale"
                 + (f"; repere principale: {', '.join(readable)}." if readable else ".")
             )
             rec.score.contributions.insert(

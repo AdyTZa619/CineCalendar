@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import requests
 from .db import Database
-from .metadata_provenance import record_metadata_sources
+from .metadata_provenance import metadata_sources_for_movie, record_metadata_sources
 from .models import Movie
 from .semantic import extract_semantic
 from .util import json_dumps, json_loads, utcnow_iso
@@ -55,17 +55,33 @@ class TmdbProvider:
         tmdb_id=int(results[0]["id"])
         details=self._get(
             f"/movie/{tmdb_id}",
-            {"append_to_response":"credits,keywords,external_ids,images", "include_image_language":"ro,en,null"},
+            {
+                "append_to_response":"credits,keywords,external_ids,images",
+                "include_image_language":"ro,en,null",
+                "language":"ro-RO",
+            },
         )
         changed_fields: list[str] = ["tmdb_id"]
+        overview_provider = ""
+        sources = metadata_sources_for_movie(self.db, int(movie.id)) if movie.id is not None else {}
+        had_overview = bool(str(movie.overview or "").strip())
         original_title = str(details.get("original_title") or "").strip()
         if not movie.original_title and original_title:
             movie.original_title = original_title
             changed_fields.append("original_title")
         overview = str(details.get("overview") or "").strip()
-        if not movie.overview and overview:
+        can_localize_existing = bool(movie.overview) and sources.get("overview") in {"tmdb", "tmdb-en"}
+        if overview and (not movie.overview or can_localize_existing):
             movie.overview = overview
             changed_fields.append("overview")
+            overview_provider = "tmdb-ro"
+        elif not movie.overview:
+            english = self._get(f"/movie/{tmdb_id}", {"language":"en-US"})
+            overview = str(english.get("overview") or "").strip()
+            if overview:
+                movie.overview = overview
+                changed_fields.append("overview")
+                overview_provider = "tmdb-en"
         runtime = details.get("runtime")
         if not movie.runtime_min and runtime:
             movie.runtime_min = runtime
@@ -92,7 +108,13 @@ class TmdbProvider:
         if not movie.poster_url and poster:
             movie.poster_url=IMG_BASE+poster
             changed_fields.append("poster_url")
-        movie.semantic=extract_semantic(movie)
+        # Translation-only upgrades must not silently alter the validated ranking semantics.
+        if (
+            not had_overview
+            or any(field != "overview" for field in changed_fields if field != "tmdb_id")
+            or not movie.semantic
+        ):
+            movie.semantic=extract_semantic(movie)
         stamp=utcnow_iso()
         with self.db.tx() as con:
             con.execute("""UPDATE movies SET tmdb_id=?,original_title=?,overview=?,runtime_min=?,countries_json=?,genres_json=?,directors_json=?,keywords_json=?,poster_url=?,semantic_json=?,updated_at=? WHERE id=?""",
@@ -101,10 +123,12 @@ class TmdbProvider:
                 record_metadata_sources(
                     con,
                     int(movie.id),
-                    changed_fields,
+                    [field for field in changed_fields if field != "overview"],
                     "tmdb",
                     updated_at=stamp,
                 )
+                if overview_provider:
+                    record_metadata_sources(con, int(movie.id), ["overview"], overview_provider, updated_at=stamp)
         return movie
 
     @staticmethod

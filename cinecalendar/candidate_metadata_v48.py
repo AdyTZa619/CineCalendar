@@ -17,7 +17,7 @@ from .open_metadata import OpenMovieMetadataProvider
 from .tmdb import TmdbProvider
 
 
-CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.0"
+CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.1"
 MAX_PREFLIGHT_TITLES = 6
 PREFLIGHT_POOL_SIZE = 36
 PREFLIGHT_VISIBLE_SIZE = 12
@@ -89,6 +89,26 @@ class CandidateMetadataPreflight:
     tmdb_factory: Callable | None = None
     open_factory: Callable | None = None
 
+    def _romanian_upgrade_ids(self, recommendations: list[Recommendation]) -> set[int]:
+        """Return TMDb overviews that can be safely upgraded without touching other sources."""
+        if not self.token.strip() or not hasattr(self.db, "connect"):
+            return set()
+        ids = [int(rec.movie.id) for rec in recommendations if rec.movie.id is not None]
+        if not ids:
+            return set()
+        placeholders = ",".join("?" for _ in ids)
+        try:
+            with self.db.connect() as con:
+                rows = con.execute(
+                    f"""SELECT movie_id FROM metadata_provenance
+                        WHERE field='overview' AND provider IN ('tmdb','tmdb-en')
+                          AND movie_id IN ({placeholders})""",
+                    ids,
+                ).fetchall()
+            return {int(row["movie_id"]) for row in rows}
+        except Exception:
+            return set()
+
     def _providers(self):
         tmdb = None
         if self.token.strip():
@@ -147,12 +167,14 @@ class CandidateMetadataPreflight:
                 "io_limit": MAX_PREFLIGHT_TITLES,
             }
         candidates: list[tuple[float, int, Recommendation]] = []
+        localization_ids = self._romanian_upgrade_ids(recs)
         for rank, rec in enumerate(recs, start=1):
             movie = rec.movie
             if not movie.id or not movie.imdb_id or int(movie.id) in attempted_ids:
                 continue
             snapshot = metadata_snapshot(movie)
-            if all(snapshot.values()):
+            localize = int(movie.id) in localization_ids
+            if all(snapshot.values()) and not localize:
                 continue
             missing_ranking = sum(not snapshot[field] for field in _RANKING_FIELDS)
             # Facts missing from the visible top 12 can directly change what the user sees.
@@ -160,6 +182,8 @@ class CandidateMetadataPreflight:
             # promote them. Poster-only gaps are useful, but never outrank missing taste facts.
             visible_bonus = 18.0 if rank <= PREFLIGHT_VISIBLE_SIZE else max(0.0, 12.0 - abs(rank - PREFLIGHT_VISIBLE_SIZE))
             impact = missing_ranking * 25.0 + visible_bonus + (2.0 if not snapshot["poster"] else 0.0)
+            if localize:
+                impact += 4.0
             candidates.append((impact, rank, rec))
         candidates.sort(key=lambda item: (-item[0], item[1]))
         selected = candidates[:bounded_limit]
@@ -185,6 +209,7 @@ class CandidateMetadataPreflight:
             movie = rec.movie
             attempted_ids.add(int(movie.id))
             before = metadata_snapshot(movie)
+            before_content = (movie.overview, movie.poster_url, movie.runtime_min)
             # With no usable provider this title was attempted but could not be checked.
             # A missing optional TMDb token alone is not an error because Wikimedia is the
             # public fallback used in that configuration.
@@ -210,6 +235,7 @@ class CandidateMetadataPreflight:
             elif open_provider is not None and not all(current.values()) and remaining < 2.0:
                 timed_out = True
             after = metadata_snapshot(movie)
+            after_content = (movie.overview, movie.poster_url, movie.runtime_min)
             if had_error and before == after:
                 # One unavailable public result must not block the recommendation page.
                 failed += 1
@@ -221,7 +247,7 @@ class CandidateMetadataPreflight:
                 ranking_added[int(movie.id)] = added
             if not before["poster"] and after["poster"]:
                 visual_added += 1
-            if before != after:
+            if before != after or before_content != after_content:
                 changed_titles += 1
             if consecutive_provider_failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES:
                 break

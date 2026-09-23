@@ -69,6 +69,11 @@ w500 cu prioritate română/engleză, iar Wikidata/Wikipedia rămâne fallback f
 Lista finală are 12 filme, fiecare card permite alegerea directă, iar protecția live se reîmprospătează
 după alegere, vizionare sau rating. Backtesturile verifică spațiul liber înainte de orice copie SQLite.
 
+În 4.9.1, Home afișează o singură estimare finală și separă vizual potrivirea, ușurința de pornire
+și rezerva de intenție. TMDb cere descrierea în română, folosește engleza doar ca fallback și arată
+sursa descrierii/posterului în Detalii. Un token validat este salvat și activat imediat, fără restart.
+Localizarea nu schimbă formula de ranking și nu declanșează backtestul.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3

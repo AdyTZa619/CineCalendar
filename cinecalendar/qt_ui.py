@@ -873,7 +873,7 @@ class CineCalendarWindow(QMainWindow):
         tm=self.card(); tl=QVBoxLayout(tm); th=QLabel("TMDb — metadata semantică și postere"); th.setObjectName("CardTitle"); tl.addWidget(th)
         desc=QLabel("Opțional. Introdu propriul API Read Access Token pentru overview, keywords, țări, regizori și postere. Fără token, funcția rămâne dezactivată — nu este simulată."); desc.setObjectName("Muted"); desc.setWordWrap(True); tl.addWidget(desc)
         token=QLineEdit(str(self.db.get_setting("tmdb_token",""))); token.setEchoMode(QLineEdit.Password); token.setPlaceholderText("TMDb API Read Access Token"); tl.addWidget(token)
-        tr=QHBoxLayout(); sv=QPushButton("Salvează token"); test=QPushButton("Testează"); enr=QPushButton("Îmbogățește 250 titluri"); sv.clicked.connect(lambda:self.db.set_setting("tmdb_token",token.text().strip())); test.clicked.connect(lambda:self.test_tmdb(token.text())); enr.clicked.connect(lambda:self.enrich_tmdb(token.text(),250)); tr.addWidget(sv); tr.addWidget(test); tr.addWidget(enr); tr.addStretch(1); tl.addLayout(tr); content.addWidget(tm)
+        tr=QHBoxLayout(); sv=QPushButton("Salvează token"); test=QPushButton("Testează"); enr=QPushButton("Îmbogățește 250 titluri"); sv.clicked.connect(lambda:self.save_tmdb_token(token.text())); test.clicked.connect(lambda:self.test_tmdb(token.text())); enr.clicked.connect(lambda:self.enrich_tmdb(token.text(),250)); tr.addWidget(sv); tr.addWidget(test); tr.addWidget(enr); tr.addStretch(1); tl.addLayout(tr); content.addWidget(tm)
 
         bk=self.card(); bl=QVBoxLayout(bk); bh=QLabel("Backup profil"); bh.setObjectName("CardTitle"); bl.addWidget(bh); br=QHBoxLayout(); e=QPushButton("Export profile"); i=QPushButton("Import profile"); e.clicked.connect(self.export_profile); i.clicked.connect(self.import_profile); br.addWidget(e); br.addWidget(i); br.addStretch(1); bl.addLayout(br); content.addWidget(bk)
         credits=self.card(); xl=QVBoxLayout(credits); xh=QLabel("Surse și transparență"); xh.setObjectName("CardTitle"); xl.addWidget(xh); x=QLabel("Catalogul folosește dataseturile oficiale IMDb. Sincronizarea profilului și completarea unor metadate folosesc endpointurile publice IMDb, cu cache local și fallback-uri. TMDb rămâne opțional și folosește tokenul utilizatorului. Updaterul Stable este activ și verifică SHA-256, păstrează backup și face rollback dacă noua versiune nu pornește corect."); x.setObjectName("Muted"); x.setWordWrap(True); xl.addWidget(x); content.addWidget(credits)
@@ -911,16 +911,31 @@ class CineCalendarWindow(QMainWindow):
             r=import_imdb_datasets(self.db,basics,ratings,50,progress); build_profile(self.db); return r
         self.worker=WorkerThread(fn,self); self.worker.message.connect(lambda m:self.set_status(m,True)); self.worker.success.connect(lambda r:(self.set_status(f"Importate {r['movies']:,} titluri.",False),QMessageBox.information(self,"IMDb",f"Importate {r['movies']:,} titluri."),self.show_page("settings"))); self.worker.failure.connect(lambda e:(self.set_status("Import eșuat.",False),QMessageBox.critical(self,"IMDb",e))); self.worker.start()
 
+    def save_tmdb_token(self, token, *, validated=False):
+        token=(token or "").strip()
+        if not token:
+            QMessageBox.warning(self,"TMDb","Introdu tokenul TMDb.")
+            return False
+        changed=token != str(self.db.get_setting("tmdb_token","") or "").strip()
+        self.db.set_setting("tmdb_token",token)
+        if changed and hasattr(self,"metadata_attempted"):
+            self.metadata_attempted.clear()
+        message="Tokenul TMDb a fost salvat și este activ imediat."
+        if validated:
+            message="Conexiunea este validă. Tokenul a fost salvat și este activ imediat."
+        self.set_status(message,False)
+        return True
+
     def test_tmdb(self,token):
         token=(token or "").strip()
         if not token: QMessageBox.warning(self,"TMDb","Introdu tokenul TMDb."); return
         self.set_status("Testez conexiunea TMDb…",True)
-        self.worker=WorkerThread(lambda progress:TmdbProvider(self.db,token).test_connection(),self); self.worker.success.connect(lambda _:(self.set_status("TMDb conectat.",False),QMessageBox.information(self,"TMDb","Conexiunea este validă."))); self.worker.failure.connect(lambda e:(self.set_status("TMDb: eroare.",False),QMessageBox.critical(self,"TMDb",e))); self.worker.start()
+        self.worker=WorkerThread(lambda progress:TmdbProvider(self.db,token).test_connection(),self); self.worker.success.connect(lambda _:(self.save_tmdb_token(token,validated=True),QMessageBox.information(self,"TMDb","Conexiunea este validă, iar tokenul este activ imediat."))); self.worker.failure.connect(lambda e:(self.set_status("TMDb: eroare.",False),QMessageBox.critical(self,"TMDb",e))); self.worker.start()
 
     def enrich_tmdb(self,token,limit):
         token=(token or "").strip()
         if not token: QMessageBox.warning(self,"TMDb","Introdu tokenul TMDb."); return
-        self.db.set_setting("tmdb_token",token); self.set_status("Îmbogățire TMDb…",True)
+        self.save_tmdb_token(token); self.set_status("Îmbogățire TMDb…",True)
         def fn(progress):
             r=enrich_library(self.db,token,limit,progress); build_profile(self.db); return r
         self.worker=WorkerThread(fn,self); self.worker.message.connect(lambda m:self.set_status(m,True)); self.worker.success.connect(lambda r:(self.set_status("Metadata TMDb actualizate.",False),QMessageBox.information(self,"TMDb",f"Procesate: {r['requested']}\nÎmbogățite: {r['enriched']}\nFără rezultat: {r['missing']}\nErori: {r['failed']}"))); self.worker.failure.connect(lambda e:(self.set_status("TMDb: eroare.",False),QMessageBox.critical(self,"TMDb",e))); self.worker.start()

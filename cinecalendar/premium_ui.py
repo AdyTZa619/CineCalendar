@@ -25,6 +25,7 @@ from .qt_ui import WorkerThread
 from .qt_ui_v2 import DecisionWindow
 from .recommendation import Recommendation
 from .learning_insight_v43 import comparison_reason
+from .metadata_provenance import metadata_sources_for_movie
 from .tmdb import TmdbProvider
 
 
@@ -89,6 +90,13 @@ class MovieDetailDialog(QDialog):
         overview.setWordWrap(True)
         overview.setTextInteractionFlags(Qt.TextSelectableByMouse)
         info.addWidget(overview)
+        sources = metadata_sources_for_movie(owner.db, int(rec.movie.id)) if rec.movie.id is not None else {}
+        source_text = owner.metadata_source_text(sources)
+        if source_text:
+            source = QLabel(source_text)
+            source.setObjectName("Muted")
+            source.setWordWrap(True)
+            info.addWidget(source)
         info.addStretch(1)
 
         actions = QHBoxLayout()
@@ -326,8 +334,33 @@ class PremiumDecisionWindow(DecisionWindow):
             out.append(self.runtime_text(movie.runtime_min))
         out.extend(movie.genres[:4])
         if movie.countries:
-            out.append(movie.countries[0])
+            out.append(self.localized_country(movie.countries[0]))
         return out[:limit]
+
+    @staticmethod
+    def localized_country(country: str) -> str:
+        names = {
+            "United States of America": "SUA", "United States": "SUA",
+            "United Kingdom": "Regatul Unit", "Romania": "România",
+            "Germany": "Germania", "France": "Franța", "Italy": "Italia",
+            "Spain": "Spania", "Japan": "Japonia", "South Korea": "Coreea de Sud",
+        }
+        return names.get(str(country or "").strip(), str(country or "").strip())
+
+    @staticmethod
+    def metadata_source_text(sources: dict[str, str]) -> str:
+        labels = {
+            "tmdb-ro": "TMDb (română)", "tmdb-en": "TMDb (engleză)", "tmdb": "TMDb",
+            "wikimedia": "Wikidata/Wikipedia", "wikidata": "Wikidata/Wikipedia",
+            "imdb": "IMDb",
+        }
+        parts = []
+        for field, caption in (("overview", "descriere"), ("poster_url", "poster")):
+            provider = str(sources.get(field, "") or "")
+            label = labels.get(provider, provider)
+            if label:
+                parts.append(f"{caption}: {label}")
+        return "Surse • " + " • ".join(parts) + " • cache local" if parts else ""
 
     def overview_text(self, movie, long: bool = False) -> str:
         text = (movie.overview or "").strip()
@@ -831,13 +864,19 @@ class PremiumDecisionWindow(DecisionWindow):
             return
         if self.metadata_worker and self.metadata_worker.isRunning(): return
         targets=[]
+        token=str(self.db.get_setting("tmdb_token","") or "").strip()
         for rec in recs:
             m=rec.movie
             if not m.id or not m.imdb_id or int(m.id) in self.metadata_attempted: continue
-            if m.overview and m.poster_url and m.runtime_min: continue
+            localize = False
+            if token and m.overview:
+                try:
+                    localize = metadata_sources_for_movie(self.db, int(m.id)).get("overview") in {"tmdb", "tmdb-en"}
+                except Exception:
+                    localize = False
+            if m.overview and m.poster_url and m.runtime_min and not localize: continue
             targets.append(rec); self.metadata_attempted.add(int(m.id))
         if not targets:return
-        token=str(self.db.get_setting("tmdb_token","") or "").strip()
         def fn(progress):
             tmdb=None
             if token:
