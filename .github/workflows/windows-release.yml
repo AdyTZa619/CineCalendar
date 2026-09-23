@@ -148,6 +148,7 @@ jobs:
           Recalibrarea nu este repornită de feedback contextual și așteaptă un lot relevant de ratinguri noi; formula activă este verificată pe rezultate reale și poate reveni automat la baseline dacă două semnale independente regresează.
           În Recomandări, până la 6 ținte cu impact sunt alese dintre 36 de finaliști; preflight-ul are buget total de timp, cache și fallback Wikimedia, iar TMDb selectează postere w500 română/engleză.
           Home arată un singur scor final și separă potrivirea de ușurința de pornire. TMDb preferă descrierea în română, arată sursa în Detalii, iar tokenul validat este activ imediat fără restart.
+          După „L-am văzut”, CineCalendar așteaptă nota reală din profilul IMDb, o verifică automat și confirmă importul fără să ceară aceeași notă în aplicație.
           Lista finală de 12 este afișată o singură dată, permite alegerea directă și păstrează formula ALS/conținut completă în telemetrie. Protecția live se actualizează după alegeri, vizionări și ratinguri.
           Vezi MOVIELENS_MODEL_NOTICE.txt pentru sursă și condițiile de utilizare ale modelului derivat.
           Actualizările ulterioare se fac direct din aplicație: ZIP verificat SHA-256, staging, backup, health-check și rollback automat.

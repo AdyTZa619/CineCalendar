@@ -74,6 +74,11 @@ după alegere, vizionare sau rating. Backtesturile verifică spațiul liber îna
 sursa descrierii/posterului în Detalii. Un token validat este salvat și activat imediat, fără restart.
 Localizarea nu schimbă formula de ranking și nu declanșează backtestul.
 
+În 4.9.2, „L-am văzut” nu cere o notă duplicată în aplicație. Filmul intră într-o coadă locală
+„aștept nota IMDb”, iar profilul public este reverificat după aproximativ 2 și 10 minute, apoi prin
+sincronizarea normală la 30 de minute sau la următoarea pornire. Când nota reală apare pe IMDb,
+CineCalendar o importă, reconstruiește profilul și confirmă vizibil ratingul folosit.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3
