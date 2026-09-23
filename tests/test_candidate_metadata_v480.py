@@ -95,9 +95,9 @@ def test_coverage_is_explicit_and_does_not_invent_completeness():
     }
 
 
-def test_preflight_is_bounded_to_six_titles_and_marks_factual_rerank():
+def test_preflight_is_bounded_to_twelve_titles_and_marks_factual_rerank():
     _FillRankingProvider.calls = 0
-    recs = [_rec(index) for index in range(1, 10)]
+    recs = [_rec(index) for index in range(1, 15)]
     attempted: set[int] = set()
     preflight = CandidateMetadataPreflight(
         object(),
@@ -106,13 +106,31 @@ def test_preflight_is_bounded_to_six_titles_and_marks_factual_rerank():
 
     report = preflight.run(recs, attempted_ids=attempted, limit=50)
 
-    assert report["attempted"] == 6
-    assert report["changed_titles"] == 6
+    assert report["attempted"] == 12
+    assert report["changed_titles"] == 12
     assert report["ranking_change"] is True
-    assert report["io_limit"] == 6
-    assert _FillRankingProvider.calls == 6
-    assert attempted == {1, 2, 3, 4, 5, 6}
-    assert report["after"]["ranking_complete"] == 6
+    assert report["io_limit"] == 12
+    assert _FillRankingProvider.calls == 12
+    assert attempted == set(range(1, 13))
+    assert report["after"]["ranking_complete"] == 12
+
+
+def test_visible_poster_gap_wins_over_sparser_offscreen_candidate():
+    complete = dict(
+        genres=["Drama"], directors=["Director"], countries=["Romania"],
+        overview="Overview", runtime_min=95, poster_url="https://example.test/existing.jpg",
+    )
+    visible = [_rec(index, **complete) for index in range(1, 13)]
+    visible[10].movie.poster_url = None
+    offscreen = _rec(13)
+
+    report = CandidateMetadataPreflight(
+        object(), open_factory=_PosterOnlyProvider,
+    ).run([*visible, offscreen], limit=1)
+
+    assert report["selected_ranks"] == [11]
+    assert visible[10].movie.poster_url == "https://example.test/poster.jpg"
+    assert offscreen.movie.poster_url is None
 
 
 def test_preflight_selects_high_impact_gaps_from_the_candidate_pool():
@@ -192,3 +210,5 @@ def test_recommendations_ui_exposes_coverage_and_reranks_only_after_new_facts():
     assert "_render_browse" not in success
     assert "PREFLIGHT_POOL_SIZE" in source
     assert 'choose=QPushButton("Aleg filmul")' in source
+    assert "ResponsiveRecommendationGrid" in source
+    assert "reason.setMaximumHeight(58)" not in source

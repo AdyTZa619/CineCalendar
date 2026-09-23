@@ -49,13 +49,13 @@ motorul sigur cere minimum două regresii independente și suficient eșantion; 
 slab nu poate retrage formula. Cele patru formule împart aceeași copie SQLite pentru fiecare
 fereastră temporală, reducând numărul copiilor complete de la patru la una per fereastră.
 
-În 4.8, pagina Recomandări verifică în fundal maximum șase titluri din lista vizibilă folosind
+În 4.8, pagina Recomandări a introdus verificarea în fundal a titlurilor vizibile folosind
 aceleași surse și același cache care înainte completau cardurile numai după clasare. Dacă sunt
 adăugate genuri, regizori, țări, synopsis/keywords sau durată lipsă, motorul face o singură
 reclasare cu faptele noi. Un poster nou sau o informație exclusiv vizuală nu schimbă ordinea.
 Cardul „Datele recomandărilor” afișează acoperirea reală, numărul de titluri complete și dacă
-reclasarea a fost justificată. Limita de I/O rămâne șase titluri per listă, iar backtestul 4.7 nu
-este invalidat de această completare operațională.
+reclasarea a fost justificată. Din 4.9.3, toate cele 12 carduri vizibile au prioritate la completare;
+backtestul 4.7 nu este invalidat de această operațiune.
 
 În 4.8.1, expunerile create de interfață păstrează identitatea completă a formulei ALS/conținut,
 astfel încât protecția live măsoară exact formula care a produs recomandarea. Pagina nu mai
@@ -63,7 +63,7 @@ astfel încât protecția live măsoară exact formula care a produs recomandare
 listei finale, iar o deschidere produce un singur set de expuneri. Erorile surselor sunt separate
 în stări complete, parțiale și eșuate și sunt afișate explicit.
 
-În 4.9, preflight-ul alege maximum șase verificări cu impact dintre 36 de finaliști și respectă
+În 4.9, preflight-ul alege verificările cu impact dintre 36 de finaliști și respectă
 un buget total de timp, astfel încât o sursă lentă nu ține blocată pagina. TMDb selectează postere
 w500 cu prioritate română/engleză, iar Wikidata/Wikipedia rămâne fallback fără cheie și cu cache.
 Lista finală are 12 filme, fiecare card permite alegerea directă, iar protecția live se reîmprospătează
@@ -78,6 +78,11 @@ Localizarea nu schimbă formula de ranking și nu declanșează backtestul.
 „aștept nota IMDb”, iar profilul public este reverificat după aproximativ 2 și 10 minute, apoi prin
 sincronizarea normală la 30 de minute sau la următoarea pornire. Când nota reală apare pe IMDb,
 CineCalendar o importă, reconstruiește profilul și confirmă vizibil ratingul folosit.
+
+În 4.9.3, completarea TMDb prioritizează toate cele 12 recomandări afișate, astfel încât posterele
+și metadatele disponibile apar chiar în cardurile pe care le vezi. Cardurile își ajustează înălțimea
+după explicație, acțiunile sunt așezate compact, iar lista trece automat pe o singură coloană când
+fereastra este prea îngustă.
 
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 

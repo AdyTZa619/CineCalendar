@@ -2,10 +2,9 @@ from __future__ import annotations
 
 """Bounded metadata preflight for the visible recommendation shortlist.
 
-The recommendation page already hydrated up to six visible titles after ranking.  V4.8 keeps
-that exact I/O ceiling, but reports whether factual ranking inputs were added so the caller can
-run one final ranking pass.  Providers only fill missing fields; existing catalog data is never
-overwritten here.
+The 12 recommendations the user can act on are completed before nearby off-screen candidates.
+The report tells the caller whether factual ranking inputs were added so it can run one final
+ranking pass. Providers only fill missing fields; existing catalog data is never overwritten.
 """
 
 from dataclasses import dataclass
@@ -17,11 +16,11 @@ from .open_metadata import OpenMovieMetadataProvider
 from .tmdb import TmdbProvider
 
 
-CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.1"
-MAX_PREFLIGHT_TITLES = 6
+CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.3"
+MAX_PREFLIGHT_TITLES = 12
 PREFLIGHT_POOL_SIZE = 36
 PREFLIGHT_VISIBLE_SIZE = 12
-PREFLIGHT_BUDGET_SECONDS = 12.0
+PREFLIGHT_BUDGET_SECONDS = 20.0
 MAX_CONSECUTIVE_PROVIDER_FAILURES = 2
 
 _RANKING_FIELDS = (
@@ -166,7 +165,7 @@ class CandidateMetadataPreflight:
                 "after": before_coverage,
                 "io_limit": MAX_PREFLIGHT_TITLES,
             }
-        candidates: list[tuple[float, int, Recommendation]] = []
+        candidates: list[tuple[int, float, int, Recommendation]] = []
         localization_ids = self._romanian_upgrade_ids(recs)
         for rank, rec in enumerate(recs, start=1):
             movie = rec.movie
@@ -184,11 +183,14 @@ class CandidateMetadataPreflight:
             impact = missing_ranking * 25.0 + visible_bonus + (2.0 if not snapshot["poster"] else 0.0)
             if localize:
                 impact += 4.0
-            candidates.append((impact, rank, rec))
-        candidates.sort(key=lambda item: (-item[0], item[1]))
+            # Complete cards that are actually shown before spending a request on a nearby
+            # candidate outside the visible list.
+            visible_priority = 0 if rank <= PREFLIGHT_VISIBLE_SIZE else 1
+            candidates.append((visible_priority, impact, rank, rec))
+        candidates.sort(key=lambda item: (item[0], -item[1], item[2]))
         selected = candidates[:bounded_limit]
-        targets = [item[2] for item in selected]
-        selected_ranks = [item[1] for item in selected]
+        targets = [item[3] for item in selected]
+        selected_ranks = [item[2] for item in selected]
 
         tmdb, open_provider = self._providers()
         ranking_added: dict[int, list[str]] = {}
