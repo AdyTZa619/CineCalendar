@@ -1,35 +1,37 @@
-CineCalendar 4.9.0 – Recomandări utilizabile și metadate reziliente
+CineCalendar 4.9.1 – Explicații coerente și metadata în română
 
 Obiectiv:
-- pagina Recomandări să rămână rapidă chiar dacă o sursă externă răspunde lent;
-- cele maximum șase verificări să fie cheltuite pe filmele unde datele pot schimba decizia;
-- alegerea filmului și verificarea succesului formulei să funcționeze direct din fluxul real.
+- recomandarea principală să explice exact scorul afișat, fără valori aparent contradictorii;
+- descrierile TMDb să fie în română când există, cu fallback sigur în engleză;
+- un token TMDb valid să devină activ imediat, fără restart.
 
-1. Metadate și postere mai bune
-- preflight-ul alege maximum 6 ținte cu impact dintre 36 de finaliști, în loc să ia primele 6;
-- există un buget total de 12 secunde, timeout-uri scurte și circuit breaker după două eșecuri consecutive;
-- TMDb caută prin IMDb ID și alege un poster w500, preferând limba română, apoi engleza și calitatea;
-- Wikidata/Wikipedia rămâne fallback fără cheie, iar toate răspunsurile rămân în cache local;
-- cardul arată lista finală de 12, starea parțială/eșuată și dacă limita de timp a protejat afișarea.
+1. Explicația recomandării
+- cardul folosește o structură scurtă: Potrivire, Pentru acum și Rezervă;
+- scorul din explicație este întotdeauna estimarea finală afișată pe card;
+- estimarea brută a componentei adaptive este etichetată explicit în Detalii și nu mai pare al doilea scor final;
+- Startability și intenția recentă sunt prezentate separat, fiind semnale diferite.
 
-2. Acțiune directă și măsurare reală
-- fiecare card din Recomandări are butonul „Aleg filmul”, legat de expunerea exactă;
-- Live Recommendation Guard se actualizează imediat după alegere, playback, watched sau rating nou;
-- cardul de protecție afișează acoperirea ALS: ratinguri mapate din totalul personal.
+2. Metadata localizată și transparentă
+- TMDb este cerut întâi în română (`ro-RO`), apoi în engleză numai dacă descrierea română lipsește;
+- descrierile englezești provenite anterior din TMDb sunt actualizate în română în fundal;
+- descrierile de la alte surse nu sunt suprascrise;
+- țările uzuale sunt afișate în română, iar Detalii arată sursa descrierii și a posterului;
+- traducerea singură nu schimbă clasarea și nu pornește backtestul.
 
-3. Protecție pentru disc
-- înainte de orice snapshot de backtest se verifică dimensiunea estimată și spațiul liber;
-- o copie este refuzată înainte de scriere dacă depășește 3 GB sau ar lăsa sub 2 GB liberi;
-- nu s-a pornit un backtest nou și nu s-a schimbat formula validată.
+3. Token TMDb activ imediat
+- „Testează” salvează automat tokenul dacă validarea reușește;
+- schimbarea tokenului redeschide titlurile pentru completarea metadata în sesiunea curentă;
+- nu mai este necesară repornirea aplicației.
 
 Validare:
-- suita completă pytest;
-- teste noi pentru selecția țintelor, alegerea posterului și bugetul de stocare;
-- schema SQLite rămâne v9 și nu necesită migrare.
+- teste dedicate pentru explicația structurată, localizarea TMDb, fallback-ul englez și protecția sursei;
+- teste pentru activarea imediată a tokenului și localizarea vizuală;
+- formula de ranking și schema SQLite rămân neschimbate;
+- nu a fost pornit niciun backtest.
 
 Versiune:
-- aplicație 4.9.0;
+- aplicație 4.9.1;
 - production-stack-v4.8.0-metadata-preflight (formula de ranking rămâne neschimbată);
-- candidate-metadata-v4.9.0;
+- candidate-metadata-v4.9.1;
 - quality-manager-v4.7.0-live-protected;
 - SQLite schema v9.

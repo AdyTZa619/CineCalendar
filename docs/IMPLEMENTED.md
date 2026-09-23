@@ -25,6 +25,9 @@
 - corecția 4.8.1 înregistrează identitatea completă a formulei în fluxul UI și afișează numai lista finală după preflight, eliminând expunerile duplicate ale aceleiași încărcări;
 - în 4.9, cele șase verificări sunt alese după impact din 36 de finaliști, cu buget total de timp, timeout și oprire după erori repetate;
 - TMDb selectează posterul w500 preferând româna, apoi engleza și calitatea, iar Wikimedia rămâne fallback cu cache;
+- în 4.9.1, TMDb preferă descrierea `ro-RO`, păstrează fallback englez, iar Detalii arată proveniența descrierii și posterului;
+- explicația Home folosește o singură estimare finală și separă Potrivire / Pentru acum / Rezervă;
+- validarea tokenului TMDb îl salvează și îl activează în sesiunea curentă, fără restart;
 - completările exclusiv vizuale, precum posterul, actualizează cardul fără să schimbe ordinea recomandărilor;
 - evaluarea 3.7 folosește ferestre temporale ne-suprapuse și elimină din training atât holdout-ul curent, cât și toate ratingurile ulterioare;
 - Availability Guard 3.7 elimină titlurile cu an sau dată de lansare cunoscută după data recomandării, fără să schimbe ordinea filmelor eligibile;

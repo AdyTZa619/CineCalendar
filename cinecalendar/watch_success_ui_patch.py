@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from urllib.parse import quote_plus
 
 from PySide6.QtCore import Qt, QUrl
@@ -113,6 +114,43 @@ def _startability_label(value: float) -> str:
     return "scăzută"
 
 
+def _contribution_reason(rec, contribution_name: str) -> str:
+    for name, _pts, reason in getattr(rec.score, "contributions", []) or []:
+        if name == contribution_name and reason:
+            return str(reason)
+    return ""
+
+
+def structured_watch_reason(rec) -> str:
+    """One coherent, compact explanation for the decision card.
+
+    The displayed rating is always the final blended value. Component estimates remain
+    available in Details, but are never presented as a second competing final score here.
+    """
+    movie, score = rec.movie, rec.score
+    lines = [
+        f"Potrivire: {float(score.predicted_rating):.1f}/10 estimare finală • "
+        f"{round(float(score.confidence) * 100)}% încredere."
+    ]
+    startability = float(getattr(score, "startability", 0.0) or 0.0)
+    if startability > 0:
+        facts = []
+        if movie.runtime_min:
+            facts.append(f"{int(movie.runtime_min)} min")
+        if movie.overview:
+            facts.append("premisă disponibilă")
+        if movie.imdb_rating is not None and float(movie.imdb_rating) >= 7.0:
+            facts.append("IMDb solid")
+        suffix = f" — {', '.join(facts[:3])}" if facts else ""
+        lines.append(f"Pentru acum: ușurință {_startability_label(startability)}{suffix}.")
+
+    intent = _contribution_reason(rec, "Intenție de vizionare acum")
+    match = re.search(r"Semnal de intenție de vizionare\s+([^;.,]+)", intent, re.IGNORECASE)
+    if match and match.group(1).strip().lower() in {"scăzut", "scăzută"}:
+        lines.append("Rezervă: intenția recentă de pornire este scăzută; contează doar la departajare.")
+    return "\n".join(lines)
+
+
 def _window_exposure(window, movie_id: int) -> int | None:
     state = current_today_choice_state(window.db)
     if state is not None and int(state.movie.id or 0) == int(movie_id):
@@ -131,8 +169,6 @@ def _window_exposure(window, movie_id: int) -> int | None:
 def install_watch_success_ui_patch(window_cls) -> None:
     """Turn Home into a truthful recommendation → attempt → confirmed playback funnel."""
     original_page_today = window_cls.page_today
-    original_human_reason = window_cls.human_reason
-
     def refresh_guard(self):
         try:
             self.s.quality_manager.refresh_live_guard()
@@ -140,10 +176,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
             self.s.log.warning("Live guard refresh after watch action failed: %s", exc)
 
     def human_reason(self, rec):
-        reason = _startability_reason(rec)
-        if reason:
-            return f"{reason} Estimarea pentru gustul tău rămâne {rec.score.predicted_rating:.1f}/10."
-        return original_human_reason(self, rec)
+        return structured_watch_reason(rec)
 
     def open_trailer(self, movie):
         url = trailer_search_url(movie.title, movie.year)
