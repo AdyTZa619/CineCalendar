@@ -17,6 +17,9 @@ from .candidate_metadata_v48 import (
     MAX_PREFLIGHT_TITLES,
     PREFLIGHT_POOL_SIZE,
     coverage_report,
+    metadata_snapshot,
+    missing_metadata_labels,
+    reset_metadata_cache,
 )
 from .feedback import daily_contextual_feedback
 from .open_metadata import OpenMovieMetadataProvider
@@ -828,7 +831,61 @@ class PremiumDecisionWindow(DecisionWindow):
             if total else "Acoperirea va fi calculată după prima listă."
         )
         facts.setObjectName("Muted"); facts.setWordWrap(True); layout.addWidget(facts)
+
+        results=dict(report.get("title_results") or {})
+        unresolved=[]
+        for movie_id,result in results.items():
+            if str(result.get("status") or "") not in {"complete"}:
+                unresolved.append(result)
+        if unresolved:
+            counts={}
+            labels={
+                "partial":"completate parțial", "not_found":"negăsite în surse",
+                "error":"cu eroare temporară", "timeout":"oprite de limita de timp",
+                "unavailable":"fără toate câmpurile", "deferred":"amânate",
+            }
+            for result in unresolved:
+                key=str(result.get("status") or "unavailable")
+                counts[key]=counts.get(key,0)+1
+            summary=" • ".join(f"{count} {labels.get(key,key)}" for key,count in counts.items())
+            diagnosis=QLabel("Diagnostic: "+summary)
+            diagnosis.setObjectName("Muted"); diagnosis.setWordWrap(True); layout.addWidget(diagnosis)
+
+        retryable=self._incomplete_visible_recommendations()
+        if retryable and state != "checking":
+            retry=QPushButton(f"Reîncearcă doar lipsurile ({len(retryable)})")
+            retry.clicked.connect(self.retry_missing_recommendation_metadata)
+            layout.addWidget(retry,0,Qt.AlignLeft)
         return box
+
+    def _incomplete_visible_recommendations(self) -> list[Recommendation]:
+        return [
+            rec for rec in list(self.browse_result or [])[:12]
+            if rec.movie.id and rec.movie.imdb_id and not all(metadata_snapshot(rec.movie).values())
+        ]
+
+    def retry_missing_recommendation_metadata(self) -> None:
+        if self.metadata_worker and self.metadata_worker.isRunning():
+            self.set_status("Verificarea metadatelor este deja în curs.",True)
+            return
+        retryable=self._incomplete_visible_recommendations()
+        ids={int(rec.movie.id) for rec in retryable if rec.movie.id}
+        if not ids:
+            self.set_status("Nu există metadate lipsă care pot fi reverificate.",False)
+            return
+        self.metadata_attempted.difference_update(ids)
+        reset_metadata_cache(self.db,ids)
+        coverage=coverage_report(list(self.browse_result or [])[:12])
+        self.recommendation_metadata_report={
+            "state":"checking", "before":coverage, "after":coverage,
+            "attempted":0, "changed_titles":0, "ranking_fields_added":{},
+            "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
+            "pool_size":len(self.browse_result), "retrying":True,
+        }
+        self.set_status(f"Reverific {len(ids)} filme cu date lipsă…",True)
+        if self.current_page=="recommendations":
+            self._render_browse(self.browse_result)
+        self._ensure_recommendation_metadata(list(self.browse_result))
 
     def compact_recommendation_card(self,rec:Recommendation,index:int):
         m,s=rec.movie,rec.score
@@ -841,6 +898,14 @@ class PremiumDecisionWindow(DecisionWindow):
         score=QLabel(f"{s.predicted_rating:.1f}/10"); score.setObjectName("Score"); head.addWidget(score); l.addLayout(head)
         meta=QLabel(" • ".join(self.movie_chips(m,5))); meta.setObjectName("Muted"); meta.setWordWrap(True); l.addWidget(meta)
         overview=QLabel(self.overview_text(m)); overview.setWordWrap(True); overview.setMaximumHeight(66); overview.setObjectName("Muted"); l.addWidget(overview)
+        result=dict((self.recommendation_metadata_report or {}).get("title_results") or {}).get(int(m.id or 0),{})
+        if result and str(result.get("status") or "") != "complete":
+            data_status=QLabel("Date: "+str(result.get("reason") or "metadate incomplete"))
+            data_status.setObjectName("Muted"); data_status.setWordWrap(True); l.addWidget(data_status)
+        elif not all(metadata_snapshot(m).values()):
+            missing=", ".join(missing_metadata_labels(m))
+            data_status=QLabel("Date incomplete: "+missing+".")
+            data_status.setObjectName("Muted"); data_status.setWordWrap(True); l.addWidget(data_status)
         reason=QLabel(self.human_reason(rec)); reason.setWordWrap(True)
         reason.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Minimum); l.addWidget(reason)
         row=QGridLayout(); row.setHorizontalSpacing(7); row.setVerticalSpacing(7)

@@ -159,7 +159,7 @@ class OpenMovieMetadataProvider:
         key = f"movie:v2:{movie.imdb_id}"
         payload = self._cached(key)
         if payload is not None:
-            self.last_status = "cache"
+            self.last_status = "cache" if payload else "empty"
         if payload is None:
             try:
                 payload = self._fetch(movie.imdb_id)

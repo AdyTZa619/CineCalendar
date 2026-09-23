@@ -6,8 +6,11 @@ from cinecalendar.candidate_metadata_v48 import (
     CandidateMetadataPreflight,
     coverage_report,
     ranking_completeness,
+    reset_metadata_cache,
 )
+from cinecalendar.db import Database
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
+from cinecalendar.util import json_dumps, utcnow_iso
 
 
 def _rec(index: int, **movie_values) -> Recommendation:
@@ -61,6 +64,28 @@ class _FailingOpenProvider:
 
     def enrich_by_imdb(self, _movie):
         raise RuntimeError("temporary Wikimedia failure")
+
+
+class _NotFoundTmdbProvider:
+    last_status = "not_found"
+
+    def __init__(self, _db, _token):
+        pass
+
+    def enrich_by_imdb(self, movie):
+        self.last_status = "not_found"
+        return movie
+
+
+class _EmptyOpenProvider:
+    last_status = "empty"
+
+    def __init__(self, _db):
+        pass
+
+    def enrich_by_imdb(self, movie):
+        self.last_status = "empty"
+        return movie
 
 
 def test_coverage_is_explicit_and_does_not_invent_completeness():
@@ -195,6 +220,73 @@ def test_provider_failure_is_reported_instead_of_claiming_completed():
     assert report["failed"] == 1
     assert report["changed_titles"] == 0
     assert report["ranking_change"] is False
+    assert report["title_results"][1]["status"] == "error"
+    assert "nu a răspuns" in report["title_results"][1]["reason"]
+
+
+def test_missing_title_is_diagnosed_as_not_found():
+    report = CandidateMetadataPreflight(
+        object(),
+        token="local-token",
+        tmdb_factory=_NotFoundTmdbProvider,
+        open_factory=_EmptyOpenProvider,
+    ).run([_rec(1)])
+
+    result = report["title_results"][1]
+    assert result["status"] == "not_found"
+    assert result["tmdb"] == "not_found"
+    assert result["fallback"] == "empty"
+    assert "nu a fost găsit" in result["reason"]
+
+
+def test_partial_fill_reports_exact_remaining_fields():
+    report = CandidateMetadataPreflight(
+        object(), open_factory=_PosterOnlyProvider,
+    ).run([_rec(1)])
+
+    result = report["title_results"][1]
+    assert result["status"] == "partial"
+    assert "poster" not in result["missing"]
+    assert result["missing"] == ["genuri", "regizor", "țară", "descriere", "durată"]
+
+
+def test_explicit_retry_clears_only_selected_movie_provider_cache(tmp_path):
+    db = Database(tmp_path / "retry.db")
+    now = utcnow_iso()
+    with db.tx() as con:
+        movie_ids = []
+        for suffix in (1, 2):
+            imdb_id = f"tt900000{suffix}"
+            cur = con.execute(
+                """INSERT INTO movies(
+                    imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                    year,title_type,genres_json,directors_json,countries_json,overview,
+                    keywords_json,source,created_at,updated_at,tmdb_id
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    imdb_id, f"movie|retry-{suffix}", f"Retry {suffix}", "",
+                    f"retry {suffix}", "", 2024, "movie", "[]", "[]", "[]", "",
+                    "[]", "test", now, now, 800 + suffix,
+                ),
+            )
+            movie_ids.append(int(cur.lastrowid))
+            for provider, key in (
+                ("tmdb", f'/find/{imdb_id}?{{"external_source": "imdb_id"}}'),
+                ("tmdb", f'/movie/{800 + suffix}?{{"language": "ro-RO"}}'),
+                ("wikimedia", f"movie:v2:{imdb_id}"),
+            ):
+                con.execute(
+                    "INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at) VALUES(?,?,?,?)",
+                    (provider, key, json_dumps({}), now),
+                )
+
+    assert reset_metadata_cache(db, [movie_ids[0]]) == 3
+    with db.connect() as con:
+        remaining = con.execute(
+            "SELECT provider,cache_key FROM metadata_cache ORDER BY provider,cache_key"
+        ).fetchall()
+    assert len(remaining) == 3
+    assert all("tt9000002" in row["cache_key"] or "/movie/802?" in row["cache_key"] for row in remaining)
 
 
 def test_recommendations_ui_exposes_coverage_and_reranks_only_after_new_facts():
@@ -212,3 +304,6 @@ def test_recommendations_ui_exposes_coverage_and_reranks_only_after_new_facts():
     assert 'choose=QPushButton("Aleg filmul")' in source
     assert "ResponsiveRecommendationGrid" in source
     assert "reason.setMaximumHeight(58)" not in source
+    assert 'QPushButton(f"Reîncearcă doar lipsurile ({len(retryable)})")' in source
+    assert "reset_metadata_cache(self.db,ids)" in source
+    assert 'QLabel("Date: "+str(result.get("reason")' in source

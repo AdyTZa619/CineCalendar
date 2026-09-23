@@ -16,7 +16,7 @@ from .open_metadata import OpenMovieMetadataProvider
 from .tmdb import TmdbProvider
 
 
-CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.3"
+CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.4"
 MAX_PREFLIGHT_TITLES = 12
 PREFLIGHT_POOL_SIZE = 36
 PREFLIGHT_VISIBLE_SIZE = 12
@@ -30,6 +30,15 @@ _RANKING_FIELDS = (
     "semantic_text",
     "runtime",
 )
+
+_FIELD_LABELS = {
+    "genres": "genuri",
+    "directors": "regizor",
+    "countries": "țară",
+    "semantic_text": "descriere",
+    "runtime": "durată",
+    "poster": "poster",
+}
 
 
 def metadata_snapshot(movie: Movie) -> dict[str, bool]:
@@ -79,6 +88,43 @@ def coverage_report(recommendations: Iterable[Recommendation]) -> dict:
 
 def ranking_fields_added(before: dict[str, bool], after: dict[str, bool]) -> list[str]:
     return [field for field in _RANKING_FIELDS if not before[field] and after[field]]
+
+
+def missing_metadata_labels(movie: Movie) -> list[str]:
+    snapshot = metadata_snapshot(movie)
+    return [_FIELD_LABELS[field] for field in (*_RANKING_FIELDS, "poster") if not snapshot[field]]
+
+
+def reset_metadata_cache(db, movie_ids: Iterable[int]) -> int:
+    """Forget cached provider answers only for explicitly retried incomplete movies."""
+    ids = sorted({int(movie_id) for movie_id in movie_ids if movie_id})
+    if not ids or not hasattr(db, "connect"):
+        return 0
+    marks = ",".join("?" for _ in ids)
+    removed = 0
+    with db.tx() as con:
+        rows = con.execute(
+            f"SELECT imdb_id,tmdb_id FROM movies WHERE id IN ({marks})",
+            ids,
+        ).fetchall()
+        for row in rows:
+            imdb_id = str(row["imdb_id"] or "").strip()
+            tmdb_id = row["tmdb_id"]
+            if imdb_id:
+                removed += con.execute(
+                    "DELETE FROM metadata_cache WHERE provider='tmdb' AND cache_key LIKE ?",
+                    (f"/find/{imdb_id}?%",),
+                ).rowcount
+                removed += con.execute(
+                    "DELETE FROM metadata_cache WHERE provider='wikimedia' AND cache_key=?",
+                    (f"movie:v2:{imdb_id}",),
+                ).rowcount
+            if tmdb_id:
+                removed += con.execute(
+                    "DELETE FROM metadata_cache WHERE provider='tmdb' AND cache_key LIKE ?",
+                    (f"/movie/{int(tmdb_id)}?%",),
+                ).rowcount
+    return int(removed)
 
 
 @dataclass
@@ -159,6 +205,7 @@ class CandidateMetadataPreflight:
                 "visual_added": 0,
                 "providers": [],
                 "timed_out": False,
+                "title_results": {},
                 "selected_ranks": [],
                 "pool_size": len(recs),
                 "before": before_coverage,
@@ -201,6 +248,7 @@ class CandidateMetadataPreflight:
         started = time.monotonic()
         timed_out = False
         consecutive_provider_failures = 0
+        title_results: dict[int, dict] = {}
 
         for index, rec in enumerate(targets, start=1):
             if time.monotonic() - started >= max(0.1, float(budget_seconds)):
@@ -216,13 +264,18 @@ class CandidateMetadataPreflight:
             # A missing optional TMDb token alone is not an error because Wikimedia is the
             # public fallback used in that configuration.
             had_error = tmdb is None and open_provider is None
+            tmdb_status = "not_configured" if tmdb is None else "pending"
+            open_status = "unavailable" if open_provider is None else "pending"
+            title_timed_out = False
             if tmdb is not None:
                 try:
                     tmdb.enrich_by_imdb(movie)
                     providers_used.add("TMDb")
-                    if getattr(tmdb, "last_status", "") == "error":
+                    tmdb_status = str(getattr(tmdb, "last_status", "success") or "success")
+                    if tmdb_status == "error":
                         had_error = True
                 except Exception:
+                    tmdb_status = "error"
                     had_error = True
             current = metadata_snapshot(movie)
             remaining = max(0.0, float(budget_seconds) - (time.monotonic() - started))
@@ -230,12 +283,16 @@ class CandidateMetadataPreflight:
                 try:
                     open_provider.enrich_by_imdb(movie)
                     providers_used.add("Wikidata/Wikipedia")
-                    if getattr(open_provider, "last_status", "") == "error":
+                    open_status = str(getattr(open_provider, "last_status", "success") or "success")
+                    if open_status == "error":
                         had_error = True
                 except Exception:
+                    open_status = "error"
                     had_error = True
             elif open_provider is not None and not all(current.values()) and remaining < 2.0:
                 timed_out = True
+                title_timed_out = True
+                open_status = "timeout"
             after = metadata_snapshot(movie)
             after_content = (movie.overview, movie.poster_url, movie.runtime_min)
             if had_error and before == after:
@@ -251,8 +308,54 @@ class CandidateMetadataPreflight:
                 visual_added += 1
             if before != after or before_content != after_content:
                 changed_titles += 1
+            missing = [_FIELD_LABELS[field] for field in (*_RANKING_FIELDS, "poster") if not after[field]]
+            if not missing:
+                result_status = "complete"
+                reason = "Metadatele urmărite sunt complete."
+            elif before != after or before_content != after_content:
+                result_status = "partial"
+                reason = "Completat parțial; lipsesc: " + ", ".join(missing) + "."
+            elif title_timed_out:
+                result_status = "timeout"
+                reason = "Verificarea a atins limita de timp; lipsesc: " + ", ".join(missing) + "."
+            elif tmdb_status == "not_found" and open_status == "empty":
+                result_status = "not_found"
+                reason = "Filmul nu a fost găsit în sursele de metadate."
+            elif "error" in {tmdb_status, open_status}:
+                result_status = "error"
+                reason = "O sursă nu a răspuns; lipsesc: " + ", ".join(missing) + "."
+            else:
+                result_status = "unavailable"
+                reason = "Sursele nu oferă momentan: " + ", ".join(missing) + "."
+            title_results[int(movie.id)] = {
+                "title": str(movie.title or "Film"),
+                "status": result_status,
+                "reason": reason,
+                "missing": missing,
+                "tmdb": tmdb_status,
+                "fallback": open_status,
+            }
             if consecutive_provider_failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES:
                 break
+
+        completed_target_ids = set(title_results)
+        for rec in targets:
+            movie = rec.movie
+            if not movie.id or int(movie.id) in completed_target_ids:
+                continue
+            missing = missing_metadata_labels(movie)
+            title_results[int(movie.id)] = {
+                "title": str(movie.title or "Film"),
+                "status": "timeout" if timed_out else "deferred",
+                "reason": (
+                    "Verificarea a atins limita de timp; lipsesc: " + ", ".join(missing) + "."
+                    if timed_out else
+                    "Verificarea a fost amânată după erori consecutive ale surselor."
+                ),
+                "missing": missing,
+                "tmdb": "not_attempted",
+                "fallback": "not_attempted",
+            }
 
         attempted = len(attempted_ids.intersection({int(rec.movie.id) for rec in targets}))
         if attempted and failed == attempted:
@@ -273,6 +376,7 @@ class CandidateMetadataPreflight:
             "visual_added": visual_added,
             "providers": sorted(providers_used),
             "timed_out": timed_out,
+            "title_results": title_results,
             "selected_ranks": selected_ranks,
             "pool_size": len(recs),
             "elapsed_ms": int(round((time.monotonic() - started) * 1000.0)),

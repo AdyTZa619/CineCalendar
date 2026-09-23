@@ -51,7 +51,9 @@ class TmdbProvider:
         if not movie.imdb_id: return movie
         found=self._get(f"/find/{movie.imdb_id}",{"external_source":"imdb_id"})
         results=found.get("movie_results") or []
-        if not results: return movie
+        if not results:
+            self.last_status="not_found"; self.last_error=""
+            return movie
         tmdb_id=int(results[0]["id"])
         details=self._get(
             f"/movie/{tmdb_id}",

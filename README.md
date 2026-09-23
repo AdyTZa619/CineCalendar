@@ -84,6 +84,11 @@ CineCalendar o importă, reconstruiește profilul și confirmă vizibil ratingul
 după explicație, acțiunile sunt așezate compact, iar lista trece automat pe o singură coloană când
 fereastra este prea îngustă.
 
+În 4.9.4, fiecare card incomplet explică dacă filmul nu a fost găsit, sursa a răspuns cu date
+parțiale, a apărut o eroare temporară sau s-a atins limita de timp. Butonul „Reîncearcă doar
+lipsurile” șterge exclusiv cache-ul furnizorilor pentru filmele incomplete vizibile și le verifică
+din nou, fără să atingă metadatele deja confirmate sau formula de ranking.
+
 Nota „pentru tine”, încrederea, Startability, contextul și trust gate sunt semnale distincte.
 
 ## Fundația de integritate 3.3

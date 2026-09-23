@@ -146,6 +146,18 @@ def test_tmdb_poster_selection_prefers_romanian_then_quality():
     assert TmdbProvider._best_poster(details) == "/ro-best.jpg"
 
 
+def test_tmdb_reports_when_imdb_title_is_not_found(tmp_path, monkeypatch):
+    db = Database(tmp_path / "tmdb-not-found.db")
+    provider = TmdbProvider(db, "token")
+    monkeypatch.setattr(provider, "_get", lambda *_args, **_kwargs: {"movie_results": []})
+
+    movie = Movie(imdb_id="tt9999999", title="Missing", year=2024)
+    provider.enrich_by_imdb(movie)
+
+    assert provider.last_status == "not_found"
+    assert provider.last_error == ""
+
+
 def test_schema_v6_has_metadata_provenance(tmp_path):
     db = Database(tmp_path / "schema.db")
     with db.connect() as con:
