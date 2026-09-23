@@ -121,6 +121,9 @@ class SyncResult:
     metadata_enriched: int = 0
     unchanged: int = 0
     stopped_at_baseline: bool = False
+    # Exact remote identities seen in this fetch. Follow-up resolution uses this map so a
+    # local rating cannot close the queue for the wrong IMDb title.
+    profile_ratings: dict[str, int] = field(default_factory=dict, repr=False)
 
     @property
     def changed(self) -> bool:
@@ -927,7 +930,10 @@ def _upsert(db: Database, item: RemoteRating, result: SyncResult) -> None:
 def sync_public_ratings(db: Database, profile_url: str, *, baseline_date: str | None = "2026-09-05",
                         session: requests.Session | None = None) -> SyncResult:
     items = fetch_public_ratings(profile_url, session=session)
-    result = SyncResult(fetched=len(items))
+    result = SyncResult(
+        fetched=len(items),
+        profile_ratings={item.imdb_id: int(item.rating) for item in items},
+    )
     cutoff = date.fromisoformat(baseline_date) if baseline_date else None
     now = utcnow_iso()
 
