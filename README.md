@@ -1,5 +1,16 @@
 # CineCalendar
 
+## 4.11.0 — Metadata Doctor și coadă persistentă
+
+- candidații probabili sunt puși într-o coadă SQLite înainte de verificarea limitată a listei;
+- recomandările vizibile, filmele evaluate și watchlistul au prioritate;
+- completarea continuă în loturi mici la pornire și la fiecare 15 minute;
+- fiecare film păstrează starea, câmpurile lipsă, încercările și ultima eroare;
+- retry-ul crește gradual de la 15 minute la 7 zile;
+- un poster care eșuează real la încărcare este invalidat, raportat și pus din nou în coadă;
+- pagina **Metadata Doctor** arată coada și permite o reparare manuală imediată;
+- formula recomandărilor și ponderile ALS/conținut nu sunt schimbate.
+
 CineCalendar este o aplicație Windows portabilă pentru recomandări personale de filme. Istoricul real de ratinguri rămâne sursa principală de adevăr pentru gust; calendarul ortodox/secular/sezonier, ALS, modelul adaptiv și semnalele de vizionare rafinează selecția fără să înlocuiască profilul personal.
 
 ## Flux normal

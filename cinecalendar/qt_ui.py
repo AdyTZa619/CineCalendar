@@ -36,6 +36,13 @@ from .imdb_rating_followup import (
     resolve_imdb_rating_followups,
 )
 from .library_repair import repair_rated_library
+from .metadata_doctor import (
+    audit_metadata_doctor,
+    process_metadata_queue,
+    recent_metadata_jobs,
+    report_broken_poster,
+    seed_metadata_queue,
+)
 from .profile import build_profile, get_profile, top_profile_features
 from .recommendation import Recommendation
 from .romanian_films import romanian_chapters, romanian_films
@@ -136,6 +143,7 @@ class CineCalendarWindow(QMainWindow):
         self.current_page = "today"
         self.worker: WorkerThread | None = None
         self.poster_threads: list[WorkerThread] = []
+        self.metadata_queue_worker: WorkerThread | None = None
         self._poster_queue: list[tuple[str, str, Path]] = []
         self._poster_waiters: dict[str, list[tuple[QLabel, Any]]] = {}
         self._poster_enqueued: set[str] = set()
@@ -154,6 +162,10 @@ class CineCalendarWindow(QMainWindow):
         self.imdb_sync_timer.timeout.connect(lambda: self.sync_imdb_public(silent=True))
         self.imdb_sync_timer.start(30 * 60 * 1000)
         QTimer.singleShot(2500, lambda: self.sync_imdb_public(silent=True))
+        self.metadata_queue_timer = QTimer(self)
+        self.metadata_queue_timer.timeout.connect(lambda: self.run_metadata_doctor(silent=True))
+        self.metadata_queue_timer.start(15 * 60 * 1000)
+        QTimer.singleShot(20000, lambda: self.run_metadata_doctor(silent=True))
 
     def _set_icon(self):
         try:
@@ -420,13 +432,118 @@ class CineCalendarWindow(QMainWindow):
             except Exception:
                 pass
 
-        self._poster_waiters.setdefault(request_id, []).append((label, on_failure))
+        callback = on_failure
+        if callback is None:
+            callback = lambda message, poster_url=url: self._record_broken_poster(poster_url, message)
+        self._poster_waiters.setdefault(request_id, []).append((label, callback))
         if request_id in self._poster_enqueued:
             return
 
         self._poster_enqueued.add(request_id)
         self._poster_queue.append((request_id, url, path))
         self._pump_poster_queue()
+
+    def _record_broken_poster(self, url: str, error: str) -> None:
+        try:
+            with self.db.connect() as con:
+                rows = con.execute(
+                    "SELECT id FROM movies WHERE poster_url=? LIMIT 25", (str(url),)
+                ).fetchall()
+            for row in rows:
+                report_broken_poster(self.db, int(row["id"]), str(url), str(error))
+        except Exception as exc:
+            self.s.log.warning("Metadata Doctor could not record broken poster: %s", exc)
+
+    def run_metadata_doctor(self, silent: bool = True) -> None:
+        if self.metadata_queue_worker and self.metadata_queue_worker.isRunning():
+            return
+        if self.worker and self.worker.isRunning():
+            return
+        premium_worker = getattr(self, "metadata_worker", None)
+        if premium_worker and premium_worker.isRunning():
+            return
+        token = str(self.db.get_setting("tmdb_token", "") or "").strip()
+        if not silent:
+            self.set_status("Metadata Doctor verifică și repară datele importante…", True)
+
+        def fn(progress):
+            audit_metadata_doctor(self.db)
+            seed_metadata_queue(self.db, limit=500 if not silent else 250)
+            return process_metadata_queue(
+                self.db, token, limit=25 if not silent else 6,
+                force=not silent, progress=progress,
+            )
+
+        worker = WorkerThread(fn, self)
+        self.metadata_queue_worker = worker
+        if not silent:
+            worker.message.connect(lambda message: self.set_status(message, True))
+
+        def done(result):
+            self.metadata_queue_worker = None
+            if not silent:
+                self.set_status(
+                    f"Metadata Doctor: {result.improved} îmbunătățite, "
+                    f"{result.completed} completate, {result.retrying} rămase în coadă.", False,
+                )
+                if self.current_page == "metadata_doctor":
+                    self.show_page("metadata_doctor")
+
+        def failed(message):
+            self.metadata_queue_worker = None
+            self.s.log.warning("Metadata Doctor background pass failed: %s", message)
+            if not silent:
+                self.set_status("Metadata Doctor nu a putut termina; datele existente sunt intacte.", False)
+                QMessageBox.warning(self, "Metadata Doctor", str(message))
+
+        worker.success.connect(done)
+        worker.failure.connect(failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def page_metadata_doctor(self):
+        page, content = self.page_shell(
+            "Metadata Doctor",
+            "Completează înainte de scoring datele importante și repară automat posterele defecte.",
+            [("Scanează și repară acum", lambda: self.run_metadata_doctor(silent=False), True)],
+        )
+        seed_metadata_queue(self.db, limit=250)
+        report = audit_metadata_doctor(self.db)
+        summary = self.card(); layout = QVBoxLayout(summary)
+        title = QLabel("Starea cozii persistente"); title.setObjectName("CardTitle"); layout.addWidget(title)
+        state = QLabel(
+            f"{report.queued} în așteptare • {report.due} scadente • "
+            f"{report.retrying} cu retry • {report.completed} completate • "
+            f"{report.open_issues} probleme deschise ({report.broken_posters} postere)."
+        )
+        state.setWordWrap(True); state.setObjectName("Muted"); layout.addWidget(state)
+        note = QLabel(
+            "Prioritate: recomandările vizibile, filmele evaluate și watchlistul. "
+            "O eroare de rețea păstrează datele existente și reprogramează doar câmpurile lipsă."
+        )
+        note.setWordWrap(True); note.setObjectName("Muted"); layout.addWidget(note)
+        content.addWidget(summary)
+
+        jobs = recent_metadata_jobs(self.db, limit=30)
+        table = QTableWidget(len(jobs), 6)
+        table.setHorizontalHeaderLabels(["Film", "Stare", "Lipsesc", "Încercări", "Următoarea", "Motiv / eroare"])
+        table.setEditTriggers(QTableWidget.NoEditTriggers); table.verticalHeader().setVisible(False)
+        labels = {"pending":"În așteptare", "running":"Se verifică", "retry":"Retry", "complete":"Complet"}
+        for row_index, item in enumerate(jobs):
+            missing = ", ".join(json_loads(item.get("missing_json"), []) or []) or "—"
+            detail = str(item.get("last_error") or item.get("reason") or "—")
+            values = (
+                item.get("title") or "Film", labels.get(item.get("status"), item.get("status") or "—"),
+                missing, str(item.get("attempt_count") or 0),
+                str(item.get("next_check_at") or "—")[:19].replace("T", " "), detail,
+            )
+            for column, value in enumerate(values):
+                table.setItem(row_index, column, QTableWidgetItem(str(value)))
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in range(1, 6):
+            table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        content.addWidget(table)
+        return page
 
     def feedback(self,movie_id:int,kind:str):
         try:

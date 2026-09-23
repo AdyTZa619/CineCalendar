@@ -185,7 +185,7 @@ def test_partial_v5_migration_is_resumed_and_upgraded_to_current_schema(tmp_path
 
     db = Database(path)
     with db.connect() as con:
-        assert con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 10
+        assert con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 11
         assert con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_trust_audit'"
         ).fetchone() is not None

@@ -29,6 +29,7 @@ class DecisionWindow(CineCalendarWindow):
         ("calendar", "Calendar"),
         ("month", "Program calendar"),
         ("history", "Istoric"),
+        ("metadata_doctor", "Metadata Doctor"),
         ("updates", "Actualizări"),
         ("settings", "Setări"),
     ]
