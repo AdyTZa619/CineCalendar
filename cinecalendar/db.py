@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
-# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v10 through
+# Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v11 through
 # idempotent Python helpers so an interrupted ALTER TABLE can be resumed safely.
 MIGRATIONS: dict[int, str] = {
 1: r'''
@@ -238,6 +238,37 @@ CREATE TABLE IF NOT EXISTS imdb_rating_followups(
 );
 CREATE INDEX IF NOT EXISTS ix_imdb_followup_status_next
   ON imdb_rating_followups(status,next_check_at);
+''',
+11: r'''
+CREATE TABLE IF NOT EXISTS metadata_jobs(
+  movie_id INTEGER PRIMARY KEY REFERENCES movies(id) ON DELETE CASCADE,
+  priority INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT 'catalog',
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  missing_json TEXT NOT NULL DEFAULT '[]',
+  queued_at TEXT NOT NULL,
+  last_checked_at TEXT,
+  next_check_at TEXT,
+  last_error TEXT NOT NULL DEFAULT '',
+  completed_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_metadata_jobs_status_priority
+  ON metadata_jobs(status,priority DESC,next_check_at);
+CREATE TABLE IF NOT EXISTS metadata_issues(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  field TEXT NOT NULL,
+  issue_type TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  detected_at TEXT NOT NULL,
+  resolved_at TEXT,
+  UNIQUE(movie_id,field,issue_type)
+);
+CREATE INDEX IF NOT EXISTS ix_metadata_issues_open
+  ON metadata_issues(resolved_at,movie_id);
 '''
 }
 
@@ -357,6 +388,10 @@ class Database:
         if not self._table_exists(con, "recommendation_explanations"):
             return True
         if not self._table_exists(con, "imdb_rating_followups"):
+            return True
+        if not self._table_exists(con, "metadata_jobs"):
+            return True
+        if not self._table_exists(con, "metadata_issues"):
             return True
         return False
 
@@ -623,6 +658,45 @@ class Database:
                     (movie_id, imdb_id, title, queued_at, queued_at, now),
                 )
 
+    def _apply_v11(self, con: sqlite3.Connection) -> None:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS metadata_jobs(
+              movie_id INTEGER PRIMARY KEY REFERENCES movies(id) ON DELETE CASCADE,
+              priority INTEGER NOT NULL DEFAULT 0,
+              reason TEXT NOT NULL DEFAULT 'catalog',
+              status TEXT NOT NULL DEFAULT 'pending',
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              missing_json TEXT NOT NULL DEFAULT '[]',
+              queued_at TEXT NOT NULL,
+              last_checked_at TEXT,
+              next_check_at TEXT,
+              last_error TEXT NOT NULL DEFAULT '',
+              completed_at TEXT,
+              updated_at TEXT NOT NULL
+            )"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_metadata_jobs_status_priority
+               ON metadata_jobs(status,priority DESC,next_check_at)"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS metadata_issues(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+              field TEXT NOT NULL,
+              issue_type TEXT NOT NULL,
+              provider TEXT NOT NULL DEFAULT '',
+              detail TEXT NOT NULL DEFAULT '',
+              detected_at TEXT NOT NULL,
+              resolved_at TEXT,
+              UNIQUE(movie_id,field,issue_type)
+            )"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_metadata_issues_open
+               ON metadata_issues(resolved_at,movie_id)"""
+        )
+
     def connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -686,6 +760,7 @@ class Database:
                 (8, self._apply_v8),
                 (9, self._apply_v9),
                 (10, self._apply_v10),
+                (11, self._apply_v11),
             ):
                 con.execute("BEGIN IMMEDIATE")
                 try:

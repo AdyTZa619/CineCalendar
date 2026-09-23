@@ -100,8 +100,8 @@ def test_v4_database_migrates_to_current_schema(tmp_path):
         provenance = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_provenance'"
         ).fetchone()
-    assert SCHEMA_VERSION == 10
-    assert current == 10
+    assert SCHEMA_VERSION == 11
+    assert current == 11
     assert "exposure_history_id" in columns
     assert trust is not None
     assert provenance is not None

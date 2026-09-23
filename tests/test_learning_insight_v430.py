@@ -146,13 +146,13 @@ def _outcome(
 
 def test_current_schema_keeps_recommendation_explanations(tmp_path):
     db = Database(tmp_path / "schema-v9.db")
-    assert SCHEMA_VERSION == 10
+    assert SCHEMA_VERSION == 11
     with db.connect() as con:
         current = con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
         table = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_explanations'"
         ).fetchone()
-    assert current == 10
+    assert current == 11
     assert table is not None
 
 

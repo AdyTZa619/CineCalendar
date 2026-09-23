@@ -12,11 +12,12 @@ import time
 from typing import Callable, Iterable
 
 from .models import Movie, Recommendation
+from .metadata_doctor import queue_recommendation_metadata, refresh_metadata_job
 from .open_metadata import OpenMovieMetadataProvider
 from .tmdb import TmdbProvider
 
 
-CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.9.4"
+CANDIDATE_METADATA_VERSION = "candidate-metadata-v4.11.0"
 MAX_PREFLIGHT_TITLES = 12
 PREFLIGHT_POOL_SIZE = 36
 PREFLIGHT_VISIBLE_SIZE = 12
@@ -189,6 +190,10 @@ class CandidateMetadataPreflight:
         progress: Callable[[str], None] | None = None,
     ) -> dict:
         recs = list(recommendations)
+        # Persist the whole probable pool before the bounded foreground check. Titles that do
+        # not fit in this 20-second pass remain available to Metadata Doctor in the background.
+        if hasattr(self.db, "connect"):
+            queue_recommendation_metadata(self.db, recs, visible=PREFLIGHT_VISIBLE_SIZE)
         before_coverage = coverage_report(recs)
         attempted_ids = attempted_ids if attempted_ids is not None else set()
         bounded_limit = max(0, min(int(limit), MAX_PREFLIGHT_TITLES))
@@ -335,6 +340,8 @@ class CandidateMetadataPreflight:
                 "tmdb": tmdb_status,
                 "fallback": open_status,
             }
+            if hasattr(self.db, "connect"):
+                refresh_metadata_job(self.db, int(movie.id), error=reason if result_status != "complete" else "")
             if consecutive_provider_failures >= MAX_CONSECUTIVE_PROVIDER_FAILURES:
                 break
 

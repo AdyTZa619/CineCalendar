@@ -1,4 +1,4 @@
--- CineCalendar SQLite schema v10
+-- CineCalendar SQLite schema v11
 -- Canonical reference kept in sync with migrations in cinecalendar/db.py.
 
 PRAGMA foreign_keys=ON;
@@ -175,6 +175,33 @@ CREATE TABLE imdb_rating_followups(
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE metadata_jobs(
+  movie_id INTEGER PRIMARY KEY REFERENCES movies(id) ON DELETE CASCADE,
+  priority INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT 'catalog',
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  missing_json TEXT NOT NULL DEFAULT '[]',
+  queued_at TEXT NOT NULL,
+  last_checked_at TEXT,
+  next_check_at TEXT,
+  last_error TEXT NOT NULL DEFAULT '',
+  completed_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE metadata_issues(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  field TEXT NOT NULL,
+  issue_type TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  detected_at TEXT NOT NULL,
+  resolved_at TEXT,
+  UNIQUE(movie_id,field,issue_type)
+);
+
 CREATE TABLE schema_migrations(
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
@@ -222,3 +249,5 @@ CREATE INDEX ix_rec_outcome_rating_date ON recommendation_outcomes(rating_date);
 CREATE INDEX ix_rec_outcome_engine_context ON recommendation_outcomes(engine_version,context_date);
 CREATE INDEX ix_rec_outcome_context ON recommendation_outcomes(context_date);
 CREATE INDEX ix_imdb_followup_status_next ON imdb_rating_followups(status,next_check_at);
+CREATE INDEX ix_metadata_jobs_status_priority ON metadata_jobs(status,priority DESC,next_check_at);
+CREATE INDEX ix_metadata_issues_open ON metadata_issues(resolved_at,movie_id);

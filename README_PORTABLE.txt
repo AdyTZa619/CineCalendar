@@ -1,4 +1,4 @@
-CineCalendar Premium — Windows 10/11 x64
+CineCalendar Premium 4.11.0 — Windows 10/11 x64
 
 PORNIRE
 1. Dezarhivează întregul ZIP într-un folder normal cu drept de scriere.
@@ -8,6 +8,11 @@ PORNIRE
 
 DATE
 Datele personale, baza SQLite, cache-ul, logurile, backupurile și fișierele updaterului sunt în folderul CineCalendarData de lângă aplicație. Actualizarea bundle-ului nu șterge CineCalendarData. CineCalendar verifică baza la pornire și păstrează un snapshot last-good pentru recovery; a doua instanță a aplicației este blocată înainte să deschidă baza.
+
+METADATA DOCTOR
+Coada persistentă completează genuri, regizori, țară, descriere, durată și poster.
+Recomandările vizibile au prioritate; erorile primesc retry gradual, iar posterele
+care eșuează efectiv la încărcare sunt invalidate și căutate din nou.
 
 RECOMANDĂRI
 Motorul curent combină profilul tău de ratinguri, retrieval ALS/content, contextul calendaristic și semnale locale de vizionare. Din 4.6, raportul ALS/conținut este ales local prin backtest pe istoricul tău și rămâne 70/30 dacă niciun challenger nu dovedește un câștig stabil. Din 4.7, formula activă este verificată pe rezultate reale cu rollback conservator. Din 4.8.1, lista finală produce un singur set de expuneri și păstrează identitatea completă 70/30–80/20. În 4.9, Recomandări verifică ținte cu impact dintre 36 de finaliști, are buget total de timp, postere TMDb w500 cu fallback Wikimedia și permite alegerea directă din card; protecția se actualizează imediat după acțiunile reale. În 4.9.1, explicația arată un singur scor final, separă potrivirea de ușurința de pornire, cere descrieri TMDb în română și activează imediat tokenul validat. În 4.9.2, filmele marcate văzute așteaptă nota reală din profilul IMDb și o importă automat, fără introducerea aceleiași note în aplicație. În 4.9.3, toate cele 12 recomandări vizibile au prioritate la completarea TMDb, iar cardurile se adaptează fără text tăiat sau scroll orizontal. În 4.9.4, fiecare lipsă are un diagnostic vizibil, iar „Reîncearcă doar lipsurile” reverifică numai filmele incomplete și elimină cache-ul gol aferent. În 4.10, coada ratingurilor IMDb păstrează încercările, backofful, erorile și identitatea exactă pentru fiecare film și recuperează automat intrările lipsă. Din 3.3, fiecare card vizibil are o expunere imuabilă proprie, iar alegerea, skip-ul, Stremio, confirmarea playback-ului și „L-am văzut” sunt evenimente separate legate de acea expunere exactă.
