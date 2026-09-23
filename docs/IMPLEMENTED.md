@@ -28,6 +28,9 @@
 - în 4.9.1, TMDb preferă descrierea `ro-RO`, păstrează fallback englez, iar Detalii arată proveniența descrierii și posterului;
 - explicația Home folosește o singură estimare finală și separă Potrivire / Pentru acum / Rezervă;
 - validarea tokenului TMDb îl salvează și îl activează în sesiunea curentă, fără restart;
+- în 4.9.2, „L-am văzut” creează o urmărire persistentă pentru nota reală din profilul IMDb;
+- verificările de follow-up rulează la aproximativ 2 și 10 minute, apoi prin ciclul normal de 30 de minute sau la următoarea pornire;
+- după import, profilul este reconstruit și interfața confirmă titlul și nota preluată, fără notare duplicată în CineCalendar;
 - completările exclusiv vizuale, precum posterul, actualizează cardul fără să schimbe ordinea recomandărilor;
 - evaluarea 3.7 folosește ferestre temporale ne-suprapuse și elimină din training atât holdout-ul curent, cât și toate ratingurile ulterioare;
 - Availability Guard 3.7 elimină titlurile cu an sau dată de lansare cunoscută după data recomandării, fără să schimbe ordinea filmelor eligibile;

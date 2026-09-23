@@ -442,7 +442,7 @@ def install_watch_success_ui_patch(window_cls) -> None:
             lambda _, mid=movie.id, eid=state.exposure_history_id: self.skip_decision(mid, eid)
         )
         secondary.addWidget(change)
-        seen = QPushButton("L-am văzut")
+        seen = QPushButton("L-am văzut • nota din IMDb")
         seen.clicked.connect(lambda _, movie=movie: mark_watched_from_choice(self, movie))
         secondary.addWidget(seen)
         secondary.addStretch(1)

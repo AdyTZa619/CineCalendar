@@ -24,6 +24,12 @@ from .catalog import bootstrap_official_imdb_catalog, import_imdb_datasets
 from .feedback import FeedbackReceipt, apply_feedback_with_receipt, undo_feedback
 from .imdb_import import import_imdb_csv, add_manual_rating
 from .imdb_sync import backfill_public_rating_metadata, sync_public_ratings
+from .imdb_rating_followup import (
+    cancel_imdb_rating_followup,
+    pending_imdb_rating_followups,
+    queue_imdb_rating_followup_values,
+    resolve_imdb_rating_followups,
+)
 from .library_repair import repair_rated_library
 from .profile import build_profile, get_profile, top_profile_features
 from .recommendation import Recommendation
@@ -418,6 +424,19 @@ class CineCalendarWindow(QMainWindow):
     def feedback(self,movie_id:int,kind:str):
         try:
             _profile, receipt = apply_feedback_with_receipt(self.db,movie_id,kind)
+            waiting_for_imdb = False
+            waiting_title = ""
+            if kind == "seen":
+                with self.db.connect() as con:
+                    movie = con.execute(
+                        "SELECT id,imdb_id,title FROM movies WHERE id=?",
+                        (int(movie_id),),
+                    ).fetchone()
+                if movie is not None:
+                    waiting_for_imdb = queue_imdb_rating_followup_values(
+                        self.db, movie["id"], movie["imdb_id"], movie["title"]
+                    )
+                    waiting_title = str(movie["title"] or "Film")
             self._feedback_undo_stack.append(receipt)
             if kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}:
                 # A failed database write must not make the title disappear from the UI.
@@ -433,9 +452,15 @@ class CineCalendarWindow(QMainWindow):
                 self.set_status(f"{effect} Feedbackul nu modifică permanent gustul. Ctrl+Z anulează.")
             elif kind == "not_interested":
                 self.set_status("Filmul a fost ascuns fără să afecteze filmele similare. Ctrl+Z îl readuce.")
+            elif waiting_for_imdb:
+                self.set_status(
+                    f"{waiting_title}: marcat văzut. Aștept nota ta de pe IMDb; o voi importa automat."
+                )
             else:
                 self.set_status("Feedback salvat; profilul a fost recalculat. Ctrl+Z îl anulează.")
             self.show_page(self.current_page)
+            if waiting_for_imdb:
+                self.schedule_imdb_rating_followup()
         except Exception as exc: QMessageBox.critical(self,"Feedback",str(exc))
 
     def _refresh_feedback_undo_button(self):
@@ -456,6 +481,14 @@ class CineCalendarWindow(QMainWindow):
         try:
             undone = undo_feedback(self.db, receipt.feedback_id)
             self._feedback_undo_stack.pop()
+            if undone.kind == "seen":
+                with self.db.connect() as con:
+                    still_seen = con.execute(
+                        "SELECT 1 FROM feedback WHERE movie_id=? AND kind='seen' LIMIT 1",
+                        (int(undone.movie_id),),
+                    ).fetchone()
+                if still_seen is None:
+                    cancel_imdb_rating_followup(self.db, int(undone.movie_id))
             if undone.kind in {"not_now", "too_long", "mood_mismatch", "too_similar"}:
                 skips = getattr(self, "session_skips", None)
                 still_skipped = any(
@@ -520,6 +553,15 @@ class CineCalendarWindow(QMainWindow):
             if last_ok else "Profilul public IMDb nu a fost încă sincronizat cu succes."
         )
         sync_state.setObjectName("Muted"); sync_state.setWordWrap(True); l.addWidget(sync_state)
+        pending_notes = pending_imdb_rating_followups(self.db)
+        if pending_notes:
+            names = ", ".join(item["title"] for item in pending_notes[-3:])
+            more = len(pending_notes) - 3
+            pending_text = f"Aștept nota ta de pe IMDb pentru: {names}"
+            if more > 0:
+                pending_text += f" și încă {more}"
+            waiting = QLabel(pending_text + ". Importul este automat; nu introduci nota din nou aici.")
+            waiting.setObjectName("BodyStrong"); waiting.setWordWrap(True); l.addWidget(waiting)
         if last_error:
             sync_error=QLabel("Ultima eroare IMDb: "+last_error)
             sync_error.setObjectName("Muted"); sync_error.setWordWrap(True); l.addWidget(sync_error)
@@ -670,12 +712,25 @@ class CineCalendarWindow(QMainWindow):
         self.worker = WorkerThread(fn, self)
         def done(r):
             self.db.set_setting("imdb_public_sync_last_error", "")
+            imported_followups, pending_followups = resolve_imdb_rating_followups(self.db)
             if r.new_ratings or r.changed_ratings:
                 self.refresh_live_recommendation_guard()
             reconciled = len(r.reconciled_duplicates)
-            if silent:
+            if imported_followups:
+                latest = imported_followups[-1]
+                extra = len(imported_followups) - 1
+                suffix = f" și încă {extra}" if extra else ""
+                self.set_status(
+                    f"IMDb: nota {latest.rating}/10 pentru {latest.title} a fost importată{suffix}. "
+                    "Recomandările folosesc acum nota nouă.",
+                    False,
+                )
+            elif silent:
                 suffix = f" • {reconciled} duplicate reparate" if reconciled else ""
-                self.set_status("Pregătit • IMDb sincronizat în fundal" + suffix + ".", False)
+                waiting = ""
+                if pending_followups:
+                    waiting = f" • aștept nota IMDb pentru {pending_followups[-1]['title']}"
+                self.set_status("Pregătit • IMDb sincronizat în fundal" + suffix + waiting + ".", False)
             else:
                 self.set_status(
                     f"IMDb sincronizat: {len(r.new_ratings)} noi, {len(r.changed_ratings)} modificate, "
@@ -725,6 +780,14 @@ class CineCalendarWindow(QMainWindow):
         self.worker.success.connect(done)
         self.worker.failure.connect(fail)
         self.worker.start()
+
+    def schedule_imdb_rating_followup(self):
+        """Check soon after a watched film, then rely on the regular 30-minute sync."""
+        def sync_if_pending():
+            if pending_imdb_rating_followups(self.db):
+                self.sync_imdb_public(silent=True)
+        QTimer.singleShot(2 * 60 * 1000, sync_if_pending)
+        QTimer.singleShot(10 * 60 * 1000, sync_if_pending)
 
     def manual_rating(self):
         d=ManualRatingDialog(self)

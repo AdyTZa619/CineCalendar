@@ -1,36 +1,35 @@
-CineCalendar 4.9.1 – Explicații coerente și metadata în română
+CineCalendar 4.9.2 – Nota reală preluată automat din IMDb
 
 Obiectiv:
-- recomandarea principală să explice exact scorul afișat, fără valori aparent contradictorii;
-- descrierile TMDb să fie în română când există, cu fallback sigur în engleză;
-- un token TMDb valid să devină activ imediat, fără restart.
+- utilizatorul să dea nota o singură dată, pe IMDb;
+- CineCalendar să lege filmul văzut de nota care apare ulterior în profilul public;
+- profilul și recomandările să folosească automat ratingul importat.
 
-1. Explicația recomandării
-- cardul folosește o structură scurtă: Potrivire, Pentru acum și Rezervă;
-- scorul din explicație este întotdeauna estimarea finală afișată pe card;
-- estimarea brută a componentei adaptive este etichetată explicit în Detalii și nu mai pare al doilea scor final;
-- Startability și intenția recentă sunt prezentate separat, fiind semnale diferite.
+1. Flux după vizionare
+- butonul devine „L-am văzut • nota din IMDb”;
+- filmul este exclus imediat dintre recomandările nevăzute;
+- dacă are IMDb ID, intră într-o coadă locală persistentă „aștept nota IMDb”;
+- CineCalendar nu afișează și nu cere un câmp propriu de notare.
 
-2. Metadata localizată și transparentă
-- TMDb este cerut întâi în română (`ro-RO`), apoi în engleză numai dacă descrierea română lipsește;
-- descrierile englezești provenite anterior din TMDb sunt actualizate în română în fundal;
-- descrierile de la alte surse nu sunt suprascrise;
-- țările uzuale sunt afișate în română, iar Detalii arată sursa descrierii și a posterului;
-- traducerea singură nu schimbă clasarea și nu pornește backtestul.
+2. Sincronizare rapidă și sigură
+- profilul IMDb este reverificat după aproximativ 2 minute și 10 minute;
+- dacă nota nu a apărut încă, rămâne activă sincronizarea normală la 30 de minute;
+- închiderea aplicației nu pierde urmărirea: sincronizarea de la următoarea pornire continuă fluxul;
+- nu se fac verificări dacă nu există niciun film care așteaptă nota.
 
-3. Token TMDb activ imediat
-- „Testează” salvează automat tokenul dacă validarea reușește;
-- schimbarea tokenului redeschide titlurile pentru completarea metadata în sesiunea curentă;
-- nu mai este necesară repornirea aplicației.
+3. Confirmare vizibilă
+- pagina Ratinguri IMDb arată filmele pentru care se așteaptă nota;
+- după import, statusul afișează titlul și nota reală preluată;
+- profilul personal, rezultatul recomandării și Live Guard sunt actualizate prin fluxul existent.
 
 Validare:
-- teste dedicate pentru explicația structurată, localizarea TMDb, fallback-ul englez și protecția sursei;
-- teste pentru activarea imediată a tokenului și localizarea vizuală;
+- teste pentru persistență, deduplicare, așteptarea notei și rezolvarea după import;
+- teste pentru programarea verificărilor și păstrarea sincronizării periodice;
 - formula de ranking și schema SQLite rămân neschimbate;
 - nu a fost pornit niciun backtest.
 
 Versiune:
-- aplicație 4.9.1;
+- aplicație 4.9.2;
 - production-stack-v4.8.0-metadata-preflight (formula de ranking rămâne neschimbată);
 - candidate-metadata-v4.9.1;
 - quality-manager-v4.7.0-live-protected;
