@@ -29,6 +29,38 @@ from .metadata_provenance import metadata_sources_for_movie
 from .tmdb import TmdbProvider
 
 
+class ResponsiveRecommendationGrid(QWidget):
+    """Keep cards readable without making the page scroll sideways."""
+
+    def __init__(self, cards: list[QWidget], breakpoint: int = 1120, parent=None):
+        super().__init__(parent)
+        self._cards = cards
+        self._breakpoint = int(breakpoint)
+        self._columns = 0
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(14)
+        self._grid.setVerticalSpacing(14)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._relayout(2)
+
+    def _relayout(self, columns: int) -> None:
+        columns = max(1, min(2, int(columns)))
+        if columns == self._columns:
+            return
+        for card in self._cards:
+            self._grid.removeWidget(card)
+        self._columns = columns
+        for index, card in enumerate(self._cards):
+            self._grid.addWidget(card, index // columns, index % columns)
+        for column in range(2):
+            self._grid.setColumnStretch(column, 1 if column < columns else 0)
+
+    def resizeEvent(self, event) -> None:
+        self._relayout(2 if event.size().width() >= self._breakpoint else 1)
+        super().resizeEvent(event)
+
+
 class MovieDetailDialog(QDialog):
     def __init__(self, rec: Recommendation, owner: "PremiumDecisionWindow"):
         super().__init__(owner)
@@ -665,9 +697,9 @@ class PremiumDecisionWindow(DecisionWindow):
         intro=QFrame(); intro.setObjectName("PremiumCard"); il=QHBoxLayout(intro); il.setContentsMargins(18,14,18,14)
         txt=QLabel("Scorul personal estimat este principalul criteriu. IMDb, noutatea și perioada curentă sunt filtre secundare."); txt.setObjectName("Muted"); txt.setWordWrap(True); il.addWidget(txt,1)
         self.browse_content.addWidget(intro)
-        grid=QGridLayout(); grid.setHorizontalSpacing(14); grid.setVerticalSpacing(14)
-        for i,rec in enumerate(recs): grid.addWidget(self.compact_recommendation_card(rec,i+1),i//2,i%2)
-        wrap=QFrame(); wrap.setLayout(grid); self.browse_content.addWidget(wrap); self.browse_content.addStretch(1)
+        cards=[self.compact_recommendation_card(rec,i+1) for i,rec in enumerate(recs)]
+        self.browse_content.addWidget(ResponsiveRecommendationGrid(cards))
+        self.browse_content.addStretch(1)
 
     def recommendation_protection_card(self):
         status = self.s.quality_manager.status()
@@ -761,7 +793,7 @@ class PremiumDecisionWindow(DecisionWindow):
         if state == "checking":
             title="Verific metadatele înainte de clasarea finală"
             pool=int(report.get("pool_size",total) or total)
-            detail=f"Aleg maximum 6 verificări cu impact dintre {pool} de finaliști, înainte de afișarea listei finale."
+            detail=f"Completez cu prioritate cele 12 filme vizibile, apoi folosesc eventualele verificări rămase pentru finaliștii apropiați dintre {pool} de candidați."
         elif state == "failed":
             title="Clasarea sigură a fost păstrată"
             failed=int(report.get("failed",0) or 0); attempted=int(report.get("attempted",0) or 0)
@@ -809,16 +841,17 @@ class PremiumDecisionWindow(DecisionWindow):
         score=QLabel(f"{s.predicted_rating:.1f}/10"); score.setObjectName("Score"); head.addWidget(score); l.addLayout(head)
         meta=QLabel(" • ".join(self.movie_chips(m,5))); meta.setObjectName("Muted"); meta.setWordWrap(True); l.addWidget(meta)
         overview=QLabel(self.overview_text(m)); overview.setWordWrap(True); overview.setMaximumHeight(66); overview.setObjectName("Muted"); l.addWidget(overview)
-        reason=QLabel(self.human_reason(rec)); reason.setWordWrap(True); reason.setMaximumHeight(58); l.addWidget(reason)
-        row=QHBoxLayout()
+        reason=QLabel(self.human_reason(rec)); reason.setWordWrap(True)
+        reason.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Minimum); l.addWidget(reason)
+        row=QGridLayout(); row.setHorizontalSpacing(7); row.setVerticalSpacing(7)
         choose=QPushButton("Aleg filmul"); choose.setProperty("accent",True)
         choose.clicked.connect(lambda _checked=False, mid=m.id, eid=getattr(rec,"exposure_history_id",None): self.choose_decision(mid,eid))
-        row.addWidget(choose)
-        details=QPushButton("Detalii"); details.clicked.connect(lambda _,r=rec:self.open_details(r)); row.addWidget(details)
-        watch=QPushButton("Watchlist"); watch.clicked.connect(lambda _,mid=m.id:self.feedback(mid,"want_to_watch")); row.addWidget(watch)
+        row.addWidget(choose,0,0)
+        details=QPushButton("Detalii"); details.clicked.connect(lambda _,r=rec:self.open_details(r)); row.addWidget(details,0,1)
+        watch=QPushButton("Watchlist"); watch.clicked.connect(lambda _,mid=m.id:self.feedback(mid,"want_to_watch")); row.addWidget(watch,1,0)
         no=QPushButton("Nu acum / motiv")
         no.clicked.connect(lambda _checked=False, mid=m.id, b=no: self.contextual_feedback_menu(mid, b))
-        row.addWidget(no); row.addStretch(1); l.addLayout(row)
+        row.addWidget(no,1,1); row.setColumnStretch(0,1); row.setColumnStretch(1,1); l.addLayout(row)
         main.addLayout(l,1); return box
 
     # ---------- taste hub ----------

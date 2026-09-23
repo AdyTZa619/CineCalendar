@@ -1,6 +1,13 @@
-CineCalendar 4.9.2 – Nota reală preluată automat din IMDb
+CineCalendar 4.9.3 – Postere și metadate pentru recomandările vizibile
 
-Obiectiv:
+Noutăți 4.9.3:
+- toate cele 12 recomandări vizibile au prioritate la completarea TMDb;
+- un candidat din afara listei nu mai consumă verificarea înaintea unui card vizibil incomplet;
+- explicațiile lungi măresc cardul și nu mai acoperă butoanele;
+- acțiunile sunt așezate compact, iar lista trece la o coloană pe ferestre înguste;
+- scrollul orizontal al paginii a fost eliminat.
+
+Fluxul IMDb păstrat din 4.9.2:
 - utilizatorul să dea nota o singură dată, pe IMDb;
 - CineCalendar să lege filmul văzut de nota care apare ulterior în profilul public;
 - profilul și recomandările să folosească automat ratingul importat.
@@ -29,8 +36,8 @@ Validare:
 - nu a fost pornit niciun backtest.
 
 Versiune:
-- aplicație 4.9.2;
+- aplicație 4.9.3;
 - production-stack-v4.8.0-metadata-preflight (formula de ranking rămâne neschimbată);
-- candidate-metadata-v4.9.1;
+- candidate-metadata-v4.9.3;
 - quality-manager-v4.7.0-live-protected;
 - SQLite schema v9.

@@ -245,6 +245,8 @@ class CineCalendarWindow(QMainWindow):
                 b=QPushButton(text); b.setProperty("accent",accent); b.clicked.connect(fn); top.addWidget(b)
         outer.addLayout(top)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        if self.current_page == "recommendations":
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner=QWidget(); content=QVBoxLayout(inner); content.setContentsMargins(0,2,6,10); content.setSpacing(12); content.setAlignment(Qt.AlignTop)
         scroll.setWidget(inner); outer.addWidget(scroll,1)
         return page,content
