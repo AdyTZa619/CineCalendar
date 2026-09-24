@@ -29,6 +29,7 @@ from .qt_ui_v2 import DecisionWindow
 from .recommendation import Recommendation
 from .learning_insight_v43 import comparison_reason
 from .metadata_provenance import metadata_sources_for_movie
+from .reliability_gate_v412 import MIN_MEASURED_OUTCOMES, RecommendationReliabilityGate
 from .tmdb import TmdbProvider
 
 
@@ -107,12 +108,13 @@ class MovieDetailDialog(QDialog):
         score_row = QHBoxLayout()
         personal = owner.score_badge(rec.score.predicted_rating, "pentru tine")
         score_row.addWidget(personal)
-        confidence = owner.metric_badge(f"{round(rec.score.confidence*100)}%", "încredere")
+        confidence = owner.metric_badge(f"{round(rec.score.confidence*100)}%", "dovezi personale")
         score_row.addWidget(confidence)
         if rec.movie.imdb_rating is not None:
             score_row.addWidget(owner.metric_badge(f"{rec.movie.imdb_rating:.1f}", "IMDb"))
         score_row.addStretch(1)
         info.addLayout(score_row)
+        info.addWidget(owner.reliability_widget(rec))
 
         chips = QHBoxLayout()
         for text in owner.movie_chips(rec.movie, limit=6):
@@ -251,6 +253,8 @@ class PremiumDecisionWindow(DecisionWindow):
         self.browse_generation = 0
         self.recommendation_metadata_report: dict = {"state": "idle"}
         super().__init__(service)
+        engine_identity = str((getattr(self.s, "production_stack", {}) or {}).get("recommendation_engine_identity") or "")
+        self.reliability_gate = RecommendationReliabilityGate(self.db, engine_identity)
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Premium")
 
     # ---------- premium visual language ----------
@@ -290,6 +294,9 @@ class PremiumDecisionWindow(DecisionWindow):
             QLabel#ScoreLarge {{ font-size:26px; }}
             QLabel#SignalPositive {{ color:{good}; font-weight:800; }}
             QLabel#SignalNegative {{ color:{bad}; font-weight:800; }}
+            QFrame#ReliabilityGood {{ background:rgba(55,175,112,.10); border:1px solid {good}; border-radius:11px; }}
+            QFrame#ReliabilityCaution {{ background:rgba(215,170,85,.09); border:1px solid {accent}; border-radius:11px; }}
+            QFrame#ReliabilityBad {{ background:rgba(255,126,135,.09); border:1px solid {bad}; border-radius:11px; }}
             QLabel#Pill {{ background:{card2}; color:{muted}; border:1px solid {border}; border-radius:10px; padding:5px 9px; }}
             QLabel#ScoreBadge {{ background:{accent}; color:#101114; border-radius:38px; font-size:20px; font-weight:900; }}
             QLabel#MetricValue {{ color:{accent2}; font-size:22px; font-weight:850; }}
@@ -353,6 +360,33 @@ class PremiumDecisionWindow(DecisionWindow):
         l.addWidget(v)
         l.addWidget(c)
         return wrap
+
+    def reliability_widget(self, rec: Recommendation, *, compact: bool = False) -> QFrame:
+        verdict = self.reliability_gate.evaluate(rec)
+        box = QFrame()
+        if verdict.status == "verified":
+            box.setObjectName("ReliabilityGood")
+        elif verdict.status == "reject":
+            box.setObjectName("ReliabilityBad")
+        else:
+            box.setObjectName("ReliabilityCaution")
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(10 if compact else 13, 7 if compact else 9, 10 if compact else 13, 7 if compact else 9)
+        layout.setSpacing(2)
+        title = QLabel(verdict.label)
+        title.setObjectName("BodyStrong")
+        layout.addWidget(title)
+        interval_kind = "interval măsurat" if verdict.empirical_interval else "interval conservator"
+        interval = QLabel(f"Estimare {rec.score.predicted_rating:.1f}/10 • {interval_kind} {verdict.interval_low:.1f}–{verdict.interval_high:.1f}")
+        interval.setObjectName("Muted")
+        interval.setWordWrap(True)
+        layout.addWidget(interval)
+        if not compact:
+            reason = QLabel(verdict.reason)
+            reason.setObjectName("Muted")
+            reason.setWordWrap(True)
+            layout.addWidget(reason)
+        return box
 
     @staticmethod
     def runtime_text(minutes: int | None) -> str:
@@ -449,7 +483,7 @@ class PremiumDecisionWindow(DecisionWindow):
         elif s.confidence >= .52:
             lead = "Potrivire bună, cu suficiente semnale din gustul tău"
         else:
-            lead = "O alegere mai exploratorie, cu încredere moderată"
+            lead = "O alegere mai exploratorie, cu dovezi personale moderate"
         if pieces:
             return f"{lead}, în special prin {', '.join(pieces)}. Estimare personală: {s.predicted_rating:.1f}/10."
         return f"{lead}. Estimarea personală este {s.predicted_rating:.1f}/10."
@@ -544,6 +578,7 @@ class PremiumDecisionWindow(DecisionWindow):
         if primary is None:
             x = QLabel("Nu am găsit momentan un titlu suficient de bun după filtrele tale.")
             x.setObjectName("Muted"); self.today_content.addWidget(x); return
+        self.reliability_gate.refresh()
         self.record_once([primary], date.today(), "decision")
         self.today_content.addWidget(self.decision_hero(primary))
 
@@ -603,9 +638,10 @@ class PremiumDecisionWindow(DecisionWindow):
         title=QLabel(m.title + (f"  ({m.year})" if m.year else "")); title.setObjectName("HeroTitle"); title.setWordWrap(True); right.addWidget(title)
 
         metric=QHBoxLayout(); metric.addWidget(self.score_badge(s.predicted_rating,"pentru tine"))
-        metric.addWidget(self.metric_badge(f"{round(s.confidence*100)}%","încredere"))
+        metric.addWidget(self.metric_badge(f"{round(s.confidence*100)}%","dovezi personale"))
         if m.imdb_rating is not None: metric.addWidget(self.metric_badge(f"{m.imdb_rating:.1f}","IMDb"))
         metric.addStretch(1); right.addLayout(metric)
+        right.addWidget(self.reliability_widget(rec))
 
         chips=QHBoxLayout()
         for text in self.movie_chips(m): chips.addWidget(self.pill(text))
@@ -636,7 +672,8 @@ class PremiumDecisionWindow(DecisionWindow):
         poster=self.poster_label(88,132); main.addWidget(poster,0,Qt.AlignTop)
         if m.poster_url:self.load_poster_async(poster,m.poster_url,m.imdb_id or str(m.id))
         l=QVBoxLayout(); t=QLabel(m.title+(f" ({m.year})" if m.year else "")); t.setObjectName("CardTitle"); t.setWordWrap(True); l.addWidget(t)
-        p=QLabel(f"{s.predicted_rating:.1f}/10 pentru tine • {round(s.confidence*100)}% încredere"); p.setObjectName("Score"); l.addWidget(p)
+        p=QLabel(f"{s.predicted_rating:.1f}/10 pentru tine • {round(s.confidence*100)}% dovezi personale"); p.setObjectName("Score"); l.addWidget(p)
+        l.addWidget(self.reliability_widget(rec,compact=True))
         meta=" • ".join(self.movie_chips(m,4)); x=QLabel(meta); x.setObjectName("Muted"); x.setWordWrap(True); l.addWidget(x)
         if primary is not None:
             compare=QLabel("Față de alegerea #1: "+comparison_reason(primary, rec))
@@ -695,6 +732,7 @@ class PremiumDecisionWindow(DecisionWindow):
         self._clear_layout(self.browse_content)
         if not recs:
             x=QLabel("Nu am găsit recomandări eligibile."); x.setObjectName("Muted"); self.browse_content.addWidget(x); return
+        self.reliability_gate.refresh()
         self.browse_content.addWidget(self.recommendation_protection_card())
         self.browse_content.addWidget(self.recommendation_metadata_card())
         intro=QFrame(); intro.setObjectName("PremiumCard"); il=QHBoxLayout(intro); il.setContentsMargins(18,14,18,14)
@@ -712,6 +750,7 @@ class PremiumDecisionWindow(DecisionWindow):
         als = float(stack.get("als_weight", .70) or .70)
         content_weight = float(stack.get("content_weight", 1.0 - als) or (1.0 - als))
         live_state = str(live.get("status") or "baseline")
+        reliability = self.reliability_gate.snapshot
 
         box=QFrame(); box.setObjectName("PremiumCard")
         layout=QVBoxLayout(box); layout.setContentsMargins(20,17,20,17); layout.setSpacing(8)
@@ -735,6 +774,28 @@ class PremiumDecisionWindow(DecisionWindow):
             detail="70/30 rămâne activ până când istoricul tău dovedește că alt raport este mai bun."
         label=QLabel(title); label.setObjectName("BodyStrong"); layout.addWidget(label)
         note=QLabel(detail); note.setObjectName("Muted"); note.setWordWrap(True); layout.addWidget(note)
+
+        ready = reliability.measurement_ready
+        reliability_title = QLabel(
+            "Precizia estimărilor este validată" if ready else "Precizia estimărilor este încă în măsurare"
+        )
+        reliability_title.setObjectName("BodyStrong")
+        layout.addWidget(reliability_title)
+        measured_progress=QProgressBar()
+        measured_progress.setRange(0,MIN_MEASURED_OUTCOMES)
+        measured_progress.setValue(min(reliability.rated_outcomes,MIN_MEASURED_OUTCOMES))
+        measured_progress.setFormat(
+            f"Rezultate reale cu notă: {reliability.rated_outcomes}/{MIN_MEASURED_OUTCOMES} minim"
+        )
+        measured_progress.setTextVisible(True); measured_progress.setFixedHeight(18)
+        layout.addWidget(measured_progress)
+        mae = f"{reliability.mae:.2f}" if reliability.mae is not None else "—"
+        within = f"{reliability.within_one*100:.0f}%" if reliability.within_one is not None else "—"
+        reliability_detail=QLabel(
+            f"Eroare medie: {mae} puncte (țintă ≤1.00) • în ±1 punct: {within} (țintă ≥65%)."
+        )
+        reliability_detail.setObjectName("Muted"); reliability_detail.setWordWrap(True)
+        layout.addWidget(reliability_detail)
 
         if live_state in {"collecting", "protected"}:
             active=live.get("active") or {}
@@ -896,6 +957,7 @@ class PremiumDecisionWindow(DecisionWindow):
         l=QVBoxLayout(); l.setSpacing(7)
         head=QHBoxLayout(); title=QLabel(f"{index}. {m.title}"+(f" ({m.year})" if m.year else "")); title.setObjectName("CardTitle"); title.setWordWrap(True); head.addWidget(title,1)
         score=QLabel(f"{s.predicted_rating:.1f}/10"); score.setObjectName("Score"); head.addWidget(score); l.addLayout(head)
+        l.addWidget(self.reliability_widget(rec,compact=True))
         meta=QLabel(" • ".join(self.movie_chips(m,5))); meta.setObjectName("Muted"); meta.setWordWrap(True); l.addWidget(meta)
         overview=QLabel(self.overview_text(m)); overview.setWordWrap(True); overview.setMaximumHeight(66); overview.setObjectName("Muted"); l.addWidget(overview)
         result=dict((self.recommendation_metadata_report or {}).get("title_results") or {}).get(int(m.id or 0),{})
