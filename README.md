@@ -1,5 +1,15 @@
 # CineCalendar
 
+## 4.12.0 — Reliability Gate bazat pe rezultate reale
+
+- „confidence” nu mai este prezentat ca probabilitate; interfața îl numește corect **dovezi personale**;
+- fiecare recomandare arată un interval realist al notei estimate;
+- intervalul devine empiric după minimum 8 rezultate reale și folosește erorile observate între estimare și ratingul IMDb importat;
+- verdictul **Recomandare verificată** cere minimum 30 de rezultate ale motorului activ, eroare medie ≤1 punct, cel puțin 65% dintre estimări în ±1 punct, dovezi personale puternice și metadate complete;
+- recomandările care nu trec pragurile sunt marcate explicit ca plauzibile cu rezervă, nevalidate sau nerecomandate acum;
+- pagina Recomandări afișează progresul, eroarea medie și rata în ±1 punct;
+- Reliability Gate este strict informativ: formula 70/30, scorurile și ordinea filmelor nu sunt modificate.
+
 ## 4.11.0 — Metadata Doctor și coadă persistentă
 
 - candidații probabili sunt puși într-o coadă SQLite înainte de verificarea limitată a listei;

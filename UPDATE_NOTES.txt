@@ -1,31 +1,29 @@
-CineCalendar 4.11.0 – Metadata Doctor persistent
+CineCalendar 4.12.0 – Reliability Gate pe rezultate reale
 
-Noutăți 4.11.0:
-- recomandările probabile intră într-o coadă SQLite înainte de verificarea online limitată;
-- primele 12 recomandări, filmele evaluate și watchlistul primesc prioritate;
-- coada continuă în loturi mici la pornire și la fiecare 15 minute;
-- fiecare film arată starea, câmpurile lipsă, încercările, următoarea verificare și ultima eroare;
-- retry progresiv: 15 minute, 1 oră, 6 ore, 1 zi, 3 zile și maximum 7 zile;
-- buton „Scanează și repară acum” pentru procesare manuală imediată;
-- posterul care eșuează efectiv la descărcare este eliminat, raportat și căutat din nou;
-- URL-urile de poster non-HTTP(S) sunt invalidate automat;
-- ecran nou „Metadata Doctor” cu starea cozii și ultimele 30 de lucrări.
+Noutăți 4.12.0:
+- „încredere” nu mai este afișată ca o falsă probabilitate; semnalul existent este numit „dovezi personale”;
+- fiecare alegere arată estimarea și un interval realist;
+- după minimum 8 rezultate, intervalul este calculat din erorile tale reale;
+- „Recomandare verificată” necesită minimum 30 de rezultate ale motorului activ cu rating IMDb, MAE ≤1.00 și minimum 65% estimări în ±1 punct;
+- verdictul verifică separat dovezile personale, metadatele de clasare și red flag-urile;
+- pagina Recomandări arată progresul validării, MAE și rata în ±1 punct.
+
+Verdicte vizuale:
+- RECOMANDARE VERIFICATĂ;
+- ALEGERE PLAUZIBILĂ — CU REZERVĂ;
+- ÎNCĂ NEVALIDAT PE SUFICIENTE REZULTATE;
+- NU RECOMAND ACUM.
 
 Protecții:
-- furnizorii completează numai câmpurile lipsă și păstrează metadatele existente;
-- erorile unei surse nu șterg datele valide și reprogramează doar titlul afectat;
-- procesarea automată este limitată la 6 titluri pe lot și nu pornește peste altă operație;
-- formula de ranking, ponderile ALS/conținut și motorul validat nu au fost modificate;
-- schema SQLite v11 este migrată automat cu backup înainte de migrare.
-
-Validare:
-- teste pentru prioritizarea recomandărilor vizibile;
-- teste pentru finalizarea cozii numai după salvarea câmpurilor;
-- teste pentru postere defecte și URL-uri invalide;
-- teste pentru schema SQLite v11 și preflightul existent.
+- Reliability Gate nu schimbă scorul, formula 70/30 sau ordinea filmelor;
+- un procent mare de dovezi personale nu poate produce singur verdictul verificat;
+- metadatele de clasare incomplete blochează verdictul verificat;
+- un red flag produce întotdeauna „Nu recomand acum”;
+- când istoricul este insuficient, intervalul este marcat explicit drept conservator, nu empiric.
 
 Versiune:
-- aplicație 4.11.0;
+- aplicație 4.12.0;
+- reliability-gate-v4.12.0;
 - candidate-metadata-v4.11.0;
 - production-stack-v4.8.0-metadata-preflight;
-- SQLite schema v11.
+- SQLite schema v11 (fără migrare nouă).

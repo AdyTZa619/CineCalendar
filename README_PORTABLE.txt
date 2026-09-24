@@ -1,4 +1,11 @@
-CineCalendar Premium 4.11.0 — Windows 10/11 x64
+CineCalendar Premium 4.12.0 — Windows 10/11 x64
+
+NOU ÎN 4.12.0 — RELIABILITY GATE
+- procentul euristic este etichetat corect „dovezi personale”, nu probabilitate de succes;
+- recomandările afișează intervalul estimat al notei;
+- verdictul „Recomandare verificată” apare numai după minimum 30 rezultate reale și praguri clare de precizie;
+- pagina Recomandări arată eroarea medie și procentul estimărilor aflate la maximum un punct de nota IMDb;
+- formula 70/30 și ordinea recomandărilor nu sunt schimbate.
 
 PORNIRE
 1. Dezarhivează întregul ZIP într-un folder normal cu drept de scriere.
