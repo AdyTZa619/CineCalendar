@@ -13,7 +13,7 @@ from .learning_insight_v43 import LEARNING_INSIGHT_VERSION, learning_insight_eng
 # Ranking identity changes only when recommendation ordering changes.  Operational/UI releases must
 # not invalidate a multi-gigabyte personal backtest by themselves.
 RANKING_STACK_VERSION = "production-stack-v4.6.0-personal-hybrid"
-PRODUCTION_STACK_VERSION = "production-stack-v4.8.0-metadata-preflight"
+PRODUCTION_STACK_VERSION = "production-stack-v4.13.0-full-catalog-shadow"
 
 
 def production_engine_class(base_cls: type) -> type:

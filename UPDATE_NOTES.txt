@@ -1,29 +1,36 @@
-CineCalendar 4.12.0 – Reliability Gate pe rezultate reale
+CineCalendar 4.13.0 – Full-catalog retrieval în shadow mode
 
-Noutăți 4.12.0:
-- „încredere” nu mai este afișată ca o falsă probabilitate; semnalul existent este numit „dovezi personale”;
-- fiecare alegere arată estimarea și un interval realist;
-- după minimum 8 rezultate, intervalul este calculat din erorile tale reale;
-- „Recomandare verificată” necesită minimum 30 de rezultate ale motorului activ cu rating IMDb, MAE ≤1.00 și minimum 65% estimări în ±1 punct;
-- verdictul verifică separat dovezile personale, metadatele de clasare și red flag-urile;
-- pagina Recomandări arată progresul validării, MAE și rata în ±1 punct.
-
-Verdicte vizuale:
-- RECOMANDARE VERIFICATĂ;
-- ALEGERE PLAUZIBILĂ — CU REZERVĂ;
-- ÎNCĂ NEVALIDAT PE SUFICIENTE REZULTATE;
-- NU RECOMAND ACUM.
+Noutăți 4.13.0:
+- challenger local pentru filmele fără mapping MovieLens/ALS;
+- retrieval bazat pe genuri, regizori, țări, teme, decade, durată și combinații învățate din ratingurile IMDb;
+- candidații ALS sunt eliminați explicit din lista challengerului;
+- comparațiile baseline/challenger sunt persistente în SQLite;
+- dashboardul arată rulările shadow, candidații non-ALS și rezultatele strânse;
+- benchmark nou pe catalog sintetic de 260.000 de filme.
 
 Protecții:
-- Reliability Gate nu schimbă scorul, formula 70/30 sau ordinea filmelor;
-- un procent mare de dovezi personale nu poate produce singur verdictul verificat;
-- metadatele de clasare incomplete blochează verdictul verificat;
-- un red flag produce întotdeauna „Nu recomand acum”;
-- când istoricul este insuficient, intervalul este marcat explicit drept conservator, nu empiric.
+- shadow mode nu modifică lista afișată, scorurile sau formula 70/30;
+- maximum 48 de semnale, 90 rezultate per semnal și 5.000 de filme hidratate;
+- aceeași notă nu este numărată repetat dacă filmul apare în mai multe rulări;
+- sunt acceptate numai ratingurile acordate după comparația shadow;
+- backupul profilului v5 exportă și restaurează dovezile shadow;
+- minimum 20 rezultate challenger permit doar analiza offline, nu promovarea automată;
+- orice activare viitoare va necesita câștig stabil pe ferestre temporale și lipsa regresiilor.
+
+Validare inclusă:
+- excluderea titlurilor deja mapate ALS;
+- excluderea filmelor văzute/evaluate/respinse;
+- persistența separată baseline/challenger;
+- deduplicarea rulărilor identice;
+- integritatea temporală a ratingurilor;
+- dovada că lista baseline nu este modificată;
+- performanță bounded și cache pe 260.000 de filme.
 
 Versiune:
-- aplicație 4.12.0;
+- aplicație 4.13.0;
+- full-catalog-retrieval-v4.13.0;
+- retrieval-shadow-v4.13.0;
 - reliability-gate-v4.12.0;
-- candidate-metadata-v4.11.0;
-- production-stack-v4.8.0-metadata-preflight;
-- SQLite schema v11 (fără migrare nouă).
+- production-stack-v4.13.0-full-catalog-shadow;
+- SQLite schema v12.
+- backup profil v5.

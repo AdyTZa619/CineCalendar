@@ -40,8 +40,8 @@ def test_schema_v11_creates_persistent_metadata_tables(tmp_path):
     with db.connect() as con:
         tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         current = con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-    assert SCHEMA_VERSION == 11
-    assert current == 11
+    assert SCHEMA_VERSION == 12
+    assert current == 12
     assert {"metadata_jobs", "metadata_issues"}.issubset(tables)
 
 

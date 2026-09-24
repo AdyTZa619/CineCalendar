@@ -1,4 +1,11 @@
-CineCalendar Premium 4.12.0 — Windows 10/11 x64
+CineCalendar Premium 4.13.0 — Windows 10/11 x64
+
+NOU ÎN 4.13.0 — FULL-CATALOG SHADOW RETRIEVAL
+- caută separat filmele fără mapping MovieLens/ALS folosind gustul învățat din ratingurile tale;
+- verifică genuri, regizori, țări, teme, decade, durată și combinații;
+- nu schimbă recomandările afișate și nu modifică formula 70/30;
+- salvează baseline-ul și challengerul pentru comparație ulterioară pe ratinguri IMDb reale;
+- dashboardul arată progresul, iar promovarea rămâne blocată până la suficiente rezultate și analiză offline.
 
 NOU ÎN 4.12.0 — RELIABILITY GATE
 - procentul euristic este etichetat corect „dovezi personale”, nu probabilitate de succes;

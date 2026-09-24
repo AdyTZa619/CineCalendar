@@ -1,5 +1,18 @@
 # CineCalendar
 
+## 4.13.0 — Full-catalog retrieval în shadow mode
+
+- un challenger local caută filmele fără mapping MovieLens/ALS în întreg catalogul disponibil;
+- folosește aceleași dovezi învățate din ratingurile IMDb: genuri, regizori, țări, teme, decade, durată și combinații între ele;
+- căutarea este bounded: maximum 48 de semnale, 90 de rezultate per semnal și 5.000 de filme hidratate pentru scorare;
+- candidații existenți în mappingul ALS sunt eliminați din challenger, pentru a măsura exact golul de acoperire;
+- recomandările afișate rămân neschimbate; baseline-ul și lista counterfactuală sunt salvate separat în SQLite;
+- un rating este numărat o singură dată per sursă și numai dacă a fost acordat după comparația shadow;
+- backupul profilului v5 păstrează și comparațiile shadow deja acumulate;
+- după minimum 20 de rezultate challenger poate începe analiza offline, dar nu există promovare automată;
+- dashboardul Recomandări arată numărul comparațiilor, candidații fără ALS găsiți și progresul rezultatelor;
+- benchmarkul pe catalogul sintetic de 260.000 de filme verifică atât prima căutare, cât și cache-ul.
+
 ## 4.12.0 — Reliability Gate bazat pe rezultate reale
 
 - „confidence” nu mai este prezentat ca probabilitate; interfața îl numește corect **dovezi personale**;

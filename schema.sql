@@ -202,6 +202,33 @@ CREATE TABLE metadata_issues(
   UNIQUE(movie_id,field,issue_type)
 );
 
+CREATE TABLE retrieval_shadow_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_key TEXT NOT NULL UNIQUE,
+  context_date TEXT NOT NULL,
+  slot TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  baseline_engine TEXT NOT NULL,
+  challenger_version TEXT NOT NULL,
+  depth INTEGER NOT NULL,
+  baseline_count INTEGER NOT NULL DEFAULT 0,
+  challenger_count INTEGER NOT NULL DEFAULT 0,
+  overlap_count INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'complete',
+  error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE retrieval_shadow_items(
+  run_id INTEGER NOT NULL REFERENCES retrieval_shadow_runs(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK(source IN ('baseline','challenger')),
+  movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  rank_position INTEGER NOT NULL,
+  retrieval_score REAL,
+  PRIMARY KEY(run_id,source,rank_position),
+  UNIQUE(run_id,source,movie_id)
+);
+
 CREATE TABLE schema_migrations(
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
@@ -251,3 +278,5 @@ CREATE INDEX ix_rec_outcome_context ON recommendation_outcomes(context_date);
 CREATE INDEX ix_imdb_followup_status_next ON imdb_rating_followups(status,next_check_at);
 CREATE INDEX ix_metadata_jobs_status_priority ON metadata_jobs(status,priority DESC,next_check_at);
 CREATE INDEX ix_metadata_issues_open ON metadata_issues(resolved_at,movie_id);
+CREATE INDEX ix_retrieval_shadow_items_movie ON retrieval_shadow_items(movie_id,source,run_id);
+CREATE INDEX ix_retrieval_shadow_runs_date ON retrieval_shadow_runs(context_date,id DESC);

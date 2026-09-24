@@ -146,13 +146,13 @@ def _outcome(
 
 def test_current_schema_keeps_recommendation_explanations(tmp_path):
     db = Database(tmp_path / "schema-v9.db")
-    assert SCHEMA_VERSION == 11
+    assert SCHEMA_VERSION == 12
     with db.connect() as con:
         current = con.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
         table = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_explanations'"
         ).fetchone()
-    assert current == 11
+    assert current == 12
     assert table is not None
 
 
@@ -266,7 +266,7 @@ def test_exact_explanation_snapshot_is_queryable_and_backed_up(tmp_path):
     assert history_engine_versions(source) == ["learning-insight-v4.3.1"]
 
     archive = export_profile(source, tmp_path / "profile-v4.zip")
-    assert PROFILE_VERSION == 4
+    assert PROFILE_VERSION == 5
     target = Database(tmp_path / "history-target.db")
     stats = import_profile(target, archive, mode="restore")
     assert stats["explanations"] == 1
