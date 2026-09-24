@@ -124,6 +124,14 @@ class CollaborativeALSProvider:
         with self._lock:
             return self._state == "ready" and self._model is not None
 
+    def has_mapping(self, imdb_id: str | None) -> bool:
+        """Return whether an IMDb title exists in the loaded MovieLens item mapping."""
+        iid = str(imdb_id or "")
+        if not iid:
+            return False
+        with self._lock:
+            return iid in self._imdb_to_item
+
     @staticmethod
     def _fetch_manifest() -> dict:
         response = requests.get(

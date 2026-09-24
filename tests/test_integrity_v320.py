@@ -100,8 +100,8 @@ def test_v4_database_migrates_to_current_schema(tmp_path):
         provenance = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_provenance'"
         ).fetchone()
-    assert SCHEMA_VERSION == 11
-    assert current == 11
+    assert SCHEMA_VERSION == 12
+    assert current == 12
     assert "exposure_history_id" in columns
     assert trust is not None
     assert provenance is not None
@@ -200,7 +200,7 @@ def test_profile_backup_v3_is_compact_complete_and_idempotent(tmp_path):
     archive = export_profile(source, tmp_path / "profile.zip")
     with zipfile.ZipFile(archive, "r") as fh:
         payload = json.loads(fh.read("profile.json").decode("utf-8"))
-    assert payload["version"] == 4
+    assert payload["version"] == 5
     assert payload["app_version"] == __version__
     exported_movies = payload["tables"]["movies"]
     assert {row["id"] for row in exported_movies} == {user_movie}

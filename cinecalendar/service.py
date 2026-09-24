@@ -10,6 +10,7 @@ from .quality_manager_v47 import RecommendationQualityManagerV47
 from .recommender_v16 import FastRecommendationEngineV16
 from .temp_workspaces import cleanup_abandoned_workspaces
 from .util import AppPaths
+from .full_catalog_shadow_v413 import FullCatalogShadowEvaluatorV413
 
 
 class CineCalendarService:
@@ -41,6 +42,11 @@ class CineCalendarService:
         self.recommender = build_production_recommender(self.db, engine_cls, self.calendar)
         self.quality_manager.set_runtime_engine(self.recommender)
         self.production_stack = production_stack_status(self.recommender)
+        self.shadow_retrieval = FullCatalogShadowEvaluatorV413(
+            self.db,
+            self.recommender.collaborative,
+            str(self.production_stack.get("recommendation_engine_identity") or ""),
+        )
         self.recommender.collaborative.start_background()
 
         # Evaluation stays off the recommendation path. A new 3.7 decision becomes active only on

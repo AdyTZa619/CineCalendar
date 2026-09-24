@@ -10,7 +10,7 @@ from .db import Database
 from .util import utcnow_iso
 
 
-PROFILE_VERSION = 4
+PROFILE_VERSION = 5
 MAX_PROFILE_JSON_BYTES = 250 * 1024 * 1024
 _TRANSIENT_OR_SECRET_SETTINGS = {
     "tmdb_token",
@@ -37,6 +37,7 @@ def _referenced_movie_ids(con) -> list[int]:
            UNION SELECT movie_id FROM recommendation_history
            UNION SELECT movie_id FROM recommendation_trust_audit
            UNION SELECT movie_id FROM recommendation_outcomes
+           UNION SELECT movie_id FROM retrieval_shadow_items
            ORDER BY movie_id"""
     ).fetchall()
     return [int(row[0]) for row in rows]
@@ -93,6 +94,12 @@ def export_profile(db: Database, path: str | Path) -> Path:
             )
             payload["tables"]["recommendation_explanations"] = _rows(
                 con, "SELECT * FROM recommendation_explanations ORDER BY history_id"
+            )
+            payload["tables"]["retrieval_shadow_runs"] = _rows(
+                con, "SELECT * FROM retrieval_shadow_runs ORDER BY id"
+            )
+            payload["tables"]["retrieval_shadow_items"] = _rows(
+                con, "SELECT * FROM retrieval_shadow_items ORDER BY run_id,source,rank_position"
             )
             payload["tables"]["watchlist"] = _rows(con, "SELECT * FROM watchlist ORDER BY movie_id")
         finally:
@@ -448,6 +455,63 @@ def _load_payload(path: Path) -> dict:
     return payload
 
 
+def _restore_retrieval_shadow(con, run_rows, item_rows, movie_map) -> tuple[int, int]:
+    run_map: dict[int, int] = {}
+    restored_runs = 0
+    for row in sorted((item for item in run_rows if isinstance(item, dict)), key=lambda item: int(item.get("id") or 0)):
+        run_key = str(row.get("run_key") or "")
+        if not run_key:
+            continue
+        existing = con.execute(
+            "SELECT id FROM retrieval_shadow_runs WHERE run_key=?", (run_key,)
+        ).fetchone()
+        if existing is None:
+            cur = con.execute(
+                """INSERT INTO retrieval_shadow_runs(
+                       run_key,context_date,slot,generated_at,baseline_engine,challenger_version,
+                       depth,baseline_count,challenger_count,overlap_count,duration_ms,status,error
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    run_key, row.get("context_date"), row.get("slot"),
+                    row.get("generated_at") or utcnow_iso(), row.get("baseline_engine") or "unknown",
+                    row.get("challenger_version") or "unknown", int(row.get("depth") or 0),
+                    int(row.get("baseline_count") or 0), int(row.get("challenger_count") or 0),
+                    int(row.get("overlap_count") or 0), int(row.get("duration_ms") or 0),
+                    row.get("status") or "complete", row.get("error") or "",
+                ),
+            )
+            new_id = int(cur.lastrowid)
+            restored_runs += 1
+        else:
+            new_id = int(existing[0])
+        if row.get("id") is not None:
+            run_map[int(row["id"])] = new_id
+
+    restored_items = 0
+    for row in item_rows:
+        if not isinstance(row, dict):
+            continue
+        old_run = row.get("run_id")
+        old_movie = row.get("movie_id")
+        if old_run is None or old_movie is None:
+            continue
+        run_id = run_map.get(int(old_run))
+        movie_id = movie_map.get(int(old_movie))
+        if run_id is None or movie_id is None:
+            continue
+        cur = con.execute(
+            """INSERT OR IGNORE INTO retrieval_shadow_items(
+                   run_id,source,movie_id,rank_position,retrieval_score
+               ) VALUES(?,?,?,?,?)""",
+            (
+                run_id, row.get("source"), movie_id,
+                int(row.get("rank_position") or 0), row.get("retrieval_score"),
+            ),
+        )
+        restored_items += int(cur.rowcount or 0)
+    return restored_runs, restored_items
+
+
 def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
     """Import profile in safe merge mode by default.
 
@@ -461,7 +525,7 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
     path = Path(path)
     payload = _load_payload(path)
     version = int(payload.get("version") or 0)
-    if payload.get("format") != "CineCalendarProfile" or version not in {1, 2, 3, PROFILE_VERSION}:
+    if payload.get("format") != "CineCalendarProfile" or version not in {1, 2, 3, 4, PROFILE_VERSION}:
         raise ValueError("Backup incompatibil.")
     tables = payload.get("tables", {}) or {}
     if not isinstance(tables, dict):
@@ -476,10 +540,14 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
         "trust": 0,
         "outcomes": 0,
         "explanations": 0,
+        "shadow_runs": 0,
+        "shadow_items": 0,
         "conflicts_skipped": 0,
     }
     with db.tx() as con:
         if mode == "restore":
+            con.execute("DELETE FROM retrieval_shadow_items")
+            con.execute("DELETE FROM retrieval_shadow_runs")
             con.execute("DELETE FROM recommendation_outcomes")
             con.execute("DELETE FROM recommendation_explanations")
             con.execute("DELETE FROM recommendation_trust_audit")
@@ -623,6 +691,12 @@ def import_profile(db: Database, path: str | Path, mode: str = "merge") -> dict:
             list(tables.get("recommendation_explanations", [])),
             history_map,
             mode,
+        )
+        stats["shadow_runs"], stats["shadow_items"] = _restore_retrieval_shadow(
+            con,
+            list(tables.get("retrieval_shadow_runs", [])),
+            list(tables.get("retrieval_shadow_items", [])),
+            movie_map,
         )
 
     from .profile import build_profile

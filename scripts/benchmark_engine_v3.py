@@ -11,11 +11,18 @@ from cinecalendar.profile import build_profile
 from cinecalendar.recommender_v6 import FastRecommendationEngineV6
 from cinecalendar.semantic import extract_semantic
 from cinecalendar.models import Movie
+from cinecalendar.full_catalog_shadow_v413 import FullCatalogCandidateGeneratorV413
 from cinecalendar.util import identity_key, json_dumps, normalize_text, utcnow_iso
 
 
 RATED = 2434
 CANDIDATES = 260_000
+
+
+class _UnmappedCatalog:
+    def is_ready(self): return True
+    def state_token(self): return ("ready", "benchmark")
+    def has_mapping(self, _imdb_id): return False
 
 
 def add_ratings(db: Database) -> None:
@@ -98,6 +105,16 @@ def main() -> int:
         add_candidates(db)
         seed_seconds = time.perf_counter() - t0
 
+        shadow = FullCatalogCandidateGeneratorV413(db, _UnmappedCatalog())
+        shadow_started = time.perf_counter()
+        shadow_candidates = shadow.candidates(250)
+        shadow_seconds = time.perf_counter() - shadow_started
+        shadow_cached_started = time.perf_counter()
+        shadow_cached = shadow.candidates(250)
+        shadow_cached_seconds = time.perf_counter() - shadow_cached_started
+        if len(shadow_candidates) < 100 or len(shadow_cached) != len(shadow_candidates):
+            raise SystemExit("benchmark: full-catalog shadow retrieval returned too few candidates")
+
         t1 = time.perf_counter()
         engine = FastRecommendationEngineV6(db, RichCalendarEngine())
         index_seconds = time.perf_counter() - t1
@@ -138,6 +155,9 @@ def main() -> int:
             raise SystemExit("benchmark: calendar day cache did not reuse result")
 
         print(f"seed_seconds={seed_seconds:.3f}")
+        print(f"shadow_retrieval_seconds={shadow_seconds:.3f}")
+        print(f"shadow_retrieval_cached_seconds={shadow_cached_seconds:.4f}")
+        print(f"shadow_retrieval_candidates={len(shadow_candidates)}")
         print(f"index_seconds={index_seconds:.3f}")
         print(f"candidate_query_seconds={engine.last_candidate_query_seconds:.3f}")
         print(f"first_decision_seconds={first_seconds:.3f}")
@@ -159,6 +179,10 @@ def main() -> int:
             raise SystemExit(f"benchmark: cached calendar day too slow ({calendar_cached_seconds:.3f}s > 0.25s)")
         if index_seconds > 12.0:
             raise SystemExit(f"benchmark: one-time index setup too slow ({index_seconds:.2f}s > 12s)")
+        if shadow_seconds > 12.0:
+            raise SystemExit(f"benchmark: shadow retrieval too slow ({shadow_seconds:.2f}s > 12s)")
+        if shadow_cached_seconds > 0.50:
+            raise SystemExit(f"benchmark: cached shadow retrieval too slow ({shadow_cached_seconds:.3f}s > 0.50s)")
     return 0
 
 

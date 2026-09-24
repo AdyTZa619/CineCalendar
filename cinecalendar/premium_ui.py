@@ -579,6 +579,7 @@ class PremiumDecisionWindow(DecisionWindow):
             x = QLabel("Nu am găsit momentan un titlu suficient de bun după filtrele tale.")
             x.setObjectName("Muted"); self.today_content.addWidget(x); return
         self.reliability_gate.refresh()
+        self._schedule_retrieval_shadow([primary, *list(backups or [])[:2]], "decision")
         self.record_once([primary], date.today(), "decision")
         self.today_content.addWidget(self.decision_hero(primary))
 
@@ -733,6 +734,7 @@ class PremiumDecisionWindow(DecisionWindow):
         if not recs:
             x=QLabel("Nu am găsit recomandări eligibile."); x.setObjectName("Muted"); self.browse_content.addWidget(x); return
         self.reliability_gate.refresh()
+        self._schedule_retrieval_shadow(list(recs)[:12], "browse")
         self.browse_content.addWidget(self.recommendation_protection_card())
         self.browse_content.addWidget(self.recommendation_metadata_card())
         intro=QFrame(); intro.setObjectName("PremiumCard"); il=QHBoxLayout(intro); il.setContentsMargins(18,14,18,14)
@@ -751,6 +753,7 @@ class PremiumDecisionWindow(DecisionWindow):
         content_weight = float(stack.get("content_weight", 1.0 - als) or (1.0 - als))
         live_state = str(live.get("status") or "baseline")
         reliability = self.reliability_gate.snapshot
+        shadow = self.s.shadow_retrieval.status() if hasattr(self.s,"shadow_retrieval") else {}
 
         box=QFrame(); box.setObjectName("PremiumCard")
         layout=QVBoxLayout(box); layout.setContentsMargins(20,17,20,17); layout.setSpacing(8)
@@ -797,6 +800,21 @@ class PremiumDecisionWindow(DecisionWindow):
         reliability_detail.setObjectName("Muted"); reliability_detail.setWordWrap(True)
         layout.addWidget(reliability_detail)
 
+        if shadow:
+            shadow_title=QLabel("Challenger full-catalog rulează în umbră")
+            shadow_title.setObjectName("BodyStrong"); layout.addWidget(shadow_title)
+            runs=int(shadow.get("runs",0) or 0)
+            challenger=dict(shadow.get("challenger") or {})
+            rated=int(challenger.get("rated",0) or 0)
+            minimum=int(shadow.get("minimum_challenger_ratings",20) or 20)
+            generator=dict(shadow.get("generator") or {})
+            found=int(generator.get("non_als_candidates",generator.get("candidate_count",0)) or 0)
+            shadow_note=QLabel(
+                f"Nu schimbă lista afișată. {runs} comparații salvate • {found} candidați fără ALS găsiți • "
+                f"{rated}/{minimum} rezultate challenger înainte de analiza offline."
+            )
+            shadow_note.setObjectName("Muted"); shadow_note.setWordWrap(True); layout.addWidget(shadow_note)
+
         if live_state in {"collecting", "protected"}:
             active=live.get("active") or {}
             comparison=live.get("comparison") or {}
@@ -836,6 +854,14 @@ class PremiumDecisionWindow(DecisionWindow):
             mapping=QLabel(f"Acoperire ALS: {mapped:,}/{total_ratings:,} ratinguri mapate ({percent}%).")
             mapping.setObjectName("Muted"); mapping.setWordWrap(True); layout.addWidget(mapping)
         return box
+
+    def _schedule_retrieval_shadow(self, recs: Iterable[Recommendation], slot: str) -> None:
+        observer=getattr(self.s,"shadow_retrieval",None)
+        if observer is None:
+            return
+        ids=[int(rec.movie.id) for rec in recs if rec is not None and rec.movie.id]
+        if ids:
+            observer.schedule(date.today(),slot,ids)
 
     def recommendation_metadata_card(self):
         report=dict(self.recommendation_metadata_report or {})

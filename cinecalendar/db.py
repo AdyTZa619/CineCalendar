@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Kept as explicit SQL for documentation/tests. Database.migrate() applies v2-v11 through
 # idempotent Python helpers so an interrupted ALTER TABLE can be resumed safely.
@@ -269,6 +269,37 @@ CREATE TABLE IF NOT EXISTS metadata_issues(
 );
 CREATE INDEX IF NOT EXISTS ix_metadata_issues_open
   ON metadata_issues(resolved_at,movie_id);
+''',
+12: r'''
+CREATE TABLE IF NOT EXISTS retrieval_shadow_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_key TEXT NOT NULL UNIQUE,
+  context_date TEXT NOT NULL,
+  slot TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  baseline_engine TEXT NOT NULL,
+  challenger_version TEXT NOT NULL,
+  depth INTEGER NOT NULL,
+  baseline_count INTEGER NOT NULL DEFAULT 0,
+  challenger_count INTEGER NOT NULL DEFAULT 0,
+  overlap_count INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'complete',
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS retrieval_shadow_items(
+  run_id INTEGER NOT NULL REFERENCES retrieval_shadow_runs(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK(source IN ('baseline','challenger')),
+  movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  rank_position INTEGER NOT NULL,
+  retrieval_score REAL,
+  PRIMARY KEY(run_id,source,rank_position),
+  UNIQUE(run_id,source,movie_id)
+);
+CREATE INDEX IF NOT EXISTS ix_retrieval_shadow_items_movie
+  ON retrieval_shadow_items(movie_id,source,run_id);
+CREATE INDEX IF NOT EXISTS ix_retrieval_shadow_runs_date
+  ON retrieval_shadow_runs(context_date,id DESC);
 '''
 }
 
@@ -697,6 +728,45 @@ class Database:
                ON metadata_issues(resolved_at,movie_id)"""
         )
 
+    def _apply_v12(self, con: sqlite3.Connection) -> None:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS retrieval_shadow_runs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_key TEXT NOT NULL UNIQUE,
+              context_date TEXT NOT NULL,
+              slot TEXT NOT NULL,
+              generated_at TEXT NOT NULL,
+              baseline_engine TEXT NOT NULL,
+              challenger_version TEXT NOT NULL,
+              depth INTEGER NOT NULL,
+              baseline_count INTEGER NOT NULL DEFAULT 0,
+              challenger_count INTEGER NOT NULL DEFAULT 0,
+              overlap_count INTEGER NOT NULL DEFAULT 0,
+              duration_ms INTEGER NOT NULL DEFAULT 0,
+              status TEXT NOT NULL DEFAULT 'complete',
+              error TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS retrieval_shadow_items(
+              run_id INTEGER NOT NULL REFERENCES retrieval_shadow_runs(id) ON DELETE CASCADE,
+              source TEXT NOT NULL CHECK(source IN ('baseline','challenger')),
+              movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+              rank_position INTEGER NOT NULL,
+              retrieval_score REAL,
+              PRIMARY KEY(run_id,source,rank_position),
+              UNIQUE(run_id,source,movie_id)
+            )"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_retrieval_shadow_items_movie
+               ON retrieval_shadow_items(movie_id,source,run_id)"""
+        )
+        con.execute(
+            """CREATE INDEX IF NOT EXISTS ix_retrieval_shadow_runs_date
+               ON retrieval_shadow_runs(context_date,id DESC)"""
+        )
+
     def connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -761,6 +831,7 @@ class Database:
                 (9, self._apply_v9),
                 (10, self._apply_v10),
                 (11, self._apply_v11),
+                (12, self._apply_v12),
             ):
                 con.execute("BEGIN IMMEDIATE")
                 try:
