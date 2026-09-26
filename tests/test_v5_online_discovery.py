@@ -94,3 +94,29 @@ def test_v5_online_discovery_does_not_leak_current_discovery_into_past_replay(tm
 
     assert discovery.cached_candidate_ids(when=date(2020,1,1),limit=20) == []
     assert len(discovery.cached_candidate_ids(when=date.today(),limit=20)) == 1
+
+
+class _FailTmdbProvider:
+    def __init__(self, db, token):
+        pass
+
+    def related_movie_ids(self, tmdb_id, limit=20):
+        raise RuntimeError("temporary provider outage")
+
+    def movie_details_by_tmdb(self, tmdb_id):
+        raise RuntimeError("temporary provider outage")
+
+
+def test_v5_online_discovery_does_not_cache_transient_provider_failure(tmp_path):
+    db=Database(tmp_path/"cinecalendar.db")
+    db.set_setting("tmdb_token","test-token")
+    _seed_anchor(db)
+
+    discovery=V5OnlineDiscovery(db,provider_factory=_FailTmdbProvider)
+    before=discovery.state_token()
+    status=discovery.refresh(force=True)
+    after=discovery.state_token()
+
+    assert status["state"] == "provider_unavailable"
+    assert db.get_setting("v5_online_discovery_last_run","") == ""
+    assert before == after
