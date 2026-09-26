@@ -88,3 +88,44 @@ def test_v5_frontier_uses_separate_reason(tmp_path):
         row=con.execute("SELECT reason,priority FROM metadata_jobs WHERE movie_id=?",(movie_id,)).fetchone()
     assert row["reason"] == "v5_candidate_frontier"
     assert int(row["priority"]) == 1450
+
+
+def test_v5_knowledge_prioritizes_undercovered_negative_boundary(tmp_path):
+    db=Database(tmp_path/"cinecalendar.db")
+
+    # Positive class already has richer premise/country data.
+    _rated(db,101,9,overview="Positive rich premise",countries=("Romania",))
+    _rated(db,102,8,overview="Another positive premise",countries=("France",))
+    # Negative class is intentionally sparse.
+    neg1=_rated(db,103,2)
+    neg2=_rated(db,104,4)
+
+    result=V5KnowledgeBase(db).seed_profile()
+    assert result["priority_focus"] == "negative"
+    assert result["negative_coverage"] < result["positive_coverage"]
+
+    with db.connect() as con:
+        priorities={
+            int(row["movie_id"]): int(row["priority"])
+            for row in con.execute(
+                "SELECT movie_id,priority FROM metadata_jobs WHERE movie_id IN (?,?,?,?)",
+                (neg1,neg2,1,2),
+            ).fetchall()
+        }
+        rows=con.execute(
+            "SELECT m.id,j.priority,r.rating FROM metadata_jobs j "
+            "JOIN movies m ON m.id=j.movie_id JOIN ratings r ON r.movie_id=m.id "
+            "WHERE r.rating IN (2,4,8,9) ORDER BY j.priority DESC"
+        ).fetchall()
+
+    assert rows
+    # At least one negative example must outrank every positive example when its class is far less covered.
+    neg_priorities=[int(row["priority"]) for row in rows if int(row["rating"]) <= 4]
+    pos_priorities=[int(row["priority"]) for row in rows if int(row["rating"]) >= 8]
+    assert max(neg_priorities) > max(pos_priorities)
+
+
+def test_v5_priority_missing_fields_increase_information_gain_priority():
+    sparse=V5KnowledgeBase._priority(2,class_coverage=0.2,missing_count=5)
+    almost_complete=V5KnowledgeBase._priority(2,class_coverage=0.2,missing_count=1)
+    assert sparse > almost_complete
