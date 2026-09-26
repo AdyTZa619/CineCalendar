@@ -48,6 +48,7 @@ from .recommendation import Recommendation
 from .romanian_films import romanian_chapters, romanian_films
 from .tmdb import TmdbProvider, enrich_library
 from .util import json_loads
+from .v5_knowledge import V5KnowledgeBase
 from .watcher import RatingsFolderWatcher
 
 
@@ -468,6 +469,10 @@ class CineCalendarWindow(QMainWindow):
 
         def fn(progress):
             audit_metadata_doctor(self.db)
+            # V5 knowledge acquisition reuses Metadata Doctor instead of creating another worker.
+            # Reprioritize informative ratings first so the positive/negative taste boundary gains
+            # factual premise/country coverage automatically during normal app use.
+            V5KnowledgeBase(self.db).seed_profile(informative_only=True)
             seed_metadata_queue(self.db, limit=500 if not silent else 250)
             return process_metadata_queue(
                 self.db, token, limit=25 if not silent else 6,
