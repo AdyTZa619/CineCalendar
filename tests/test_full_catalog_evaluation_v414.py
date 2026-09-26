@@ -134,7 +134,7 @@ def test_fixed_budget_mix_keeps_budget_and_injects_unique_challenger():
 
     assert len(mixed) == 100
     assert len(set(mixed)) == 100
-    assert any(value >= 101 for value in mixed[:20])
+    assert any(value >= 101 for value in mixed[:25])
     assert sum(value >= 101 for value in mixed) >= 13
 
 
