@@ -8,6 +8,7 @@ import threading
 from .v5_catalog_content import V5CatalogContentRetriever
 from .local_content_v36 import LocalContentCandidateGeneratorV36
 from .personal_candidates import PersonalCandidateGenerator
+from .v5_online_discovery import V5OnlineDiscovery
 
 
 V5_RETRIEVAL_VERSION = "v5-unified-retrieval-alpha1"
@@ -36,6 +37,7 @@ class UnifiedCandidateRetrieverV5:
         "favorites": 0.95,
         "local_content": 0.82,
         "catalog_content": 0.72,
+        "online_discovery": 0.78,
     }
     RRF_K = 40.0
     EXTRA_SHARE = 0.18
@@ -48,6 +50,7 @@ class UnifiedCandidateRetrieverV5:
         self.personal = PersonalCandidateGenerator(db, collaborative)
         self.local_content = LocalContentCandidateGeneratorV36(db)
         self.catalog_content = V5CatalogContentRetriever(db, collaborative)
+        self.online_discovery = V5OnlineDiscovery(db)
         self._lock = threading.RLock()
         self._status = {
             "version": V5_RETRIEVAL_VERSION,
@@ -212,17 +215,22 @@ class UnifiedCandidateRetrieverV5:
         local_ids = self.local_content.candidates(max(420, extra_limit * 5))
         content_items = self.catalog_content.candidates(max(900, extra_limit * 8))
         content_ids = [int(item.movie_id) for item in content_items]
+        online_ids = self.online_discovery.cached_candidate_ids(
+            when=when, limit=max(240, extra_limit * 4)
+        )
         if when is not None:
             als_ids = self._available_ids(als_ids, when)
             favorite_ids = self._available_ids(favorite_ids, when)
             local_ids = self._available_ids(local_ids, when)
             content_ids = self._available_ids(content_ids, when)
+            online_ids = self._available_ids(online_ids, when)
 
         lanes = {
             "als": als_ids,
             "favorites": favorite_ids,
             "local_content": local_ids,
             "catalog_content": content_ids,
+            "online_discovery": online_ids,
         }
         merged, selected = self.fuse(baseline, lanes, extra_limit=extra_limit)
         support_histogram: dict[str, int] = defaultdict(int)
@@ -244,6 +252,7 @@ class UnifiedCandidateRetrieverV5:
                 "personal": self.personal.status(),
                 "local_content": self.local_content.status(),
                 "catalog_content": self.catalog_content.status(),
+                "online_discovery": self.online_discovery.status(),
             }
         return merged
 
