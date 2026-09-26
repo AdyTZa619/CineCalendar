@@ -155,4 +155,4 @@ def test_service_keeps_v47_quality_chain_in_v48_release():
     assert "install_context_ui_v35" in composition
     assert "install_accuracy_ui_v37" in composition
     assert "install_accuracy_ui_v36" not in composition
-    assert '__version__ = "4.14.0"' in init
+    assert '__version__ = "4.14.1"' in init
