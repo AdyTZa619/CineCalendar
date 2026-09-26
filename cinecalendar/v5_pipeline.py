@@ -26,12 +26,7 @@ class V5RecommendationPipeline:
 
     def candidate_ids(self, when, limit: int) -> list[int]:
         baseline = list(self.baseline_engine._balanced_candidate_ids(when, limit))
-        expanded = self.retrieval.expand(baseline, when=when)
-        baseline_set = set(int(mid) for mid in baseline)
-        frontier = [int(mid) for mid in expanded if int(mid) not in baseline_set]
-        if frontier:
-            self.knowledge.queue_frontier(frontier)
-        return expanded
+        return self.retrieval.expand(baseline, when=when)
 
     def prepare_knowledge(self, limit: int = 0) -> dict:
         return self.knowledge.seed_profile(limit=limit)
