@@ -14,6 +14,7 @@ from .feedback import apply_feedback
 from .qt_ui import CineCalendarWindow, ScoreDialog, WorkerThread
 from .recommendation import Recommendation, row_to_movie
 from .updater import UpdateInfo, check_for_update, stage_and_start_update, update_supported
+from .v5_alpha_runtime import is_v5_alpha
 
 
 class DecisionWindow(CineCalendarWindow):
@@ -40,8 +41,9 @@ class DecisionWindow(CineCalendarWindow):
         self.available_update: UpdateInfo | None = None
         self.update_worker: WorkerThread | None = None
         super().__init__(service)
+        alpha_mode = is_v5_alpha()
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Decision Engine")
-        if bool(self.db.get_setting("auto_update_check", True)):
+        if (not alpha_mode) and bool(self.db.get_setting("auto_update_check", True)):
             QTimer.singleShot(2800, lambda: self.check_updates(False))
 
     def _confidence_label(self, confidence: float) -> str:
@@ -355,18 +357,30 @@ class DecisionWindow(CineCalendarWindow):
         return box
 
     def page_updates(self):
+        alpha_mode = is_v5_alpha()
         page, content = self.page_shell(
             "Actualizări",
-            "Updater Stable cu SHA-256, backup, health-check și rollback automat.",
+            (
+                "V5 Alpha este separat de canalul Stable."
+                if alpha_mode else
+                "Updater Stable cu SHA-256, backup, health-check și rollback automat."
+            ),
         )
         box = self.card(); l = QVBoxLayout(box); l.setContentsMargins(18,18,18,18); l.setSpacing(10)
         title = QLabel(f"CineCalendar {APP_VERSION}"); title.setObjectName("CardTitle"); l.addWidget(title)
-        state = QLabel("Canal: Stable • " + ("updater automat disponibil" if update_supported() else "rulezi sursa Python; update automat doar în EXE"))
+        if alpha_mode:
+            state = QLabel(
+                "Canal: V5 Alpha • updaterul Stable este dezactivat intenționat. "
+                "Buildul de test nu poate suprascrie CineCalendar 4.14.1."
+            )
+        else:
+            state = QLabel("Canal: Stable • " + ("updater automat disponibil" if update_supported() else "rulezi sursa Python; update automat doar în EXE"))
         state.setObjectName("Muted"); state.setWordWrap(True); l.addWidget(state)
         auto = QCheckBox("Verifică automat actualizările la pornire")
-        auto.setChecked(bool(self.db.get_setting("auto_update_check", True)))
+        auto.setChecked(False if alpha_mode else bool(self.db.get_setting("auto_update_check", True)))
+        auto.setEnabled(not alpha_mode)
         auto.toggled.connect(lambda v:self.db.set_setting("auto_update_check", bool(v))); l.addWidget(auto)
-        row = QHBoxLayout(); check = QPushButton("Caută actualizări"); check.clicked.connect(lambda:self.check_updates(True)); row.addWidget(check)
+        row = QHBoxLayout(); check = QPushButton("Caută actualizări"); check.clicked.connect(lambda:self.check_updates(True)); check.setEnabled(not alpha_mode); row.addWidget(check)
         if self.available_update:
             install = QPushButton(f"Actualizează la {self.available_update.version}"); install.setProperty("accent", True)
             install.clicked.connect(lambda:self.start_update(self.available_update, True)); row.addWidget(install)
@@ -380,6 +394,14 @@ class DecisionWindow(CineCalendarWindow):
         return page
 
     def check_updates(self, manual: bool = False):
+        if is_v5_alpha():
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "V5 Alpha",
+                    "Updaterul Stable este dezactivat în V5 Alpha. Buildul de test se actualizează separat.",
+                )
+            return
         if self.update_worker and self.update_worker.isRunning():
             if manual: self.set_status("Verificarea update-ului este deja în curs.")
             return
