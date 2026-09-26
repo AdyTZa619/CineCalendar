@@ -1,4 +1,8 @@
-CineCalendar Premium 4.14.0 — Windows 10/11 x64
+CineCalendar Premium 4.14.1 — Windows 10/11 x64
+
+NOU ÎN 4.14.1 — REPLAY ISTORIC REPARAT
+- Historical Replay poate crea și curăța corect workspace-ul temporar;
+- nu schimbă recomandările, formula 70/30 sau rezultatele evaluatorului 4.14.
 
 NOU ÎN 4.14.0 — FULL-CATALOG EVALUATION
 - combinațiile de gust deja învățate pot genera direct candidați în challengerul shadow;
