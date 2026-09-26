@@ -17,11 +17,19 @@ def main() -> int:
     parser.add_argument("--batch", type=int, default=25)
     parser.add_argument("--passes", type=int, default=1)
     parser.add_argument("--seed-limit", type=int, default=0)
+    parser.add_argument(
+        "--include-neutral",
+        action="store_true",
+        help="Include 5-7 ratings after the positive/negative boundary is sufficiently covered.",
+    )
     args = parser.parse_args()
 
     db = Database(Path(args.db).expanduser())
     knowledge = V5KnowledgeBase(db)
-    seeded = knowledge.seed_profile(limit=max(0, int(args.seed_limit)))
+    seeded = knowledge.seed_profile(
+        limit=max(0, int(args.seed_limit)),
+        informative_only=not bool(args.include_neutral),
+    )
     token = str(db.get_setting("tmdb_token", "") or "").strip()
 
     processed = []
