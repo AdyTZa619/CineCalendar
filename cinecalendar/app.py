@@ -9,7 +9,7 @@ from .service import CineCalendarService
 from .single_instance import SingleInstanceGuard
 from .updater import parse_special_startup, write_health_marker
 from .updater_v3 import cleanup_update_residue
-from .v5_alpha_runtime import V5_ALPHA_MUTEX, V5_ALPHA_VERSION, is_v5_alpha
+from .v5_alpha_runtime import V5_ALPHA_MUTEX, V5_ALPHA_VERSION, is_v5_alpha, show_alpha_startup_error
 
 
 PERSONAL_ACCEPTANCE_FLAG = "--personal-acceptance"
@@ -85,7 +85,13 @@ def main():
         return 0
 
     try:
-        service = CineCalendarService()
+        try:
+            service = CineCalendarService()
+        except FileNotFoundError as exc:
+            if alpha_mode:
+                show_alpha_startup_error(str(exc))
+                return 2
+            raise
         service.log.info("CineCalendar %s start", "V5 Alpha" if alpha_mode else "Premium")
 
         # Keep one authoritative package version in inherited/base widgets.
