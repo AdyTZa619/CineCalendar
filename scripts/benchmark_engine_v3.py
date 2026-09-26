@@ -11,7 +11,7 @@ from cinecalendar.profile import build_profile
 from cinecalendar.recommender_v6 import FastRecommendationEngineV6
 from cinecalendar.semantic import extract_semantic
 from cinecalendar.models import Movie
-from cinecalendar.full_catalog_shadow_v413 import FullCatalogCandidateGeneratorV413
+from cinecalendar.full_catalog_shadow_v414 import FullCatalogCandidateGeneratorV414
 from cinecalendar.util import identity_key, json_dumps, normalize_text, utcnow_iso
 
 
@@ -105,7 +105,7 @@ def main() -> int:
         add_candidates(db)
         seed_seconds = time.perf_counter() - t0
 
-        shadow = FullCatalogCandidateGeneratorV413(db, _UnmappedCatalog())
+        shadow = FullCatalogCandidateGeneratorV414(db, _UnmappedCatalog())
         shadow_started = time.perf_counter()
         shadow_candidates = shadow.candidates(250)
         shadow_seconds = time.perf_counter() - shadow_started
