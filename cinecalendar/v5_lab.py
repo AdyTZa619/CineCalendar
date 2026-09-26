@@ -30,6 +30,7 @@ class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEng
             V5_PIPELINE_VERSION,
             V5_RETRIEVAL_VERSION,
             V5_RANKER_VERSION,
+            self.v5.retrieval.online_discovery.state_token(),
         )
 
     def _persistent_key(self, when, mode: str) -> str:
