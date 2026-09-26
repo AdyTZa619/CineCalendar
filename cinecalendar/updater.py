@@ -127,6 +127,9 @@ def sha256_path(path: str | Path) -> str:
 
 
 def update_supported() -> bool:
+    from .v5_alpha_runtime import is_v5_alpha
+    if is_v5_alpha():
+        return False
     exe = Path(sys.executable)
     return bool(getattr(sys, "frozen", False) and os.name == "nt" and exe.suffix.lower() == ".exe")
 
