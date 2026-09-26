@@ -41,3 +41,43 @@ def test_availability_wrapper_is_idempotent_for_v5_lab():
     from cinecalendar.v5_lab import V5LabRecommendationEngine
 
     assert availability_engine_class(V5LabRecommendationEngine) is V5LabRecommendationEngine
+
+
+def test_v5_ranker_state_token_changes_after_rated_metadata_enrichment(tmp_path):
+    from cinecalendar.db import Database
+    from cinecalendar.util import identity_key, json_dumps, normalize_text, utcnow_iso
+
+    db=Database(tmp_path/"cinecalendar.db")
+    now=utcnow_iso()
+    with db.tx() as con:
+        cur=con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,countries_json,overview,
+                keywords_json,semantic_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt8999999",identity_key("Rated metadata","Rated metadata",2020,"movie"),
+                "Rated metadata","Rated metadata",normalize_text("Rated metadata"),
+                normalize_text("Rated metadata"),2020,"movie",
+                json_dumps(["Drama"]),json_dumps(["Director"]),json_dumps([]),"",
+                json_dumps([]),json_dumps({}),"test",now,now,
+            ),
+        )
+        movie_id=int(cur.lastrowid)
+        con.execute(
+            """INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (movie_id,8,"2026-01-01","test",now,now),
+        )
+
+    ranker=PersonalUtilityRankerV5(db)
+    before=ranker.state_token()
+    with db.tx() as con:
+        con.execute(
+            "UPDATE movies SET overview=?,updated_at=? WHERE id=?",
+            ("New premise","2099-01-01T00:00:00+00:00",movie_id),
+        )
+    after=ranker.state_token()
+    assert after != before
+    assert after[-1] == "2099-01-01T00:00:00+00:00"
