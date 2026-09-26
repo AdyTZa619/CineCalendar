@@ -9,6 +9,7 @@ from .service import CineCalendarService
 from .single_instance import SingleInstanceGuard
 from .updater import parse_special_startup, write_health_marker
 from .updater_v3 import cleanup_update_residue
+from .v5_alpha_runtime import V5_ALPHA_MUTEX, V5_ALPHA_VERSION, is_v5_alpha
 
 
 PERSONAL_ACCEPTANCE_FLAG = "--personal-acceptance"
@@ -76,7 +77,8 @@ def main():
     if exit_code is not None:
         return exit_code
 
-    instance = SingleInstanceGuard()
+    alpha_mode = is_v5_alpha()
+    instance = SingleInstanceGuard(name=V5_ALPHA_MUTEX if alpha_mode else r"Local\\CineCalendar-Premium-SingleInstance")
     if not instance.acquire():
         # The existing window is brought forward on a best-effort basis. More importantly, the
         # second process exits before opening SQLite or starting background workers.
@@ -84,16 +86,18 @@ def main():
 
     try:
         service = CineCalendarService()
-        service.log.info("CineCalendar Premium start")
+        service.log.info("CineCalendar %s start", "V5 Alpha" if alpha_mode else "Premium")
 
         # Keep one authoritative package version in inherited/base widgets.
         from . import qt_ui as base_ui
-        base_ui.APP_VERSION = __version__
+        base_ui.APP_VERSION = V5_ALPHA_VERSION if alpha_mode else __version__
 
-        # Patch the inherited update action before loading Premium UI.
+        # Alpha never consumes the Stable updater channel. Stable keeps the verified exit guard.
         from . import qt_ui_v2 as decision_ui
-        from .update_exit_guard import install_update_exit_guard
-        install_update_exit_guard(decision_ui.DecisionWindow)
+        decision_ui.APP_VERSION = V5_ALPHA_VERSION if alpha_mode else __version__
+        if not alpha_mode:
+            from .update_exit_guard import install_update_exit_guard
+            install_update_exit_guard(decision_ui.DecisionWindow)
 
         from .premium_calendar_ui import CalendarPremiumWindow, run_premium_calendar
         from .ui_composition import compose_premium_window
