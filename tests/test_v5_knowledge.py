@@ -37,16 +37,26 @@ def test_v5_knowledge_prioritizes_informative_ratings(tmp_path):
 
     knowledge=V5KnowledgeBase(db)
     result=knowledge.seed_profile()
-    assert result["considered_missing"] == 3
+    assert result["informative_only"] is True
+    assert result["considered_missing"] == 2
 
     with db.connect() as con:
         rows=con.execute(
             "SELECT movie_id,priority,reason FROM metadata_jobs ORDER BY priority DESC"
         ).fetchall()
     priority={int(row["movie_id"]):int(row["priority"]) for row in rows}
-    assert priority[liked] > priority[neutral]
-    assert priority[disliked] > priority[neutral]
+    assert liked in priority
+    assert disliked in priority
+    assert neutral not in priority
     assert all(str(row["reason"])=="v5_rated_profile" for row in rows)
+
+    all_result=knowledge.seed_profile(informative_only=False)
+    assert all_result["considered_missing"] == 3
+    with db.connect() as con:
+        neutral_job=con.execute(
+            "SELECT priority FROM metadata_jobs WHERE movie_id=?",(neutral,)
+        ).fetchone()
+    assert int(neutral_job["priority"]) == 1300
 
 
 def test_v5_knowledge_report_measures_factual_readiness(tmp_path):
