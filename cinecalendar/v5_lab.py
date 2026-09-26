@@ -25,12 +25,20 @@ class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEng
         self.v5 = V5RecommendationPipeline(db, self)
 
     def _state_token(self) -> tuple:
+        v5 = getattr(self, "v5", None)
+        retrieval = getattr(v5, "retrieval", None)
+        discovery = getattr(retrieval, "online_discovery", None)
+        discovery_token = (
+            discovery.state_token()
+            if discovery is not None
+            else ("v5-online-discovery:init",)
+        )
         return super()._state_token() + (
             V5_LAB_ENGINE_VERSION,
             V5_PIPELINE_VERSION,
             V5_RETRIEVAL_VERSION,
             V5_RANKER_VERSION,
-            self.v5.retrieval.online_discovery.state_token(),
+            discovery_token,
         )
 
     def _persistent_key(self, when, mode: str) -> str:
