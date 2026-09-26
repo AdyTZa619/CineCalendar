@@ -23,8 +23,6 @@ class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEng
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
         self.v5 = V5RecommendationPipeline(db, self)
-        # Local queue seeding only; provider I/O remains in Metadata Doctor and stays bounded.
-        self.v5.prepare_knowledge()
 
     def _state_token(self) -> tuple:
         return super()._state_token() + (
@@ -39,12 +37,7 @@ class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEng
 
     def _balanced_candidate_ids(self, when: date, limit: int) -> list[int]:
         baseline = list(AvailabilityGuardMixinV37._balanced_candidate_ids(self, when, limit))
-        expanded = self.v5.retrieval.expand(baseline, when=when)
-        baseline_set = set(int(mid) for mid in baseline)
-        frontier = [int(mid) for mid in expanded if int(mid) not in baseline_set]
-        if frontier:
-            self.v5.knowledge.queue_frontier(frontier)
-        return expanded
+        return self.v5.retrieval.expand(baseline, when=when)
 
     def candidate_generation_status(self) -> dict:
         status = dict(super().candidate_generation_status())
