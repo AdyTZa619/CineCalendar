@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import math
 import threading
 
-from .full_catalog_shadow_v414 import FullCatalogCandidateGeneratorV414
+from .v5_catalog_content import V5CatalogContentRetriever
 from .local_content_v36 import LocalContentCandidateGeneratorV36
 from .personal_candidates import PersonalCandidateGenerator
 
@@ -35,7 +35,7 @@ class UnifiedCandidateRetrieverV5:
         "als": 1.00,
         "favorites": 0.95,
         "local_content": 0.82,
-        "full_catalog": 0.72,
+        "catalog_content": 0.72,
     }
     RRF_K = 40.0
     EXTRA_SHARE = 0.18
@@ -47,7 +47,7 @@ class UnifiedCandidateRetrieverV5:
         self.collaborative = collaborative
         self.personal = PersonalCandidateGenerator(db, collaborative)
         self.local_content = LocalContentCandidateGeneratorV36(db)
-        self.full_catalog = FullCatalogCandidateGeneratorV414(db, collaborative)
+        self.catalog_content = V5CatalogContentRetriever(db, collaborative)
         self._lock = threading.RLock()
         self._status = {
             "version": V5_RETRIEVAL_VERSION,
@@ -210,19 +210,19 @@ class UnifiedCandidateRetrieverV5:
         als_ids = self._map_imdb_ids(list(personal.get("als") or []))
         favorite_ids = self._map_imdb_ids(list(personal.get("favorites") or []))
         local_ids = self.local_content.candidates(max(420, extra_limit * 5))
-        full_items = self.full_catalog.candidates(max(420, extra_limit * 5))
-        full_ids = [int(item.movie_id) for item in full_items]
+        content_items = self.catalog_content.candidates(max(900, extra_limit * 8))
+        content_ids = [int(item.movie_id) for item in content_items]
         if when is not None:
             als_ids = self._available_ids(als_ids, when)
             favorite_ids = self._available_ids(favorite_ids, when)
             local_ids = self._available_ids(local_ids, when)
-            full_ids = self._available_ids(full_ids, when)
+            content_ids = self._available_ids(content_ids, when)
 
         lanes = {
             "als": als_ids,
             "favorites": favorite_ids,
             "local_content": local_ids,
-            "full_catalog": full_ids,
+            "catalog_content": content_ids,
         }
         merged, selected = self.fuse(baseline, lanes, extra_limit=extra_limit)
         support_histogram: dict[str, int] = defaultdict(int)
@@ -243,7 +243,7 @@ class UnifiedCandidateRetrieverV5:
                 "selected_source_counts": dict(source_hits),
                 "personal": self.personal.status(),
                 "local_content": self.local_content.status(),
-                "full_catalog": self.full_catalog.status(),
+                "catalog_content": self.catalog_content.status(),
             }
         return merged
 
