@@ -50,6 +50,8 @@ jobs:
             'cinecalendar\candidate_metadata_v48.py',
             'cinecalendar\reliability_gate_v412.py',
             'cinecalendar\full_catalog_shadow_v413.py',
+            'cinecalendar\\full_catalog_shadow_v414.py',
+            'cinecalendar\\full_catalog_evaluation_v414.py',
             'cinecalendar\rolling_backtest_v37.py',
             'cinecalendar\adaptive_preferences_v2.py',
             'cinecalendar\personal_candidates.py',
@@ -153,7 +155,7 @@ jobs:
           După „L-am văzut”, CineCalendar așteaptă nota reală din profilul IMDb, o verifică automat și confirmă importul fără să ceară aceeași notă în aplicație.
           Lista finală de 12 este afișată o singură dată, permite alegerea directă și păstrează formula ALS/conținut completă în telemetrie. Protecția live se actualizează după alegeri, vizionări și ratinguri.
           Reliability Gate separă dovezile personale de precizia măsurată, afișează un interval al notei și confirmă o recomandare numai după minimum 30 de rezultate reale care trec pragurile MAE și ±1 punct.
-          Full-catalog retrieval caută în umbră titluri fără mapping ALS și salvează comparațiile separat; nu schimbă recomandările sau formula 70/30 înainte de dovezi reale și analiză offline.
+          Full-catalog v4.14 caută inclusiv combinații de gust în umbră, măsoară separat rulările comparabile și nu permite promovarea din shadow live; replay-ul temporal offline verifică orice viitoare injecție fără să schimbe formula 70/30.
           Vezi MOVIELENS_MODEL_NOTICE.txt pentru sursă și condițiile de utilizare ale modelului derivat.
           Actualizările ulterioare se fac direct din aplicație: ZIP verificat SHA-256, staging, backup, health-check și rollback automat.
           "@
