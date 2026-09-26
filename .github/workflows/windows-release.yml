@@ -67,6 +67,7 @@ jobs:
             'cinecalendar\open_metadata.py',
             'cinecalendar\updater.py',
             'scripts\benchmark_engine_v3.py',
+            'scripts\\evaluate_full_catalog_v414.py',
             'scripts\benchmark_v431.py',
             'scripts\backtest_recommendations.py',
             'UPDATE_NOTES.txt'
