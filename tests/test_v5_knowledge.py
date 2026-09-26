@@ -140,4 +140,8 @@ def test_metadata_doctor_reprioritizes_v5_taste_boundary_automatically():
     assert "batch_limit = 50 if not silent else 24" in source
     assert "batch_limit = 25 if not silent else 8" in source
     assert "V5 — datele profilului personal" in source
+    assert "Auto-completarea V5 este activă" in source
+    assert "75 * 1000" in source
+    assert "5 * 60 * 1000" in source
+    assert "is_v5_alpha()" in source
     assert "process_metadata_queue(" in source
