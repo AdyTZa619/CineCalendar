@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from .metadata_doctor import queue_metadata_movie
-from .util import json_loads
+from .util import json_dumps, json_loads, utcnow_iso
 
 
 V5_KNOWLEDGE_VERSION = "v5-knowledge-alpha1"
@@ -115,7 +115,8 @@ class V5KnowledgeBase:
     def _rated_rows(self):
         with self.db.connect() as con:
             return con.execute(
-                """SELECT m.id,m.overview,m.keywords_json,m.countries_json,r.rating,
+                """SELECT m.id,m.overview,m.keywords_json,m.countries_json,m.genres_json,
+                          m.directors_json,m.runtime_min,m.poster_url,r.rating,
                           COALESCE(r.date_rated,r.updated_at,'') AS rating_date
                    FROM ratings r JOIN movies m ON m.id=r.movie_id
                    WHERE m.imdb_id IS NOT NULL AND m.imdb_id<>''
@@ -135,25 +136,64 @@ class V5KnowledgeBase:
         rows = list(self._rated_rows())
         if int(limit) > 0:
             rows = rows[: int(limit)]
-        queued = 0
-        considered = 0
+        payloads = []
+        now = utcnow_iso()
         for row in rows:
-            if self._semantic_present(row) and self._country_present(row):
+            missing = []
+            if not self._has_json_values(row["genres_json"]):
+                missing.append("genres")
+            if not self._has_json_values(row["directors_json"]):
+                missing.append("directors")
+            if not self._country_present(row):
+                missing.append("countries")
+            if not self._semantic_present(row):
+                missing.append("overview")
+            if row["runtime_min"] is None:
+                missing.append("runtime")
+            if not str(row["poster_url"] or "").strip():
+                missing.append("poster")
+            # V5's model-readiness problem is premise/country coverage. Do not enqueue a title
+            # merely for a missing poster if all factual ranking inputs are already present.
+            if not any(field in missing for field in ("genres","directors","countries","overview","runtime")):
                 continue
-            considered += 1
             rating = int(row["rating"])
-            queued += int(
-                queue_metadata_movie(
-                    self.db,
+            payloads.append(
+                (
                     int(row["id"]),
-                    priority=self._priority(rating),
-                    reason=self.PROFILE_REASON,
+                    self._priority(rating),
+                    self.PROFILE_REASON,
+                    json_dumps(missing),
+                    now,
+                    now,
+                    now,
                 )
             )
+
+        if payloads:
+            with self.db.tx() as con:
+                con.executemany(
+                    """INSERT INTO metadata_jobs(
+                         movie_id,priority,reason,status,attempt_count,missing_json,queued_at,
+                         next_check_at,last_error,updated_at
+                       ) VALUES(?,?,?,'pending',0,?,?,?,'',?)
+                       ON CONFLICT(movie_id) DO UPDATE SET
+                         priority=MAX(metadata_jobs.priority,excluded.priority),
+                         reason=CASE
+                           WHEN metadata_jobs.reason='v5_rated_profile' THEN metadata_jobs.reason
+                           ELSE excluded.reason END,
+                         status=CASE WHEN metadata_jobs.status='complete' THEN 'pending'
+                                     ELSE metadata_jobs.status END,
+                         missing_json=excluded.missing_json,
+                         next_check_at=CASE WHEN metadata_jobs.status='complete'
+                                            THEN excluded.next_check_at
+                                            ELSE metadata_jobs.next_check_at END,
+                         completed_at=NULL,updated_at=excluded.updated_at""",
+                    payloads,
+                )
         return {
             "version": V5_KNOWLEDGE_VERSION,
-            "considered_missing": considered,
-            "queued_or_reprioritized": queued,
+            "considered_missing": len(payloads),
+            "queued_or_reprioritized": len(payloads),
         }
 
     def queue_frontier(self, movie_ids: Iterable[int], *, limit: int = 240) -> int:
