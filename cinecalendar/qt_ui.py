@@ -475,7 +475,7 @@ class CineCalendarWindow(QMainWindow):
             V5KnowledgeBase(self.db).seed_profile(informative_only=True)
             seed_metadata_queue(self.db, limit=500 if not silent else 250)
             return process_metadata_queue(
-                self.db, token, limit=25 if not silent else 6,
+                self.db, token, limit=25 if not silent else 12,
                 force=not silent, progress=progress,
             )
 
