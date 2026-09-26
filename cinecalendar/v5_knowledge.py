@@ -166,13 +166,16 @@ class V5KnowledgeBase:
                        r.id DESC"""
             ).fetchall()
 
-    def seed_profile(self, limit: int = 0) -> dict:
-        """Queue missing factual taste inputs. Zero means all rated titles.
+    def seed_profile(self, limit: int = 0, *, informative_only: bool = True) -> dict:
+        """Queue missing factual taste inputs.
 
-        Queueing is local SQLite work. Provider I/O remains bounded by Metadata Doctor and may
-        continue across app sessions.
+        By default only explicit positive (8-10) and negative (1-4) examples are queued. Neutral
+        5-7 titles are useful later, but they must not consume provider budget before V5 knows the
+        user's decision boundary. Zero limit means all rows in the selected class.
         """
         rows = list(self._rated_rows())
+        if informative_only:
+            rows = [row for row in rows if int(row["rating"]) >= 8 or int(row["rating"]) <= 4]
         if int(limit) > 0:
             rows = rows[: int(limit)]
         payloads = []
@@ -231,6 +234,7 @@ class V5KnowledgeBase:
                 )
         return {
             "version": V5_KNOWLEDGE_VERSION,
+            "informative_only": bool(informative_only),
             "considered_missing": len(payloads),
             "queued_or_reprioritized": len(payloads),
         }
