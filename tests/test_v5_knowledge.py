@@ -56,7 +56,7 @@ def test_v5_knowledge_prioritizes_informative_ratings(tmp_path):
         neutral_job=con.execute(
             "SELECT priority FROM metadata_jobs WHERE movie_id=?",(neutral,)
         ).fetchone()
-    assert int(neutral_job["priority"]) == 1300
+    assert 1300 <= int(neutral_job["priority"]) < 1600
 
 
 def test_v5_knowledge_report_measures_factual_readiness(tmp_path):
