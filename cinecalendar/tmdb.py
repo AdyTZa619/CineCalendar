@@ -47,6 +47,40 @@ class TmdbProvider:
         self._get("/configuration",cache_hours=24)
         return True
 
+    def related_movie_ids(self, tmdb_id: int, limit: int = 20) -> list[int]:
+        """Return a bounded, de-duplicated TMDb neighbourhood for one movie.
+
+        Recommendations and similar titles are cached by _get(), so V5 can refresh discovery
+        without turning every recommendation request into live network I/O.
+        """
+        take=max(1,min(50,int(limit)))
+        seen=set()
+        out=[]
+        for path in (f"/movie/{int(tmdb_id)}/recommendations",f"/movie/{int(tmdb_id)}/similar"):
+            payload=self._get(path,{"language":"en-US","page":1},cache_hours=168)
+            for item in payload.get("results") or []:
+                try:
+                    candidate=int(item.get("id") or 0)
+                except (TypeError,ValueError):
+                    continue
+                if candidate<=0 or candidate==int(tmdb_id) or candidate in seen:
+                    continue
+                seen.add(candidate); out.append(candidate)
+                if len(out)>=take:
+                    return out
+        return out
+
+    def movie_details_by_tmdb(self, tmdb_id: int) -> dict:
+        return self._get(
+            f"/movie/{int(tmdb_id)}",
+            {
+                "append_to_response":"credits,keywords,external_ids,images",
+                "include_image_language":"ro,en,null",
+                "language":"en-US",
+            },
+            cache_hours=168,
+        )
+
     def enrich_by_imdb(self,movie:Movie)->Movie:
         if not movie.imdb_id: return movie
         found=self._get(f"/find/{movie.imdb_id}",{"external_source":"imdb_id"})
