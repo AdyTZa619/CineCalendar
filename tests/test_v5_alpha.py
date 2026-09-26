@@ -34,3 +34,10 @@ def test_v5_auc_and_ndcg_helpers_reward_correct_order():
     good = PersonalUtilityRankerV5._ndcg25([10, 9, 4, 2], [0.9, 0.8, 0.2, 0.1])
     bad = PersonalUtilityRankerV5._ndcg25([10, 9, 4, 2], [0.1, 0.2, 0.8, 0.9])
     assert good > bad
+
+
+def test_availability_wrapper_is_idempotent_for_v5_lab():
+    from cinecalendar.availability_guard_v37 import availability_engine_class
+    from cinecalendar.v5_lab import V5LabRecommendationEngine
+
+    assert availability_engine_class(V5LabRecommendationEngine) is V5LabRecommendationEngine
