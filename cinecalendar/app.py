@@ -78,7 +78,7 @@ def main():
         return exit_code
 
     alpha_mode = is_v5_alpha()
-    instance = SingleInstanceGuard(name=V5_ALPHA_MUTEX if alpha_mode else r"Local\\CineCalendar-Premium-SingleInstance")
+    instance = SingleInstanceGuard(name=V5_ALPHA_MUTEX) if alpha_mode else SingleInstanceGuard()
     if not instance.acquire():
         # The existing window is brought forward on a best-effort basis. More importantly, the
         # second process exits before opening SQLite or starting background workers.
