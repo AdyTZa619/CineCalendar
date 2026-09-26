@@ -50,6 +50,7 @@ from .tmdb import TmdbProvider, enrich_library
 from .util import json_loads
 from .v5_knowledge import V5KnowledgeBase
 from .v5_online_discovery import V5OnlineDiscovery
+from .v5_alpha_runtime import is_v5_alpha
 from .watcher import RatingsFolderWatcher
 
 
@@ -510,6 +511,28 @@ class CineCalendarWindow(QMainWindow):
                 if self.current_page == "metadata_doctor":
                     self.show_page("metadata_doctor")
 
+            # V5 Alpha can finish the factual profile without repeated manual clicks.
+            # Retry rows keep Metadata Doctor's normal backoff; these burst passes only consume
+            # currently-due work and stop when there is nothing useful to do.
+            if is_v5_alpha():
+                status = V5KnowledgeBase(self.db).status()
+                open_jobs = int(status.get("open_profile_jobs", 0) or 0)
+                ready = bool(status.get("ready_for_rich_ranker"))
+                attempted = int(getattr(result, "attempted", 0) or 0)
+                improved = int(getattr(result, "improved", 0) or 0)
+                failed = int(getattr(result, "failed", 0) or 0)
+                if (not ready) and open_jobs > 0 and attempted > 0:
+                    if failed >= max(3, attempted // 2):
+                        delay_ms = 5 * 60 * 1000
+                    elif improved <= 0:
+                        delay_ms = 3 * 60 * 1000
+                    else:
+                        delay_ms = 75 * 1000
+                    QTimer.singleShot(
+                        delay_ms,
+                        lambda: self.run_metadata_doctor(silent=True),
+                    )
+
         def failed(message):
             self.metadata_queue_worker = None
             self.s.log.warning("Metadata Doctor background pass failed: %s", message)
@@ -564,7 +587,10 @@ class CineCalendarWindow(QMainWindow):
         v5_note = QLabel(
             "Rankerul V5 bogat este pregătit pentru testare."
             if ready else
-            "Rankerul V5 bogat rămâne blocat până când atât filmele apreciate, cât și cele respinse au suficiente date factuale."
+            (
+                "Rankerul V5 bogat rămâne blocat până când atât filmele apreciate, cât și cele respinse au suficiente date factuale. "
+                + ("Auto-completarea V5 este activă și continuă singură în fundal." if is_v5_alpha() else "")
+            )
         )
         v5_note.setWordWrap(True); v5_note.setObjectName("Muted"); v5_layout.addWidget(v5_note)
         content.addWidget(v5_card)
