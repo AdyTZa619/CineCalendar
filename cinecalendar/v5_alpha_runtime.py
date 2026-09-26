@@ -44,6 +44,9 @@ def _candidate_stable_databases(alpha_root: Path) -> list[Path]:
     # Alpha extracted inside the Stable bundle.
     candidates.append(bundle_root / "CineCalendarData" / "data" / "cinecalendar.db")
 
+    # Alpha folder nested inside the Stable bundle.
+    candidates.append(bundle_root.parent / "CineCalendarData" / "data" / "cinecalendar.db")
+
     # Alpha bundle placed next to the Stable bundle.
     parent = bundle_root.parent
     try:
