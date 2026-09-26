@@ -44,6 +44,11 @@ knowledge layer before any richer ranker is allowed to become active.
 
 This is model input quality, not poster polish.
 
+Metadata acquisition is **coverage-aware**: positive and negative extremes start from comparable
+priority, then the less-documented class receives a deficit boost. On a profile where dislikes have
+far less premise/country coverage than favourites, Metadata Doctor therefore learns the rejection
+boundary first instead of spending most of its provider budget on already-richer positive examples.
+
 ## Two complementary replay gates
 
 V5 keeps the non-overlapping rolling benchmark for broad regression/leakage protection, but it also
