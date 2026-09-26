@@ -1,9 +1,9 @@
 {
-  "version": "4.14.0",
-  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v4.14.0/CineCalendar-4.14.0-Premium-Windows-x64.zip",
-  "sha256": "d6b1e197c9a0b9dabfd7d84717a32ca61aa14414a641093480a7bb62e7edc5ad",
-  "notes": "CineCalendar 4.14.0 – Full-catalog evaluation fără false confidence\r\n\r\nNoutăți 4.14.0:\r\n- retrieval direct pentru combinații de gust deja validate în profil;\r\n- evaluare live versionată: rezultatele 4.13 nu validează challengerul 4.14;\r\n- fereastră maximă de 120 zile pentru atribuirea ratingurilor la o comparație shadow;\r\n- deduplicare pe film și comparații paired numai când baseline-ul și challengerul au rezultat real în aceeași rulare;\r\n- intervale bootstrap pentru diferența medie de rating și rata 8+;\r\n- shadow-ul live este declarat observațional și nu permite promovare;\r\n- evaluator temporal offline cu ferestre fără leakage și buget fix de candidați;\r\n- injecția de test este plafonată implicit la 15% și măsoară recall 8+/9+, NDCG și dislike exposure;\r\n- motorul de producție și ranking identity rămân neschimbate.\r\n\r\nProtecții:\r\n- nicio recomandare afișată nu este schimbată de această versiune;\r\n- nicio formulă nu este promovată automat de evaluator;\r\n- replay-ul lucrează pe copii SQLite temporare și elimină ratingurile/feedbackul din viitorul ferestrei;\r\n- challengerul live și replay-ul sunt instrumente de măsurare, nu surse de adevăr fără rezultate suficiente.\r\n\r\nVersiune:\r\n- aplicație 4.14.0;\r\n- full-catalog-retrieval-v4.14.0;\r\n- retrieval-shadow-v4.14.0;\r\n- full-catalog-evaluation-v4.14.0;\r\n- production-stack-v4.14.0-full-catalog-evaluation;\r\n- SQLite schema v12;\r\n- backup profil v5.",
-  "publishedAt": "2026-09-26T14:27:26.4402920Z",
+  "version": "4.14.1",
+  "url": "https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-v4.14.1/CineCalendar-4.14.1-Premium-Windows-x64.zip",
+  "sha256": "5352e52f1c1d34fd2f4b5e77a47df99b89513811d4ce9ce4f06b81498e8273a9",
+  "notes": "CineCalendar 4.14.1 – Historical Replay reparat\r\n\r\nCorecție:\r\n- adaugă `cinecalendar-fullcatalog414-` în lista workspace-urilor temporare administrate;\r\n- Historical Replay 4.14 poate porni fără eroarea „Unsupported CineCalendar temp prefix”;\r\n- workspace-ul este eliminat după rulare normală și poate fi recuperat de cleanup după o întrerupere;\r\n- test dedicat acoperă prefixul nou.\r\n\r\nNeschimbat:\r\n- rankingul de producție;\r\n- formula ALS/conținut;\r\n- full-catalog-retrieval-v4.14.0;\r\n- retrieval-shadow-v4.14.0;\r\n- full-catalog-evaluation-v4.14.0;\r\n- SQLite schema v12;\r\n- backup profil v5.\r\n\r\nVersiune aplicație: 4.14.1.",
+  "publishedAt": "2026-09-26T16:48:01.5967307Z",
   "channel": "stable",
   "package": "onedir-zip"
 }
