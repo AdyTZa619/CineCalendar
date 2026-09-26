@@ -72,6 +72,8 @@ class AvailabilityGuardMixinV37:
 def availability_engine_class(base_cls: type) -> type:
     if not issubclass(base_cls, FastRecommendationEngineV16):
         raise TypeError("availability guard requires a V16-compatible engine")
+    if issubclass(base_cls, AvailabilityGuardMixinV37):
+        return base_cls
     with _CLASS_LOCK:
         cached = _CLASS_CACHE.get(base_cls)
         if cached is not None:
