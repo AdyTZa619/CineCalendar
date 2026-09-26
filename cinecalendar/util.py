@@ -113,8 +113,12 @@ class AppPaths:
         if override:
             root = Path(override).expanduser().resolve()
         else:
-            base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd().resolve()
-            root = base / "CineCalendarData"
+            from .v5_alpha_runtime import alpha_data_root, is_v5_alpha
+            if is_v5_alpha():
+                root = alpha_data_root()
+            else:
+                base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd().resolve()
+                root = base / "CineCalendarData"
         data = root / "data"
         logs = root / "logs"
         cache = root / "cache"
