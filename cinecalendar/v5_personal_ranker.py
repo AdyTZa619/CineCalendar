@@ -42,11 +42,22 @@ class PersonalUtilityRankerV5:
         }
 
     def state_token(self):
+        """Invalidate training on both rating changes and factual metadata enrichment."""
         with self.db.connect() as con:
             row = con.execute(
-                "SELECT COUNT(*),COALESCE(MAX(updated_at),''),COALESCE(MAX(date_rated),'') FROM ratings"
+                """SELECT COUNT(*) AS rating_count,
+                          COALESCE(MAX(r.updated_at),'') AS rating_updated,
+                          COALESCE(MAX(r.date_rated),'') AS rating_date,
+                          COALESCE(MAX(m.updated_at),'') AS rated_metadata_updated
+                   FROM ratings r JOIN movies m ON m.id=r.movie_id"""
             ).fetchone()
-        return V5_RANKER_VERSION, int(row[0] or 0), str(row[1] or ""), str(row[2] or "")
+        return (
+            V5_RANKER_VERSION,
+            int(row["rating_count"] or 0),
+            str(row["rating_updated"] or ""),
+            str(row["rating_date"] or ""),
+            str(row["rated_metadata_updated"] or ""),
+        )
 
     @staticmethod
     def _sigmoid(z: float) -> float:
