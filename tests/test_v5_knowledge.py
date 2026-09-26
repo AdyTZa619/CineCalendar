@@ -135,5 +135,9 @@ def test_metadata_doctor_reprioritizes_v5_taste_boundary_automatically():
     from pathlib import Path
     root=Path(__file__).resolve().parents[1]
     source=(root/"cinecalendar"/"qt_ui.py").read_text(encoding="utf-8")
-    assert "V5KnowledgeBase(self.db).seed_profile(informative_only=True)" in source
+    assert "V5KnowledgeBase(self.db)" in source
+    assert "seed_profile(informative_only=True)" in source
+    assert "batch_limit = 50 if not silent else 24" in source
+    assert "batch_limit = 25 if not silent else 8" in source
+    assert "V5 — datele profilului personal" in source
     assert "process_metadata_queue(" in source
