@@ -139,17 +139,38 @@ class V5KnowledgeBase:
         return V5KnowledgeBase._has_json_values(row["countries_json"])
 
     @staticmethod
-    def _priority(rating: int) -> int:
+    def _priority(rating: int, *, class_coverage: float = 1.0, missing_count: int = 0) -> int:
+        """Prioritize information gain, not positive ratings.
+
+        Positive and negative extremes start from comparable bases. The class with poorer
+        premise/country coverage receives a larger acquisition boost, so Metadata Doctor learns
+        the user's rejection boundary instead of spending most of its budget on already-better-
+        documented favourites.
+        """
         rating = int(rating)
+        coverage = max(0.0, min(1.0, float(class_coverage)))
+        deficit_boost = int(round((1.0 - coverage) * 420.0))
+        missing_boost = min(60, max(0, int(missing_count)) * 12)
         if rating >= 9:
-            return 1700 + min(20, rating * 2)
-        if rating == 8:
-            return 1640
-        if rating <= 2:
-            return 1680 + (2 - rating) * 5
-        if rating <= 4:
-            return 1600 + (5 - rating) * 8
-        return 1300
+            base = 1660 + min(20, (rating - 8) * 10)
+        elif rating == 8:
+            base = 1625
+        elif rating <= 2:
+            base = 1660 + min(20, (3 - rating) * 10)
+        elif rating <= 4:
+            base = 1625 + (4 - rating) * 10
+        else:
+            base = 1300
+        return base + deficit_boost + missing_boost
+
+    @classmethod
+    def _class_coverage(cls, rows) -> tuple[float, float]:
+        rows = list(rows)
+        if not rows:
+            return 1.0, 1.0
+        semantic = sum(cls._semantic_present(row) for row in rows) / len(rows)
+        country = sum(cls._country_present(row) for row in rows) / len(rows)
+        return float(semantic), float(country)
 
     def _rated_rows(self):
         with self.db.connect() as con:
@@ -173,7 +194,15 @@ class V5KnowledgeBase:
         5-7 titles are useful later, but they must not consume provider budget before V5 knows the
         user's decision boundary. Zero limit means all rows in the selected class.
         """
-        rows = list(self._rated_rows())
+        all_rows = list(self._rated_rows())
+        positive_rows = [row for row in all_rows if int(row["rating"]) >= 8]
+        negative_rows = [row for row in all_rows if int(row["rating"]) <= 4]
+        pos_sem, pos_country = self._class_coverage(positive_rows)
+        neg_sem, neg_country = self._class_coverage(negative_rows)
+        positive_coverage = min(pos_sem, pos_country)
+        negative_coverage = min(neg_sem, neg_country)
+
+        rows = list(all_rows)
         if informative_only:
             rows = [row for row in rows if int(row["rating"]) >= 8 or int(row["rating"]) <= 4]
         if int(limit) > 0:
@@ -199,10 +228,20 @@ class V5KnowledgeBase:
             if not any(field in missing for field in ("genres","directors","countries","overview","runtime")):
                 continue
             rating = int(row["rating"])
+            if rating >= 8:
+                class_coverage = positive_coverage
+            elif rating <= 4:
+                class_coverage = negative_coverage
+            else:
+                class_coverage = 1.0
             payloads.append(
                 (
                     int(row["id"]),
-                    self._priority(rating),
+                    self._priority(
+                        rating,
+                        class_coverage=class_coverage,
+                        missing_count=len(missing),
+                    ),
                     self.PROFILE_REASON,
                     json_dumps(missing),
                     now,
@@ -237,6 +276,13 @@ class V5KnowledgeBase:
             "informative_only": bool(informative_only),
             "considered_missing": len(payloads),
             "queued_or_reprioritized": len(payloads),
+            "positive_coverage": round(positive_coverage, 6),
+            "negative_coverage": round(negative_coverage, 6),
+            "priority_focus": (
+                "negative" if negative_coverage + 1e-9 < positive_coverage
+                else "positive" if positive_coverage + 1e-9 < negative_coverage
+                else "balanced"
+            ),
         }
 
     def queue_frontier(self, movie_ids: Iterable[int], *, limit: int = 240) -> int:
