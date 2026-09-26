@@ -107,6 +107,16 @@ jobs:
           PYTHONPATH: .
         run: python scripts/benchmark_v431.py
 
+      - name: Package replay source bundle
+        shell: pwsh
+        run: |
+          $model = 'cinecalendar-als-ml32m-v1.npz'
+          Invoke-WebRequest -Uri 'https://github.com/AdyTZa619/CineCalendar/releases/download/cinecalendar-als-ml32m-v1/cinecalendar-als-ml32m-v1.npz' -OutFile $model
+          $sha = (Get-FileHash $model -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne '39afb93e3d154a3ad4ef665f6cafaeb9ad0868818c8dd4eb660eba13a157a1c6') { throw "ALS model SHA mismatch: $sha" }
+          $items = @('cinecalendar','scripts','collaborative-model.json','requirements.txt','requirements-dev.txt',$model)
+          Compress-Archive -Path $items -DestinationPath 'CineCalendar-4.14.0-replay-source.zip' -Force
+
       - name: Build fast portable folder
         shell: pwsh
         run: |
@@ -177,6 +187,7 @@ jobs:
           path: |
             dist/CineCalendar/**
             ${{ steps.package.outputs.zip_name }}
+            CineCalendar-4.14.0-replay-source.zip
           if-no-files-found: error
           retention-days: 30
 
