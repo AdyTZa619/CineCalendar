@@ -33,6 +33,10 @@ jobs:
         run: |
           $required = @(
             'launcher.py',
+            'launcher_v5_alpha.py',
+            'cinecalendar\v5_alpha_runtime.py',
+            'cinecalendar\v5_lab.py',
+            'cinecalendar\v5_online_discovery.py',
             'cinecalendar\recommendation.py',
             'cinecalendar\recommender_v3.py',
             'cinecalendar\recommender_v10.py',
@@ -177,6 +181,76 @@ jobs:
           path: |
             dist/CineCalendar/**
             ${{ steps.package.outputs.zip_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build V5 Alpha portable folder
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar-V5-Alpha --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit launcher_v5_alpha.py
+          $exe = 'dist\CineCalendar-V5-Alpha\CineCalendar-V5-Alpha.exe'
+          if (!(Test-Path $exe)) { throw 'V5 Alpha EXE was not created' }
+          $b = [IO.File]::ReadAllBytes($exe)
+          if ($b.Length -lt 2 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw 'V5 Alpha is not a Windows PE executable' }
+          if (!(Test-Path 'dist\CineCalendar-V5-Alpha\_internal')) { throw 'V5 Alpha _internal folder missing' }
+          Copy-Item 'MOVIELENS_MODEL_NOTICE.txt' 'dist\CineCalendar-V5-Alpha\MOVIELENS_MODEL_NOTICE.txt' -Force
+          Write-Host "V5 Alpha EXE bytes: $($b.Length)"
+          Write-Host "V5 Alpha folder bytes: $((Get-ChildItem 'dist\CineCalendar-V5-Alpha' -Recurse -File | Measure-Object Length -Sum).Sum)"
+
+      - name: Smoke launch V5 Alpha
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $env:CINECALENDAR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'cinecalendar-v5-alpha-smoke-data'
+          $env:CINECALENDAR_V5_ALPHA_ALLOW_EMPTY = '1'
+          if (Test-Path $env:CINECALENDAR_DATA_DIR) { Remove-Item $env:CINECALENDAR_DATA_DIR -Recurse -Force }
+          $p = Start-Process -FilePath '.\dist\CineCalendar-V5-Alpha\CineCalendar-V5-Alpha.exe' -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) {
+            if ($p.ExitCode -ne 0) { throw "V5 Alpha app exited with $($p.ExitCode)" }
+          } else {
+            Stop-Process -Id $p.Id -Force
+          }
+          $db = Join-Path $env:CINECALENDAR_DATA_DIR 'data\cinecalendar.db'
+          if (!(Test-Path $db)) { throw 'V5 Alpha smoke DB was not created in isolated data root' }
+
+      - name: Package V5 Alpha portable build
+        if: github.event_name == 'pull_request'
+        id: package_v5_alpha
+        shell: pwsh
+        run: |
+          $readme = @"
+          CineCalendar V5 Alpha — test separat
+
+          IMPORTANT:
+          - NU înlocui CineCalendar 4.14.1 Stable.
+          - Dezarhivează acest folder fie în folderul Stable, fie lângă folderul Stable.
+          - Pornește CineCalendar-V5-Alpha.exe.
+          - La prima pornire, Alpha caută CineCalendarData\data\cinecalendar.db și creează o copie SQLite proprie în CineCalendarV5AlphaData.
+          - Baza Stable este deschisă doar pentru snapshot și NU este modificată de Alpha.
+          - Updaterul Stable este dezactivat în acest build.
+          - Recomandările rulează motorul V5 Lab real, cu retrieval local + discovery online cache-uit.
+          - Metadata Doctor îmbogățește copia profilului V5 și arată separat acoperirea ratingurilor 8–10 și 1–4.
+          - Dacă baza Stable nu este găsită, Alpha se oprește în loc să creeze în tăcere un profil gol.
+          "@
+          $readme | Set-Content -Encoding utf8NoBOM 'dist\CineCalendar-V5-Alpha\README-V5-ALPHA.txt'
+          $zipName = 'CineCalendar-V5-Alpha-Windows-x64.zip'
+          Compress-Archive -Path 'dist\CineCalendar-V5-Alpha\*' -DestinationPath $zipName -Force
+          $sha = (Get-FileHash $zipName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "V5 Alpha ZIP: $zipName"
+          Write-Host "V5 Alpha ZIP bytes: $((Get-Item $zipName).Length)"
+          Write-Host "V5 Alpha ZIP SHA-256: $sha"
+          "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          "zip_sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'pull_request'
+        with:
+          name: CineCalendar-V5-Alpha-Windows-x64
+          path: |
+            dist/CineCalendar-V5-Alpha/**
+            ${{ steps.package_v5_alpha.outputs.zip_name }}
           if-no-files-found: error
           retention-days: 30
 
