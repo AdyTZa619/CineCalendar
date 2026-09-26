@@ -14,10 +14,16 @@ V5_KNOWLEDGE_VERSION = "v5-knowledge-alpha1"
 class V5KnowledgeReport:
     rated_total: int
     informative_total: int
+    positive_total: int
+    negative_total: int
     semantic_total: int
     country_total: int
     informative_semantic: int
     informative_country: int
+    positive_semantic: int
+    positive_country: int
+    negative_semantic: int
+    negative_country: int
     queued_profile: int
     open_profile_jobs: int
 
@@ -37,14 +43,37 @@ class V5KnowledgeReport:
     def informative_country_coverage(self) -> float:
         return self.informative_country / self.informative_total if self.informative_total else 0.0
 
+    @staticmethod
+    def _coverage(have: int, total: int) -> float:
+        return have / total if total else 0.0
+
+    @property
+    def positive_semantic_coverage(self) -> float:
+        return self._coverage(self.positive_semantic, self.positive_total)
+
+    @property
+    def positive_country_coverage(self) -> float:
+        return self._coverage(self.positive_country, self.positive_total)
+
+    @property
+    def negative_semantic_coverage(self) -> float:
+        return self._coverage(self.negative_semantic, self.negative_total)
+
+    @property
+    def negative_country_coverage(self) -> float:
+        return self._coverage(self.negative_country, self.negative_total)
+
     @property
     def ready_for_rich_ranker(self) -> bool:
-        # Rich V5 learning is not allowed to claim readiness while most positive/negative
-        # examples still have no premise/country information.
+        # Never let abundant positive examples hide an empty negative boundary (or vice versa).
+        # Both sides must independently have enough factual premise/country coverage.
         return (
-            self.informative_total >= 300
-            and self.informative_semantic_coverage >= 0.70
-            and self.informative_country_coverage >= 0.70
+            self.positive_total >= 200
+            and self.negative_total >= 100
+            and self.positive_semantic_coverage >= 0.70
+            and self.positive_country_coverage >= 0.70
+            and self.negative_semantic_coverage >= 0.70
+            and self.negative_country_coverage >= 0.70
         )
 
     def as_dict(self) -> dict:
@@ -52,6 +81,8 @@ class V5KnowledgeReport:
             "version": V5_KNOWLEDGE_VERSION,
             "rated_total": self.rated_total,
             "informative_total": self.informative_total,
+            "positive_total": self.positive_total,
+            "negative_total": self.negative_total,
             "semantic_total": self.semantic_total,
             "country_total": self.country_total,
             "informative_semantic": self.informative_semantic,
@@ -60,6 +91,14 @@ class V5KnowledgeReport:
             "country_coverage": round(self.country_coverage, 6),
             "informative_semantic_coverage": round(self.informative_semantic_coverage, 6),
             "informative_country_coverage": round(self.informative_country_coverage, 6),
+            "positive_semantic": self.positive_semantic,
+            "positive_country": self.positive_country,
+            "negative_semantic": self.negative_semantic,
+            "negative_country": self.negative_country,
+            "positive_semantic_coverage": round(self.positive_semantic_coverage, 6),
+            "positive_country_coverage": round(self.positive_country_coverage, 6),
+            "negative_semantic_coverage": round(self.negative_semantic_coverage, 6),
+            "negative_country_coverage": round(self.negative_country_coverage, 6),
             "queued_profile": self.queued_profile,
             "open_profile_jobs": self.open_profile_jobs,
             "ready_for_rich_ranker": self.ready_for_rich_ranker,
@@ -225,11 +264,17 @@ class V5KnowledgeBase:
     def report(self) -> V5KnowledgeReport:
         rows = list(self._rated_rows())
         rated_total = len(rows)
-        informative = [row for row in rows if int(row["rating"]) >= 8 or int(row["rating"]) <= 4]
+        positive = [row for row in rows if int(row["rating"]) >= 8]
+        negative = [row for row in rows if int(row["rating"]) <= 4]
+        informative = positive + negative
         semantic_total = sum(self._semantic_present(row) for row in rows)
         country_total = sum(self._country_present(row) for row in rows)
         informative_semantic = sum(self._semantic_present(row) for row in informative)
         informative_country = sum(self._country_present(row) for row in informative)
+        positive_semantic = sum(self._semantic_present(row) for row in positive)
+        positive_country = sum(self._country_present(row) for row in positive)
+        negative_semantic = sum(self._semantic_present(row) for row in negative)
+        negative_country = sum(self._country_present(row) for row in negative)
         with self.db.connect() as con:
             queued = int(
                 con.execute(
@@ -249,10 +294,16 @@ class V5KnowledgeBase:
         return V5KnowledgeReport(
             rated_total=rated_total,
             informative_total=len(informative),
+            positive_total=len(positive),
+            negative_total=len(negative),
             semantic_total=semantic_total,
             country_total=country_total,
             informative_semantic=informative_semantic,
             informative_country=informative_country,
+            positive_semantic=positive_semantic,
+            positive_country=positive_country,
+            negative_semantic=negative_semantic,
+            negative_country=negative_country,
             queued_profile=queued,
             open_profile_jobs=open_jobs,
         )
