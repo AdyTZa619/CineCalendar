@@ -13,7 +13,7 @@ def test_acceptance_mode_runs_before_normal_service_and_updater_startup():
     source = inspect.getsource(app.main)
     assert "_personal_acceptance_startup(sys.argv)" in source
     assert source.index("_personal_acceptance_startup(sys.argv)") < source.index("parse_special_startup(sys.argv)")
-    assert source.index("_personal_acceptance_startup(sys.argv)") < source.index("SingleInstanceGuard()")
+    assert source.index("_personal_acceptance_startup(sys.argv)") < source.index("SingleInstanceGuard(")
 
 
 def test_packaged_entrypoint_has_explicit_private_audit_flag():
