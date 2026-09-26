@@ -1,5 +1,16 @@
 # CineCalendar
 
+## 4.14.0 — evaluare corectă a full-catalog challengerului
+
+- challengerul v4.14 poate folosi direct combinațiile deja învățate, precum regizor+gen și gen+decadă, în loc să le selecteze și apoi să le ignore la retrieval;
+- shadow-ul live este tratat explicit ca dovadă observațională, deoarece filmele challengerului ascuns nu au aceeași expunere ca recomandările afișate;
+- rezultatele live sunt limitate la o fereastră de 120 zile, deduplicate pe film și comparate run-by-run numai când ambele părți au rezultat real;
+- rulările vechi 4.13 nu validează challengerul 4.14;
+- intervalele bootstrap arată incertitudinea diferenței de rating și a ratei de filme apreciate;
+- promovarea din shadow live este blocată explicit;
+- replay-ul temporal offline ascunde toate ratingurile viitoare, reconstruiește profilul istoric și testează o injecție conservatoare de 15% la același buget de candidați;
+- replay-ul raportează recall 8+/9+, NDCG și expunerea filmelor slab evaluate, dar nu schimbă automat motorul activ.
+
 ## 4.13.0 — Full-catalog retrieval în shadow mode
 
 - un challenger local caută filmele fără mapping MovieLens/ALS în întreg catalogul disponibil;

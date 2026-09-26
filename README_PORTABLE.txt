@@ -1,4 +1,11 @@
-CineCalendar Premium 4.13.0 — Windows 10/11 x64
+CineCalendar Premium 4.14.0 — Windows 10/11 x64
+
+NOU ÎN 4.14.0 — FULL-CATALOG EVALUATION
+- combinațiile de gust deja învățate pot genera direct candidați în challengerul shadow;
+- rezultatele shadow live sunt comparate numai în ferestre temporale finite și sunt marcate ca observaționale;
+- challengerul ascuns nu poate fi promovat doar pentru că a strâns suficiente ratinguri;
+- replay-ul temporal offline poate compara baseline-ul cu o injecție conservatoare full-catalog fără leakage din ratingurile viitoare;
+- recomandările afișate și formula activă rămân neschimbate până la dovezi istorice stabile.
 
 NOU ÎN 4.13.0 — FULL-CATALOG SHADOW RETRIEVAL
 - caută separat filmele fără mapping MovieLens/ALS folosind gustul învățat din ratingurile tale;
