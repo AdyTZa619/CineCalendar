@@ -129,3 +129,11 @@ def test_v5_priority_missing_fields_increase_information_gain_priority():
     sparse=V5KnowledgeBase._priority(2,class_coverage=0.2,missing_count=5)
     almost_complete=V5KnowledgeBase._priority(2,class_coverage=0.2,missing_count=1)
     assert sparse > almost_complete
+
+
+def test_metadata_doctor_reprioritizes_v5_taste_boundary_automatically():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]
+    source=(root/"cinecalendar"/"qt_ui.py").read_text(encoding="utf-8")
+    assert "V5KnowledgeBase(self.db).seed_profile(informative_only=True)" in source
+    assert "process_metadata_queue(" in source
