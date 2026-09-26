@@ -8,7 +8,7 @@ def test_v5_fusion_is_non_destructive_and_prefers_consensus():
         "als": [5, 6, 7],
         "favorites": [5, 8],
         "local_content": [5, 9],
-        "full_catalog": [10, 5],
+        "catalog_content": [10, 5],
     }
     merged, evidence = UnifiedCandidateRetrieverV5.fuse(baseline, lanes, extra_limit=3)
     assert merged[:4] == baseline
@@ -21,7 +21,7 @@ def test_v5_fusion_never_removes_baseline_when_extra_budget_zero():
     baseline = [10, 20, 30]
     merged, evidence = UnifiedCandidateRetrieverV5.fuse(
         baseline,
-        {"als": [40], "full_catalog": [50]},
+        {"als": [40], "catalog_content": [50]},
         extra_limit=0,
     )
     assert merged == baseline
