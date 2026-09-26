@@ -147,3 +147,23 @@ def ensure_alpha_database(alpha_root: Path) -> dict:
         "target": str(target),
         "source": str(source),
     }
+
+
+def show_alpha_startup_error(message: str) -> None:
+    text = str(message or "V5 Alpha nu a putut porni.")
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                text,
+                "CineCalendar V5 Alpha",
+                0x00000010,
+            )
+            return
+        except Exception:
+            pass
+    try:
+        sys.stderr.write(text + "\n")
+    except Exception:
+        pass
