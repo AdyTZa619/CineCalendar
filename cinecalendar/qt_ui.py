@@ -49,6 +49,7 @@ from .romanian_films import romanian_chapters, romanian_films
 from .tmdb import TmdbProvider, enrich_library
 from .util import json_loads
 from .v5_knowledge import V5KnowledgeBase
+from .v5_online_discovery import V5OnlineDiscovery
 from .watcher import RatingsFolderWatcher
 
 
@@ -474,10 +475,17 @@ class CineCalendarWindow(QMainWindow):
             # factual premise/country coverage automatically during normal app use.
             V5KnowledgeBase(self.db).seed_profile(informative_only=True)
             seed_metadata_queue(self.db, limit=500 if not silent else 250)
-            return process_metadata_queue(
+            result = process_metadata_queue(
                 self.db, token, limit=25 if not silent else 12,
                 force=not silent, progress=progress,
             )
+            try:
+                # Open-world V5 discovery is rate-limited internally to one refresh per 24h.
+                # It runs in this worker, never in the recommendation UI path.
+                V5OnlineDiscovery(self.db).refresh(force=False)
+            except Exception as exc:
+                self.s.log.warning("V5 online discovery refresh failed: %s", exc)
+            return result
 
         worker = WorkerThread(fn, self)
         self.metadata_queue_worker = worker
