@@ -12,6 +12,7 @@ from .util import identity_key, json_dumps, normalize_text, utcnow_iso
 
 V5_ONLINE_DISCOVERY_VERSION = "v5-online-discovery-alpha1"
 _DISCOVERY_IDS_SETTING = "v5_online_discovery_first_seen"
+_DISCOVERY_SCORES_SETTING = "v5_online_discovery_scores"
 _LAST_RUN_SETTING = "v5_online_discovery_last_run"
 
 
@@ -54,6 +55,33 @@ class V5OnlineDiscovery:
                 out[movie_id] = str(value)
         return out
 
+    def _scores(self) -> dict[int, float]:
+        raw = self.db.get_setting(_DISCOVERY_SCORES_SETTING, {}) or {}
+        if not isinstance(raw, dict):
+            return {}
+        out = {}
+        for key, value in raw.items():
+            try:
+                movie_id = int(key)
+                score = float(value)
+            except (TypeError, ValueError):
+                continue
+            if movie_id > 0:
+                out[movie_id] = score
+        return out
+
+    def state_token(self) -> tuple:
+        with self.db.connect() as con:
+            rows = con.execute(
+                """SELECT key,updated_at FROM settings
+                   WHERE key IN (?,?,?) ORDER BY key""",
+                (_DISCOVERY_IDS_SETTING, _DISCOVERY_SCORES_SETTING, _LAST_RUN_SETTING),
+            ).fetchall()
+        return (
+            V5_ONLINE_DISCOVERY_VERSION,
+            tuple((str(row["key"]), str(row["updated_at"] or "")) for row in rows),
+        )
+
     def cached_candidate_ids(self, when: date | None = None, limit: int = 300) -> list[int]:
         first_seen = self._first_seen()
         if not first_seen:
@@ -81,6 +109,7 @@ class V5OnlineDiscovery:
                     rows_by_id[int(row["id"])] = row
 
         cutoff = when.isoformat() if when is not None else ""
+        scores = self._scores()
         eligible = []
         for movie_id, seen_at in first_seen.items():
             row = rows_by_id.get(movie_id)
@@ -95,10 +124,10 @@ class V5OnlineDiscovery:
                     continue
                 if year is not None and year > when.year:
                     continue
-            eligible.append((str(seen_at), movie_id))
-        # Newer discovery evidence first; fusion still decides final cross-lane priority.
+            eligible.append((float(scores.get(movie_id, 0.0)), str(seen_at), movie_id))
+        # Consensus across favourite anchors is the primary within-lane signal.
         eligible.sort(reverse=True)
-        return [movie_id for _seen, movie_id in eligible[: max(0, int(limit))]]
+        return [movie_id for _score, _seen, movie_id in eligible[: max(0, int(limit))]]
 
     def _anchors(self, limit: int) -> list[int]:
         with self.db.connect() as con:
@@ -239,6 +268,19 @@ class V5OnlineDiscovery:
             row = con.execute("SELECT id FROM movies WHERE imdb_id=?", (imdb_id,)).fetchone()
         return int(row["id"]) if row is not None else None
 
+    def _eligible_movie_id(self, movie_id: int) -> bool:
+        with self.db.connect() as con:
+            row = con.execute(
+                """SELECT
+                     CASE WHEN EXISTS(SELECT 1 FROM ratings r WHERE r.movie_id=?) THEN 1 ELSE 0 END AS rated,
+                     CASE WHEN EXISTS(
+                       SELECT 1 FROM feedback f WHERE f.movie_id=?
+                        AND f.kind IN ('not_interested','seen','never_similar')
+                     ) THEN 1 ELSE 0 END AS blocked""",
+                (int(movie_id), int(movie_id)),
+            ).fetchone()
+        return bool(row is not None and not int(row["rated"] or 0) and not int(row["blocked"] or 0))
+
     def refresh(
         self,
         *,
@@ -306,6 +348,7 @@ class V5OnlineDiscovery:
         ranked = sorted(evidence, key=lambda mid: evidence[mid], reverse=True)
         now = utcnow_iso()
         first_seen = self._first_seen()
+        scores = self._scores()
         imported = 0
         accepted = 0
         for tmdb_id in ranked:
@@ -316,16 +359,21 @@ class V5OnlineDiscovery:
                 movie_id = self._upsert_details(details)
             except Exception:
                 continue
-            if not movie_id:
+            if not movie_id or not self._eligible_movie_id(movie_id):
                 continue
             accepted += 1
             if movie_id not in first_seen:
                 first_seen[movie_id] = now
                 imported += 1
+            scores[movie_id] = max(float(scores.get(movie_id, 0.0)), float(evidence.get(tmdb_id, 0.0)))
 
         self.db.set_setting(
             _DISCOVERY_IDS_SETTING,
             {str(movie_id): seen for movie_id, seen in first_seen.items()},
+        )
+        self.db.set_setting(
+            _DISCOVERY_SCORES_SETTING,
+            {str(movie_id): score for movie_id, score in scores.items()},
         )
         self.db.set_setting(_LAST_RUN_SETTING, now)
         self._status = {
