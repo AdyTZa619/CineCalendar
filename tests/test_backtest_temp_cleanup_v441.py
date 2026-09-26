@@ -56,6 +56,15 @@ def test_managed_workspace_cleans_after_normal_exit(tmp_path):
     assert not created.exists()
 
 
+def test_full_catalog_replay_workspace_is_managed_and_cleaned(tmp_path):
+    with managed_temp_workspace("cinecalendar-fullcatalog414-", temp_root=tmp_path) as workspace:
+        assert workspace.is_dir()
+        assert (workspace / OWNER_FILE).is_file()
+        created = workspace
+
+    assert not created.exists()
+
+
 def test_startup_cleanup_removes_abandoned_but_preserves_active_and_recent_legacy(
     tmp_path,
     monkeypatch,

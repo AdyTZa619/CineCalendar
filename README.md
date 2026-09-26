@@ -1,5 +1,12 @@
 # CineCalendar
 
+## 4.14.1 — replay istoric reparat
+
+- Historical Replay poate crea acum workspace-ul temporar administrat `cinecalendar-fullcatalog414-`;
+- cleanup-ul de startup recunoaște același prefix și poate elimina în siguranță workspaces abandonate;
+- test dedicat verifică atât crearea, cât și ștergerea workspace-ului;
+- motorul de recomandare, formula 70/30 și evaluatorul 4.14 rămân neschimbate.
+
 ## 4.14.0 — evaluare corectă a full-catalog challengerului
 
 - challengerul v4.14 poate folosi direct combinațiile deja învățate, precum regizor+gen și gen+decadă, în loc să le selecteze și apoi să le ignore la retrieval;

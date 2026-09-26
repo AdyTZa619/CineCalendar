@@ -15,6 +15,7 @@ MANAGED_PREFIXES = (
     "cinecalendar-backtest-",
     "cinecalendar-rolling37-",
     "cinecalendar-v431-bench-",
+    "cinecalendar-fullcatalog414-",
 )
 LEGACY_GRACE_SECONDS = 30 * 60
 MAX_OWNED_AGE_SECONDS = 24 * 60 * 60
