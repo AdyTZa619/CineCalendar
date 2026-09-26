@@ -807,11 +807,16 @@ class PremiumDecisionWindow(DecisionWindow):
             challenger=dict(shadow.get("challenger") or {})
             rated=int(challenger.get("rated",0) or 0)
             minimum=int(shadow.get("minimum_challenger_ratings",20) or 20)
+            paired=dict(shadow.get("paired") or {})
+            paired_runs=int(paired.get("runs",0) or 0)
+            minimum_paired=int(shadow.get("minimum_paired_runs",8) or 8)
             generator=dict(shadow.get("generator") or {})
             found=int(generator.get("non_als_candidates",generator.get("candidate_count",0)) or 0)
             shadow_note=QLabel(
-                f"Nu schimbă lista afișată. {runs} comparații salvate • {found} candidați fără ALS găsiți • "
-                f"{rated}/{minimum} rezultate challenger înainte de analiza offline."
+                f"Nu schimbă lista afișată. {runs} comparații v4.14 • {found} candidați fără ALS • "
+                f"{rated}/{minimum} rezultate challenger • {paired_runs}/{minimum_paired} rulări comparabile. "
+                "Shadow-ul live este observațional: challengerul ascuns nu are aceeași expunere, "
+                "deci nu poate fi promovat numai din aceste rezultate."
             )
             shadow_note.setObjectName("Muted"); shadow_note.setWordWrap(True); layout.addWidget(shadow_note)
 
