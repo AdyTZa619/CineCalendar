@@ -337,13 +337,27 @@ class V5OnlineDiscovery:
 
         provider = self.provider_factory(self.db, token)
         evidence = defaultdict(float)
+        anchor_successes = 0
         for anchor in anchors:
             try:
                 related = provider.related_movie_ids(anchor, limit=max(1, int(related_per_anchor)))
             except Exception:
                 continue
+            anchor_successes += 1
             for rank, tmdb_id in enumerate(related, 1):
                 evidence[int(tmdb_id)] += 1.0 / (20.0 + rank)
+
+        if anchor_successes <= 0:
+            self._status = {
+                "version": V5_ONLINE_DISCOVERY_VERSION,
+                "state": "provider_unavailable",
+                "anchors": len(anchors),
+                "anchor_successes": 0,
+                "discovered": 0,
+                "imported": 0,
+                "cached": len(self._first_seen()),
+            }
+            return dict(self._status)
 
         ranked = sorted(evidence, key=lambda mid: evidence[mid], reverse=True)
         now = utcnow_iso()
@@ -351,11 +365,13 @@ class V5OnlineDiscovery:
         scores = self._scores()
         imported = 0
         accepted = 0
+        detail_successes = 0
         for tmdb_id in ranked:
             if accepted >= max(1, int(import_limit)):
                 break
             try:
                 details = provider.movie_details_by_tmdb(tmdb_id)
+                detail_successes += 1
                 movie_id = self._upsert_details(details)
             except Exception:
                 continue
@@ -366,6 +382,18 @@ class V5OnlineDiscovery:
                 first_seen[movie_id] = now
                 imported += 1
             scores[movie_id] = max(float(scores.get(movie_id, 0.0)), float(evidence.get(tmdb_id, 0.0)))
+
+        if ranked and detail_successes <= 0:
+            self._status = {
+                "version": V5_ONLINE_DISCOVERY_VERSION,
+                "state": "provider_unavailable",
+                "anchors": len(anchors),
+                "anchor_successes": anchor_successes,
+                "discovered": len(ranked),
+                "imported": 0,
+                "cached": len(first_seen),
+            }
+            return dict(self._status)
 
         self.db.set_setting(
             _DISCOVERY_IDS_SETTING,
@@ -380,6 +408,7 @@ class V5OnlineDiscovery:
             "version": V5_ONLINE_DISCOVERY_VERSION,
             "state": "ready",
             "anchors": len(anchors),
+            "anchor_successes": anchor_successes,
             "discovered": len(ranked),
             "accepted": accepted,
             "imported": imported,
