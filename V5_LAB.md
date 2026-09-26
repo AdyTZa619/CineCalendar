@@ -27,3 +27,31 @@ V5 must beat the current V16 baseline on the same temporal windows. Promotion re
 - acceptable runtime on the 260k-catalog benchmark.
 
 A component that looks promising on its own validation split but fails end-to-end replay remains in Lab.
+
+
+## Data foundation added in alpha1
+
+A real blocker showed up in the user's production database: the rating history has strong identity,
+genre and director coverage, but rich premise/country metadata is sparse. V5 therefore has a
+knowledge layer before any richer ranker is allowed to become active.
+
+- rated 8-10 and 1-4 titles receive the highest metadata priority;
+- the queue is persistent and uses the existing Metadata Doctor providers;
+- candidate-frontier titles are queued separately;
+- provider I/O remains bounded and resumable;
+- V5 reports factual coverage and keeps the rich ranker inactive until the informative examples
+  have enough premise/country coverage.
+
+This is model input quality, not poster polish.
+
+## Two complementary replay gates
+
+V5 keeps the non-overlapping rolling benchmark for broad regression/leakage protection, but it also
+adds date-aligned event replay. The latter hides the whole historical rating day and all later
+ratings, evaluates the engine on the actual date, then scores only that day's outcomes.
+
+This matters because CineCalendar is explicitly calendar-aware. A January recommendation should not
+be penalized for failing to rank a Christmas film the user watches eleven months later.
+
+Neither replay mode can promote code by itself; stable promotion requires agreement across the
+broad rolling guardrail and date-aligned decision replay.
