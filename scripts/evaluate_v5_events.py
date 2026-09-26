@@ -18,7 +18,7 @@ def main() -> int:
     parser.add_argument("--db",required=True)
     parser.add_argument("--days",type=int,default=12)
     parser.add_argument("--start-date",default="")
-    parser.add_argument("--candidate-limit",type=int,default=600)
+    parser.add_argument("--candidate-limit",type=int,default=FastRecommendationEngineV16.NORMAL_POOL)
     parser.add_argument("--final-limit",type=int,default=100)
     parser.add_argument("--als-timeout",type=float,default=180.0)
     parser.add_argument("--output",default="")
