@@ -44,6 +44,16 @@ knowledge layer before any richer ranker is allowed to become active.
 
 This is model input quality, not poster polish.
 
+## Open-world discovery
+
+The local IMDb-derived catalog is a fast index, not the universe of possible recommendations.
+V5 can refresh a bounded TMDb neighbourhood from highly rated anchors, import only candidates with
+a stable IMDb identity, persist minimal metadata, and then score them through the normal local
+pipeline. Recommendation requests never wait on the network: they consume only the cached lane.
+
+Online discovery is timestamped. Historical replay excludes candidates discovered after the replay
+date, so current TMDb relationships cannot be injected into past evaluations.
+
 Metadata acquisition is **coverage-aware**: positive and negative extremes start from comparable
 priority, then the less-documented class receives a deficit boost. On a profile where dislikes have
 far less premise/country coverage than favourites, Metadata Doctor therefore learns the rejection
