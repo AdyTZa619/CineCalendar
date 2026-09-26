@@ -473,10 +473,18 @@ class CineCalendarWindow(QMainWindow):
             # V5 knowledge acquisition reuses Metadata Doctor instead of creating another worker.
             # Reprioritize informative ratings first so the positive/negative taste boundary gains
             # factual premise/country coverage automatically during normal app use.
-            V5KnowledgeBase(self.db).seed_profile(informative_only=True)
+            knowledge = V5KnowledgeBase(self.db)
+            knowledge.seed_profile(informative_only=True)
+            readiness = knowledge.status()
             seed_metadata_queue(self.db, limit=500 if not silent else 250)
+            if bool(readiness.get("ready_for_rich_ranker")):
+                batch_limit = 25 if not silent else 8
+            else:
+                # While the 8-10 / 1-4 boundary is under-documented, spend more of the existing
+                # background provider budget on it. This is still bounded and runs off the UI thread.
+                batch_limit = 50 if not silent else 24
             result = process_metadata_queue(
-                self.db, token, limit=25 if not silent else 12,
+                self.db, token, limit=batch_limit,
                 force=not silent, progress=progress,
             )
             try:
@@ -536,6 +544,30 @@ class CineCalendarWindow(QMainWindow):
         )
         note.setWordWrap(True); note.setObjectName("Muted"); layout.addWidget(note)
         content.addWidget(summary)
+
+        v5_status = V5KnowledgeBase(self.db).status()
+        discovery_status = V5OnlineDiscovery(self.db).status()
+        pos_sem = float(v5_status.get("positive_semantic_coverage", 0.0) or 0.0) * 100.0
+        pos_country = float(v5_status.get("positive_country_coverage", 0.0) or 0.0) * 100.0
+        neg_sem = float(v5_status.get("negative_semantic_coverage", 0.0) or 0.0) * 100.0
+        neg_country = float(v5_status.get("negative_country_coverage", 0.0) or 0.0) * 100.0
+        v5_card = self.card(); v5_layout = QVBoxLayout(v5_card)
+        v5_title = QLabel("V5 — datele profilului personal"); v5_title.setObjectName("CardTitle"); v5_layout.addWidget(v5_title)
+        v5_state = QLabel(
+            f"8–10: semantică {pos_sem:.0f}% • țări {pos_country:.0f}%   |   "
+            f"1–4: semantică {neg_sem:.0f}% • țări {neg_country:.0f}%\n"
+            f"Joburi profil deschise: {int(v5_status.get('open_profile_jobs', 0) or 0)} • "
+            f"Discovery online în cache: {int(discovery_status.get('cached', 0) or 0)}"
+        )
+        v5_state.setWordWrap(True); v5_state.setObjectName("Muted"); v5_layout.addWidget(v5_state)
+        ready = bool(v5_status.get("ready_for_rich_ranker"))
+        v5_note = QLabel(
+            "Rankerul V5 bogat este pregătit pentru testare."
+            if ready else
+            "Rankerul V5 bogat rămâne blocat până când atât filmele apreciate, cât și cele respinse au suficiente date factuale."
+        )
+        v5_note.setWordWrap(True); v5_note.setObjectName("Muted"); v5_layout.addWidget(v5_note)
+        content.addWidget(v5_card)
 
         jobs = recent_metadata_jobs(self.db, limit=30)
         table = QTableWidget(len(jobs), 6)
