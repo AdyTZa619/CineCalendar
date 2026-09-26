@@ -11,12 +11,27 @@ from .recommender_v16 import FastRecommendationEngineV16
 from .temp_workspaces import cleanup_abandoned_workspaces
 from .util import AppPaths
 from .full_catalog_shadow_v414 import FullCatalogShadowEvaluatorV414
+from .v5_alpha_runtime import ensure_alpha_database, is_v5_alpha
+from .v5_lab import V5LabRecommendationEngine
 
 
 class CineCalendarService:
     def __init__(self, paths: AppPaths | None = None):
         self.paths = paths or AppPaths.portable()
+        self.v5_alpha = is_v5_alpha()
+        self.alpha_bootstrap = (
+            ensure_alpha_database(self.paths.root)
+            if self.v5_alpha
+            else {"state": "stable"}
+        )
         self.log = setup_logging(self.paths.logs)
+        if self.v5_alpha:
+            self.log.info(
+                "CineCalendar V5 Alpha runtime: database=%s source=%s state=%s",
+                self.alpha_bootstrap.get("target", ""),
+                self.alpha_bootstrap.get("source", ""),
+                self.alpha_bootstrap.get("state", ""),
+            )
         temp_cleanup = cleanup_abandoned_workspaces()
         if temp_cleanup["removed"] or temp_cleanup["failed"]:
             self.log.info(
@@ -34,10 +49,15 @@ class CineCalendarService:
         # 4.6 keeps the current validated engine and hybrid balance until stricter personal rolling
         # backtests have a verdict. Production and evaluation share the same canonical wrappers.
         self.quality_manager = RecommendationQualityManagerV47(self.db)
-        self.quality_manager.refresh_live_guard()
-        engine_cls = self.quality_manager.preferred_engine_class()
-        if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
-            engine_cls = FastRecommendationEngineV16
+        if self.v5_alpha:
+            # Alpha must exercise the real V5 retrieval/pipeline while keeping all proven
+            # production wrappers around it. Stable selection and rollback policy remain untouched.
+            engine_cls = V5LabRecommendationEngine
+        else:
+            self.quality_manager.refresh_live_guard()
+            engine_cls = self.quality_manager.preferred_engine_class()
+            if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
+                engine_cls = FastRecommendationEngineV16
 
         self.recommender = build_production_recommender(self.db, engine_cls, self.calendar)
         self.quality_manager.set_runtime_engine(self.recommender)
@@ -49,9 +69,10 @@ class CineCalendarService:
         )
         self.recommender.collaborative.start_background()
 
-        # Evaluation stays off the recommendation path. A new 3.7 decision becomes active only on
-        # a later launch, so a running session never changes its engine underneath the user.
-        self.quality_manager.start_background()
+        # Stable keeps its established quality-manager schedule. Alpha deliberately freezes that
+        # selector so its measurements are about V5, not a background switch to another engine.
+        if not self.v5_alpha:
+            self.quality_manager.start_background()
 
     def _defaults(self):
         # No global genre vetoes. Taste is learned from ratings instead of hard exclusions.
