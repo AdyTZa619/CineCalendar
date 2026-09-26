@@ -62,6 +62,10 @@ def test_v5_knowledge_report_measures_factual_readiness(tmp_path):
     assert status["country_total"] == 2
     assert status["informative_semantic"] == 1
     assert status["informative_country"] == 1
+    assert status["positive_total"] == 1
+    assert status["negative_total"] == 1
+    assert status["positive_semantic_coverage"] == 1.0
+    assert status["negative_semantic_coverage"] == 0.0
     assert status["ready_for_rich_ranker"] is False
 
 
