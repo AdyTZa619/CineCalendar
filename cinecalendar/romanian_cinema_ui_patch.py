@@ -19,11 +19,34 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         nav.insert(position, ("romanian", "Recomandări românești"))
         window_cls.NAV = nav
 
+    def _romanian_signature(self):
+        try:
+            with self.db.connect() as con:
+                ratings = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM ratings"
+                ).fetchone()
+                feedback = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(created_at),'') FROM feedback"
+                ).fetchone()
+            user_state = (int(ratings[0]), str(ratings[1]), int(feedback[0]), str(feedback[1]))
+        except Exception:
+            user_state = ()
+        try:
+            trial_mode = str(getattr(self.s.recommender, "mode", "") or "")
+        except Exception:
+            trial_mode = ""
+        return (date.today().isoformat(), user_state, trial_mode)
+
+    def _recalculate_romanian(self):
+        self.romanian_result = []
+        self.romanian_result_signature = None
+        self.show_page("romanian")
+
     def page_romanian(self):
         page, content = self.page_shell(
             "Recomandări românești",
             "Selecție personalizată din filme cu limba originală română. Nu trebuie să setezi nimic.",
-            [("Recalculează", lambda: self.show_page("romanian"), True)],
+            [("Recalculează", self._recalculate_romanian, True)],
         )
         self.romanian_content = content
         if self.catalog_count()[2] <= 0:
@@ -33,6 +56,12 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             text = QLabel("CineCalendar are nevoie de catalogul IMDb local înainte să poată intersecta filmele românești verificate cu titlurile nevăzute.")
             text.setObjectName("Muted"); text.setWordWrap(True); lay.addWidget(text)
             content.addWidget(box); content.addStretch(1)
+            return page
+
+        cached = list(getattr(self, "romanian_result", []) or [])
+        cached_signature = getattr(self, "romanian_result_signature", None)
+        if cached_signature == self._romanian_signature():
+            self._render_romanian(cached)
             return page
 
         content.addWidget(self.loading_panel(
@@ -57,6 +86,7 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         def success(recs):
             self.romanian_worker = None
             self.romanian_result = list(recs or [])
+            self.romanian_result_signature = self._romanian_signature()
             self.set_status("Selecția de cinema românesc este gata.", False)
             if self.current_page == "romanian":
                 self._render_romanian(self.romanian_result)
@@ -126,6 +156,8 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         content.addWidget(footer)
         content.addStretch(1)
 
+    window_cls._romanian_signature = _romanian_signature
+    window_cls._recalculate_romanian = _recalculate_romanian
     window_cls.page_romanian = page_romanian
     window_cls._load_romanian_async = _load_romanian_async
     window_cls._render_romanian = _render_romanian
