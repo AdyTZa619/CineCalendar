@@ -14,11 +14,16 @@ class FakeEngine:
         self.recs = list(recs)
         self.recommend_calls = 0
         self.decision_calls = 0
+        self.romanian_calls = 0
 
     def recommend(self, **kwargs):
         self.recommend_calls += 1
         count = int(kwargs.get("count", 3))
         return list(self.recs[:count])
+
+    def recommend_romanian(self, when=None, count=9):
+        self.romanian_calls += 1
+        return list(self.recs[: int(count)])
 
     def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
         self.decision_calls += 1
@@ -158,3 +163,31 @@ def test_explicit_invalidation_forces_a_fresh_pair(tmp_path):
 
     assert v16.recommend_calls == 2
     assert v5.recommend_calls == 2
+
+
+
+def test_romanian_lane_uses_same_frozen_v16_v5_pair(tmp_path):
+    db = Database(tmp_path / "trial-romanian.db")
+    _eligible(db)
+    v16 = FakeEngine([_rec(1, 0.76), _rec(2, 0.72), _rec(3, 0.68)])
+    v5 = FakeEngine([_rec(2, 0.81), _rec(1, 0.74), _rec(3, 0.69)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+
+    first = proxy.recommend_romanian(when=date(2026, 9, 28), count=3)
+    assert [r.movie.id for r in first] == [2, 1, 3]
+    assert v16.romanian_calls == 1
+    assert v5.romanian_calls == 1
+    assert first[0].score.score_factors["v5_trial_v16_rank"] == 2.0
+    assert first[0].score.score_factors["v5_trial_v5_rank"] == 1.0
+
+    proxy.set_mode(MODE_V16)
+    second = proxy.recommend_romanian(when=date(2026, 9, 28), count=3)
+    assert [r.movie.id for r in second] == [1, 2, 3]
+    assert v16.romanian_calls == 1
+    assert v5.romanian_calls == 1
+
+    with db.connect() as con:
+        rounds = con.execute(
+            "SELECT DISTINCT round_id FROM v5_trial_audit WHERE slot='romanian'"
+        ).fetchall()
+    assert len(rounds) == 1
