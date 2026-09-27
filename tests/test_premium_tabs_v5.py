@@ -54,3 +54,10 @@ def test_v5_lab_has_top_level_model_switch():
     assert "MODEL FOLOSIT ACUM" in source
     assert 'QPushButton("Folosește V16")' in source
     assert 'QPushButton("Folosește V5 20%")' in source
+
+
+def test_grouped_sidebar_shell_is_actually_attached_to_window_class():
+    source = _read("cinecalendar/premium_tabs_v5.py")
+    assert "def _build_shell(self):" in source
+    assert "window_cls._build_shell = _build_shell" in source
+    assert source.index("def _build_shell(self):") < source.index("window_cls._build_shell = _build_shell")
