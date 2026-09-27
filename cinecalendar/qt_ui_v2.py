@@ -52,6 +52,35 @@ class DecisionWindow(CineCalendarWindow):
         if bool(self.db.get_setting("auto_update_check", True)):
             QTimer.singleShot(2800, lambda: self.check_updates(False))
 
+    def set_v5_trial_mode(self, mode: str):
+        try:
+            status = self.s.set_alpha_trial_mode(mode)
+        except Exception as exc:
+            QMessageBox.warning(self, "V5 Trial", str(exc))
+            return
+        label = "V5 20%" if status.get("mode") == "v5_20" else "V16"
+        self.set_status(f"Trial vizibil: {label}. Schimbarea se aplică imediat recomandărilor următoare.", False)
+        if self.current_page == "v5_lab":
+            self.show_page("v5_lab")
+
+    def _trial_audit_text(self, rec) -> str:
+        factors = dict(getattr(rec.score, "score_factors", {}) or {})
+        if "v5_trial_active" not in factors:
+            return ""
+        v16_rank = int(float(factors.get("v5_trial_v16_rank", -1) or -1))
+        v5_rank = int(float(factors.get("v5_trial_v5_rank", -1) or -1))
+        delta = factors.get("v5_trial_delta")
+        mode = "V5 20%" if float(factors.get("v5_trial_active", 0.0) or 0.0) >= 0.5 else "V16"
+        r16 = f"#{v16_rank}" if v16_rank > 0 else "în afara listei"
+        rv5 = f"#{v5_rank}" if v5_rank > 0 else "în afara listei"
+        delta_text = ""
+        if delta is not None:
+            try:
+                delta_text = f" • Δ scor V5−V16 {float(delta):+.3f}"
+            except (TypeError, ValueError):
+                delta_text = ""
+        return f"Trial {mode} • V16 {r16} • V5 {rv5}{delta_text}"
+
     def _confidence_label(self, confidence: float) -> str:
         if confidence >= .82: return "încredere foarte mare"
         if confidence >= .68: return "încredere mare"
@@ -283,6 +312,9 @@ class DecisionWindow(CineCalendarWindow):
         prediction.setObjectName("ScoreLarge"); right.addWidget(prediction)
         conf = QLabel(f"{round(s.confidence*100)}% încredere • {self._confidence_label(s.confidence)}")
         conf.setObjectName("Muted"); right.addWidget(conf)
+        trial_text = self._trial_audit_text(rec)
+        if trial_text:
+            trial = QLabel(trial_text); trial.setObjectName("Muted"); trial.setWordWrap(True); right.addWidget(trial)
 
         meta = []
         if m.imdb_rating is not None: meta.append(f"IMDb {m.imdb_rating:.1f}")
@@ -315,6 +347,9 @@ class DecisionWindow(CineCalendarWindow):
         box = self.card(); box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum); l = QVBoxLayout(box); l.setContentsMargins(15,15,15,15)
         t = QLabel(m.title + (f" ({m.year})" if m.year else "")); t.setObjectName("CardTitle"); t.setWordWrap(True); l.addWidget(t)
         p = QLabel(f"{s.predicted_rating:.1f}/10 pentru tine • {round(s.confidence*100)}% încredere"); p.setObjectName("Score"); l.addWidget(p)
+        trial_text = self._trial_audit_text(rec)
+        if trial_text:
+            trial = QLabel(trial_text); trial.setObjectName("Muted"); trial.setWordWrap(True); l.addWidget(trial)
         meta = []
         if m.runtime_min: meta.append(f"{m.runtime_min} min")
         if m.genres: meta.append(", ".join(m.genres[:3]))
@@ -349,6 +384,9 @@ class DecisionWindow(CineCalendarWindow):
         box = self.card(); box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum); l = QVBoxLayout(box); l.setContentsMargins(15,15,15,15)
         head = QHBoxLayout(); title = QLabel(f"{index}. {m.title}" + (f" ({m.year})" if m.year else "")); title.setObjectName("CardTitle"); title.setWordWrap(True); head.addWidget(title,1)
         score = QLabel(f"{s.predicted_rating:.1f}/10"); score.setObjectName("Score"); head.addWidget(score); l.addLayout(head)
+        trial_text = self._trial_audit_text(rec)
+        if trial_text:
+            trial = QLabel(trial_text); trial.setObjectName("Muted"); trial.setWordWrap(True); l.addWidget(trial)
         meta = []
         if m.imdb_rating is not None: meta.append(f"IMDb {m.imdb_rating:.1f}")
         if m.runtime_min: meta.append(f"{m.runtime_min} min")
@@ -550,6 +588,41 @@ class DecisionWindow(CineCalendarWindow):
         )
         vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
         content.addWidget(verdict)
+
+        trial_status = self.s.alpha_trial_status()
+        trial_box = self.card(); tbl = QVBoxLayout(trial_box)
+        th = QLabel("Trial vizibil V16 / V5"); th.setObjectName("CardTitle"); tbl.addWidget(th)
+        active_mode = str(trial_status.get("mode") or "v16")
+        eligible_trial = bool(trial_status.get("eligible"))
+        try:
+            with self.db.connect() as con:
+                audit_rows = int(con.execute("SELECT COUNT(*) FROM v5_trial_audit").fetchone()[0])
+        except Exception:
+            audit_rows = 0
+        tt = QLabel(
+            (
+                "Activ acum: V5 ranker 20%."
+                if active_mode == "v5_20"
+                else "Activ acum: V16."
+            )
+            + f"  Audit comparativ salvat: {audit_rows} recomandări."
+            + ("  Poți comuta instant; Stable rămâne neatins." if eligible_trial else "  V5 rămâne blocat până la un raport eligibil.")
+        )
+        tt.setWordWrap(True); tt.setObjectName("Muted"); tbl.addWidget(tt)
+        tr = QHBoxLayout()
+        use_v16 = QPushButton("Folosește V16")
+        use_v16.setProperty("accent", active_mode == "v16")
+        use_v16.clicked.connect(lambda: self.set_v5_trial_mode("v16"))
+        tr.addWidget(use_v16)
+        use_v5 = QPushButton("Folosește V5 20%")
+        use_v5.setProperty("accent", active_mode == "v5_20")
+        use_v5.setEnabled(eligible_trial)
+        use_v5.clicked.connect(lambda: self.set_v5_trial_mode("v5_20"))
+        tr.addWidget(use_v5)
+        tr.addStretch(1)
+        tbl.addLayout(tr)
+        content.addWidget(trial_box)
+
         content.addStretch(1)
         return page
 
