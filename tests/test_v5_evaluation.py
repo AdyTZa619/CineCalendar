@@ -18,3 +18,13 @@ def test_v5_evaluator_wires_three_way_historical_comparison():
     assert "run_window_backtest_group(" in source
     assert "eligible_for_visible_alpha_trial" in source
     assert '"visible_ranking_changed": False' in source
+
+
+def test_v5_lab_is_exposed_only_as_alpha_runtime_page():
+    source = open("cinecalendar/qt_ui_v2.py", encoding="utf-8").read()
+    assert '("v5_lab", "V5 Lab")' in source
+    assert "def page_v5_lab(self):" in source
+    assert "def run_v5_lab_evaluation(self):" in source
+    assert "run_v5_evaluation(self.db" in source
+    assert "eligible_for_visible_alpha_trial" in source
+    assert "if bool(self.db.get_setting(\"auto_update_check\", True)):" in source
