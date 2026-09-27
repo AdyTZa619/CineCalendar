@@ -6,6 +6,7 @@ from typing import Iterable
 from urllib.parse import urlparse
 
 from .models import Movie
+from .imdb_sync import enrich_movies_from_imdb_graphql
 from .open_metadata import OpenMovieMetadataProvider
 from .tmdb import TmdbProvider
 from .util import json_dumps, json_loads, utcnow_iso
@@ -194,7 +195,7 @@ def _next_retry(attempt: int, now: datetime) -> str:
 
 def process_metadata_queue(
     db, token: str = "", *, limit: int = 6, force: bool = False,
-    progress=None, tmdb_factory=None, open_factory=None,
+    progress=None, tmdb_factory=None, open_factory=None, imdb_batch_enricher=None,
 ) -> MetadataProcessResult:
     now_dt = _now(); now = _iso(now_dt)
     with db.connect() as con:
@@ -213,6 +214,25 @@ def process_metadata_queue(
     if not rows:
         return MetadataProcessResult(0, 0, 0, 0, 0)
 
+    # Preserve the true before-state so IMDb improvements count in the pass result.
+    before_by_id = {
+        int(row["id"]): _missing_values(_movie_from_row(row))
+        for row in rows
+    }
+
+    # IMDb is the first metadata source in normal production because every rated title already has
+    # an exact tt-id. Tests/custom provider calls stay offline unless they explicitly pass an IMDb
+    # batch enricher.
+    imdb_enricher = imdb_batch_enricher
+    if imdb_enricher is None and tmdb_factory is None and open_factory is None:
+        imdb_enricher = enrich_movies_from_imdb_graphql
+    if imdb_enricher is not None:
+        try:
+            imdb_enricher(db, [int(row["id"]) for row in rows])
+        except Exception:
+            # IMDb is best-effort here; TMDb/Wikimedia remain independent fallbacks.
+            pass
+
     tmdb = None
     if str(token or "").strip():
         factory = tmdb_factory or TmdbProvider
@@ -224,8 +244,11 @@ def process_metadata_queue(
         opened = None
     completed = improved = retrying = failed = 0
     for index, row in enumerate(rows, 1):
-        movie = _movie_from_row(row)
-        before = _missing_values(movie)
+        movie_id = int(row["id"])
+        with db.connect() as con:
+            fresh = con.execute("SELECT * FROM movies WHERE id=?", (movie_id,)).fetchone()
+        movie = _movie_from_row(fresh or row)
+        before = before_by_id.get(movie_id, _missing_values(movie))
         attempts = int(row["attempt_count"] or 0) + 1
         if progress:
             progress(f"Metadata Doctor: {index}/{len(rows)} • {movie.title}")
