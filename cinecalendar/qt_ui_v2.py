@@ -455,38 +455,81 @@ class DecisionWindow(CineCalendarWindow):
 
         rolling = dict(report.get("rolling") or {})
         retrieval_agg = dict(((rolling.get("retrieval_only") or {}).get("aggregate") or {}))
-        ranked_agg = dict(((rolling.get("ranked") or {}).get("aggregate") or {}))
+        ranked_payload = rolling.get("selected_ranked") or rolling.get("ranked") or {}
+        ranked_agg = dict((ranked_payload.get("aggregate") or {}))
+        variants = dict(rolling.get("ranked_variants") or {})
         event = dict(report.get("event_replay") or {})
         baseline_event = dict(event.get("baseline") or {})
         ranked_event = dict(event.get("ranked") or {})
+        event_guard = dict(event.get("ranked_guard") or {})
         decision = dict(report.get("decision") or {})
+        selected_variant = str(
+            decision.get("selected_variant")
+            or rolling.get("selected_variant")
+            or "learned"
+        )
 
         summary = self.card(); sl = QVBoxLayout(summary)
-        sh = QLabel("Replay temporal — 3 ferestre ne-suprapuse"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
+        sh = QLabel("Replay temporal — sweep de pondere ranker"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
+        variant_lines = []
+        for label, payload in variants.items():
+            agg = dict((((payload or {}).get("comparison") or {}).get("aggregate") or {}))
+            variant_lines.append(
+                f"{label}: Δ {self._v5_metric(agg.get('mean_composite_delta'))} • "
+                f"Δ NDCG@25 {self._v5_metric(agg.get('mean_ndcg25_delta'))} • "
+                f"{agg.get('positive_folds', '—')}/{agg.get('fold_count', '—')} folduri + • "
+                f"{'TRECUT' if agg.get('approved') else 'netrecut'}"
+            )
+        if not variant_lines:
+            variant_lines.append(
+                f"learned: Δ {self._v5_metric(ranked_agg.get('mean_composite_delta'))} • "
+                f"Δ NDCG@25 {self._v5_metric(ranked_agg.get('mean_ndcg25_delta'))} • "
+                f"{ranked_agg.get('positive_folds', '—')}/{ranked_agg.get('fold_count', '—')} folduri + • "
+                f"{'TRECUT' if ranked_agg.get('approved') else 'netrecut'}"
+            )
         st = QLabel(
             "V5 retrieval-only: "
             f"Δ compozit mediu {self._v5_metric(retrieval_agg.get('mean_composite_delta'))} • "
             f"folduri pozitive {retrieval_agg.get('positive_folds', '—')}/{retrieval_agg.get('fold_count', '—')} • "
             f"gate {'TRECUT' if retrieval_agg.get('approved') else 'netrecut'}\n"
-            "V5 + ranker: "
-            f"Δ compozit mediu {self._v5_metric(ranked_agg.get('mean_composite_delta'))} • "
-            f"Δ NDCG@25 {self._v5_metric(ranked_agg.get('mean_ndcg25_delta'))} • "
-            f"folduri pozitive {ranked_agg.get('positive_folds', '—')}/{ranked_agg.get('fold_count', '—')} • "
-            f"gate {'TRECUT' if ranked_agg.get('approved') else 'netrecut'}"
+            + "\n".join(variant_lines)
+            + f"\nVariantă selectată pentru validarea externă: {selected_variant}."
         )
         st.setWordWrap(True); st.setObjectName("Muted"); sl.addWidget(st)
         content.addWidget(summary)
 
         events = self.card(); evl = QVBoxLayout(events)
-        evh = QLabel("Replay pe zile reale de rating"); evh.setObjectName("CardTitle"); evl.addWidget(evh)
+        evh = QLabel("Replay pe zile reale — diagnostic extins"); evh.setObjectName("CardTitle"); evl.addWidget(evh)
+        liked = int(baseline_event.get("liked_8_plus", 0) or 0)
+        loved = int(baseline_event.get("loved_9_plus", 0) or 0)
+        bad = int(baseline_event.get("disliked_4_minus", 0) or 0)
         evt = QLabel(
-            f"Zile testate: {int((event.get('selection') or {}).get('window_count', 0) or 0)}\n"
-            f"V16 — Recall 8+ Top10: {self._v5_metric(baseline_event.get('top10_8_plus_recall'), percent=True)} • "
-            f"Recall 9+ Top10: {self._v5_metric(baseline_event.get('top10_9_plus_recall'), percent=True)} • "
-            f"1–4 în Top10: {self._v5_metric(baseline_event.get('top10_dislike_rate'), percent=True)}\n"
-            f"V5 ranker — Recall 8+ Top10: {self._v5_metric(ranked_event.get('top10_8_plus_recall'), percent=True)} • "
-            f"Recall 9+ Top10: {self._v5_metric(ranked_event.get('top10_9_plus_recall'), percent=True)} • "
-            f"1–4 în Top10: {self._v5_metric(ranked_event.get('top10_dislike_rate'), percent=True)}"
+            f"Zile testate: {int((event.get('selection') or {}).get('window_count', 0) or 0)} • "
+            f"ținte: {liked} filme 8+, {loved} filme 9+, {bad} filme 1–4\n"
+            f"V16 candidate pool — 8+: {baseline_event.get('candidate_8_plus_hits', 0)}/{liked} "
+            f"({self._v5_metric(baseline_event.get('candidate_8_plus_recall'), percent=True)}) • "
+            f"9+: {baseline_event.get('candidate_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(baseline_event.get('candidate_9_plus_recall'), percent=True)})\n"
+            f"V5 candidate pool — 8+: {ranked_event.get('candidate_8_plus_hits', 0)}/{liked} "
+            f"({self._v5_metric(ranked_event.get('candidate_8_plus_recall'), percent=True)}) • "
+            f"9+: {ranked_event.get('candidate_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(ranked_event.get('candidate_9_plus_recall'), percent=True)})\n"
+            f"V16 Top25 — 8+: {baseline_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"({self._v5_metric(baseline_event.get('top25_8_plus_recall'), percent=True)}) • "
+            f"9+: {baseline_event.get('top25_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(baseline_event.get('top25_9_plus_recall'), percent=True)}) • "
+            f"1–4: {self._v5_metric(baseline_event.get('top25_dislike_rate'), percent=True)}\n"
+            f"V5 {selected_variant} Top25 — 8+: {ranked_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"({self._v5_metric(ranked_event.get('top25_8_plus_recall'), percent=True)}) • "
+            f"9+: {ranked_event.get('top25_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(ranked_event.get('top25_9_plus_recall'), percent=True)}) • "
+            f"1–4: {self._v5_metric(ranked_event.get('top25_dislike_rate'), percent=True)}\n"
+            f"Top50 8+: V16 {self._v5_metric(baseline_event.get('top50_8_plus_recall'), percent=True)} vs "
+            f"V5 {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
+            f"NDCG@25 mediu: V16 {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
+            f"V5 {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
+            f"Gard extern: {'TRECUT' if event_guard.get('passed') else 'netrecut'} • "
+            f"{event_guard.get('reason', '')}"
         )
         evt.setWordWrap(True); evt.setObjectName("Muted"); evl.addWidget(evt)
         content.addWidget(events)
