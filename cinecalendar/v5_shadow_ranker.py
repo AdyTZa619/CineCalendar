@@ -21,6 +21,20 @@ class V5ShadowRankedEngine(V5LabRecommendationEngine):
 
     def _adaptive_rerank(self, recs, count: int):
         requested = max(1, int(count))
+        knowledge = self.v5.knowledge.status()
+        ranker_status = self.v5.personal_ranker.status()
+        blend_weight = float(ranker_status.get("blend_weight", 0.0) or 0.0)
+        active = bool(
+            knowledge.get("ready_for_rich_ranker")
+            and ranker_status.get("validated")
+            and blend_weight > 0.0
+        )
+
+        # If the ranker is not valid for this historical fold, preserve the parent's exact
+        # behaviour. This makes the shadow comparison neutral rather than accidentally changing
+        # V16's Top-3 gate pool simply because the experimental model is inactive.
+        if not active:
+            return super()._adaptive_rerank(recs, requested)
 
         # For Top-3/Top-9 evaluation, obtain a mature finalist pool before applying the shadow
         # utility model. Calling the parent with >9 deliberately bypasses V16's final trust gate;
@@ -31,15 +45,6 @@ class V5ShadowRankedEngine(V5LabRecommendationEngine):
             else requested
         )
         mature = list(super()._adaptive_rerank(recs, pool_target))
-
-        knowledge = self.v5.knowledge.status()
-        ranker_status = self.v5.personal_ranker.status()
-        blend_weight = float(ranker_status.get("blend_weight", 0.0) or 0.0)
-        active = bool(
-            knowledge.get("ready_for_rich_ranker")
-            and ranker_status.get("validated")
-            and blend_weight > 0.0
-        )
 
         if active:
             reranked = []
@@ -72,9 +77,6 @@ class V5ShadowRankedEngine(V5LabRecommendationEngine):
                 ),
                 reverse=True,
             )
-        else:
-            reranked = mature
-
         if requested <= int(self.QUALITY_GATE_MAX_VISIBLE):
             return self._quality_gate(reranked, requested)
         return reranked[:requested]
