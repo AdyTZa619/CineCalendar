@@ -57,6 +57,11 @@ class AlphaTrialRecommender:
         self.db = db
         self.v16 = v16_engine
         self.v5 = v5_engine
+        # A trial comparison must keep the exact same V16/V5 pair while the user
+        # toggles between models. Fresh pairs are created only after an explicit
+        # invalidation or a meaningful user-state/request change.
+        self._round_cache: dict[str, dict] = {}
+        self._reuse_after_mode_switch: set[str] = set()
         self._ensure_audit_table()
         saved = str(self.db.get_setting("v5_visible_trial_mode", "") or "")
         if saved not in {MODE_V16, MODE_V5_20}:
@@ -123,10 +128,68 @@ class AlphaTrialRecommender:
             raise ValueError("Mod de trial necunoscut.")
         if wanted == MODE_V5_20 and not self._eligible():
             raise RuntimeError("V5 20% nu are un raport eligibil pentru trialul vizibil.")
+        changed = wanted != self._mode
         self._mode = wanted
         self.db.set_setting("v5_visible_trial_mode", wanted)
         self.db.set_setting("v5_visible_trial_changed_at", utcnow_iso())
+        if changed:
+            self._reuse_after_mode_switch.update(self._round_cache.keys())
         return self.trial_status()
+
+    def invalidate_round(self, slot: str | None = None) -> None:
+        """Forget the frozen comparison pair.
+
+        The UI calls this for an explicit Recalculează. User-state changes are also
+        detected by the request key, so a rating/feedback/watchlist change cannot
+        accidentally reuse an old pair.
+        """
+        if slot is None:
+            self._round_cache.clear()
+            self._reuse_after_mode_switch.clear()
+            return
+        key = str(slot or "")
+        self._round_cache.pop(key, None)
+        self._reuse_after_mode_switch.discard(key)
+
+    def _user_state_token(self) -> tuple:
+        try:
+            with self.db.connect() as con:
+                ratings = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM ratings"
+                ).fetchone()
+                feedback = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(created_at),'') FROM feedback"
+                ).fetchone()
+                watchlist = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM watchlist"
+                ).fetchone()
+                profile = con.execute(
+                    "SELECT COALESCE(MAX(updated_at),'') FROM user_profile"
+                ).fetchone()
+            return (
+                int(ratings[0]), str(ratings[1]),
+                int(feedback[0]), str(feedback[1]),
+                int(watchlist[0]), str(watchlist[1]),
+                str(profile[0]),
+            )
+        except Exception:
+            return ()
+
+    def _request_key(
+        self, *, when, count: int, exclude_ids, slot: str, candidate_limit: int,
+        mode: str, runtime_max, runtime_min,
+    ) -> tuple:
+        return (
+            (when or date.today()).isoformat(),
+            int(count),
+            tuple(sorted(int(x) for x in (exclude_ids or set()))),
+            str(slot or ""),
+            int(candidate_limit),
+            str(mode or ""),
+            None if runtime_max is None else int(runtime_max),
+            None if runtime_min is None else int(runtime_min),
+            self._user_state_token(),
+        )
 
     def trial_status(self) -> dict:
         report = self.db.get_setting("v5_evaluation_report", {}) or {}
@@ -141,7 +204,10 @@ class AlphaTrialRecommender:
             "stable_untouched": True,
         }
 
-    def _annotate_and_persist(self, active_recs, v16_recs, v5_recs, *, when, slot: str) -> None:
+    def _annotate_and_persist(
+        self, active_recs, v16_recs, v5_recs, *, when, slot: str,
+        round_id: str | None = None, generated_at: str | None = None,
+    ) -> None:
         v16_by_id = {
             int(rec.movie.id): (idx, rec)
             for idx, rec in enumerate(v16_recs, start=1)
@@ -153,8 +219,8 @@ class AlphaTrialRecommender:
             if rec.movie.id is not None
         }
         active_mode = self.mode
-        round_id = uuid.uuid4().hex
-        generated_at = utcnow_iso()
+        round_id = str(round_id or uuid.uuid4().hex)
+        generated_at = str(generated_at or utcnow_iso())
         context_date = (when or date.today()).isoformat()
 
         rows = []
@@ -235,11 +301,40 @@ class AlphaTrialRecommender:
             runtime_max=runtime_max,
             runtime_min=runtime_min,
         )
-        v16_recs = list(self.v16.recommend(**kwargs))
-        v5_recs = list(self.v5.recommend(**kwargs))
+        slot_key = str(slot or "today")
+        request_key = self._request_key(
+            when=when, count=count, exclude_ids=exclude_ids, slot=slot_key,
+            candidate_limit=candidate_limit, mode=mode,
+            runtime_max=runtime_max, runtime_min=runtime_min,
+        )
+        cached = self._round_cache.get(slot_key)
+        reuse = (
+            slot_key in self._reuse_after_mode_switch
+            and isinstance(cached, dict)
+            and cached.get("request_key") == request_key
+        )
+        if reuse:
+            v16_recs = list(cached.get("v16") or [])
+            v5_recs = list(cached.get("v5") or [])
+            round_id = str(cached.get("round_id") or uuid.uuid4().hex)
+            generated_at = str(cached.get("generated_at") or utcnow_iso())
+        else:
+            v16_recs = list(self.v16.recommend(**kwargs))
+            v5_recs = list(self.v5.recommend(**kwargs))
+            round_id = uuid.uuid4().hex
+            generated_at = utcnow_iso()
+            self._round_cache[slot_key] = {
+                "request_key": request_key,
+                "v16": list(v16_recs),
+                "v5": list(v5_recs),
+                "round_id": round_id,
+                "generated_at": generated_at,
+            }
+        self._reuse_after_mode_switch.discard(slot_key)
         active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
         self._annotate_and_persist(
-            active_recs, v16_recs, v5_recs, when=when, slot=slot
+            active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
+            round_id=round_id, generated_at=generated_at,
         )
         if record and active_recs:
             recorder = getattr(self.active, "_record_selected", None)
@@ -249,17 +344,48 @@ class AlphaTrialRecommender:
 
     def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
         when = when or date.today()
-        v16_primary, v16_backups = self.v16.decision_pick(
-            when, exclude_ids, mode, **kwargs
+        slot_key = "decision"
+        request_key = (
+            when.isoformat(),
+            tuple(sorted(int(x) for x in (exclude_ids or set()))),
+            str(mode or ""),
+            tuple(sorted((str(key), repr(value)) for key, value in kwargs.items())),
+            self._user_state_token(),
         )
-        v5_primary, v5_backups = self.v5.decision_pick(
-            when, exclude_ids, mode, **kwargs
+        cached = self._round_cache.get(slot_key)
+        reuse = (
+            slot_key in self._reuse_after_mode_switch
+            and isinstance(cached, dict)
+            and cached.get("request_key") == request_key
         )
-        v16_recs = ([v16_primary] if v16_primary else []) + list(v16_backups or [])
-        v5_recs = ([v5_primary] if v5_primary else []) + list(v5_backups or [])
+        if reuse:
+            v16_recs = list(cached.get("v16") or [])
+            v5_recs = list(cached.get("v5") or [])
+            round_id = str(cached.get("round_id") or uuid.uuid4().hex)
+            generated_at = str(cached.get("generated_at") or utcnow_iso())
+        else:
+            v16_primary, v16_backups = self.v16.decision_pick(
+                when, exclude_ids, mode, **kwargs
+            )
+            v5_primary, v5_backups = self.v5.decision_pick(
+                when, exclude_ids, mode, **kwargs
+            )
+            v16_recs = ([v16_primary] if v16_primary else []) + list(v16_backups or [])
+            v5_recs = ([v5_primary] if v5_primary else []) + list(v5_backups or [])
+            round_id = uuid.uuid4().hex
+            generated_at = utcnow_iso()
+            self._round_cache[slot_key] = {
+                "request_key": request_key,
+                "v16": list(v16_recs),
+                "v5": list(v5_recs),
+                "round_id": round_id,
+                "generated_at": generated_at,
+            }
+        self._reuse_after_mode_switch.discard(slot_key)
         active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
         self._annotate_and_persist(
-            active_recs, v16_recs, v5_recs, when=when, slot="decision"
+            active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
+            round_id=round_id, generated_at=generated_at,
         )
         return (
             active_recs[0] if active_recs else None,
