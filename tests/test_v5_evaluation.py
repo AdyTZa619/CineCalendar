@@ -1,11 +1,13 @@
+import pytest
+
 from cinecalendar.v5_lab import V5LabRecommendationEngine
 from cinecalendar.v5_shadow_ranker import V5ShadowRankedEngine
 
 
 def test_v5_shadow_ranker_is_evaluation_only_subclass():
     assert issubclass(V5ShadowRankedEngine, V5LabRecommendationEngine)
-    assert V5ShadowRankedEngine._blend(0.8, 0.2, 0.10) == 0.74
-    assert V5ShadowRankedEngine._blend(0.2, 0.8, 0.10) == 0.26
+    assert V5ShadowRankedEngine._blend(0.8, 0.2, 0.10) == pytest.approx(0.74)
+    assert V5ShadowRankedEngine._blend(0.2, 0.8, 0.10) == pytest.approx(0.26)
 
 
 def test_v5_evaluator_wires_three_way_historical_comparison():
