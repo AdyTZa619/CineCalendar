@@ -33,13 +33,26 @@ def test_recalculate_is_the_explicit_cache_invalidation_path():
     assert 'self.show_page("recommendations")' in block
 
 
-def test_browse_cache_tracks_meaningful_state_not_navigation():
+def test_browse_cache_tracks_user_state_and_trial_mode_not_background_engine_state():
     source = _premium_source()
     start = source.index("def _browse_state_signature")
     end = source.index("def _browse_cache_valid", start)
     block = source[start:end]
 
     assert "date.today().isoformat()" in block
-    assert "state_token" in block
+    assert "FROM ratings" in block
+    assert "FROM feedback" in block
+    assert "FROM watchlist" in block
+    assert "FROM user_profile" in block
     assert "trial_mode" in block
     assert "self.session_skips" in block
+    assert "_state_token" not in block
+
+
+def test_explicit_recalculate_invalidates_frozen_trial_pair():
+    source = _premium_source()
+    start = source.index("def recalculate_browse")
+    end = source.index("def page_recommendations", start)
+    block = source[start:end]
+
+    assert 'invalidate("browse")' in block
