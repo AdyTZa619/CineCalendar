@@ -185,7 +185,7 @@ def stage_and_start_update(info: UpdateInfo, data_root: str | Path, progress=Non
     db_path = data_root / "data" / "cinecalendar.db"
     db_backup = updates / "db-backup" / "cinecalendar.db"
 
-    progress("Descarc pachetul Premium…")
+    progress("Descarc pachetul CineCalendar…")
     _download_to(info.url, pending_zip, progress)
     got = sha256_path(pending_zip)
     if got.lower() != info.sha256.lower():
@@ -193,7 +193,7 @@ def stage_and_start_update(info: UpdateInfo, data_root: str | Path, progress=Non
         raise RuntimeError(f"SHA-256 diferit. Așteptat {info.sha256}, primit {got}.")
 
     progress("SHA-256 verificat. Pregătesc fișierele și snapshotul bazei…")
-    _safe_extract_zip(pending_zip, staged)
+    _safe_extract_zip(pending_zip, staged, exe_name=current.name)
     db_backup_present = _sqlite_backup(db_path, db_backup)
     helper.write_text(_powershell_helper(), encoding="utf-8-sig")
 
@@ -208,6 +208,7 @@ def stage_and_start_update(info: UpdateInfo, data_root: str | Path, progress=Non
         log=str(log),
         expected_version=info.version,
         expected_sha256=info.sha256,
+        exe_name=current.name,
         updates_dir=str(updates),
         helper_script=str(helper),
         request_path=str(request_path),
