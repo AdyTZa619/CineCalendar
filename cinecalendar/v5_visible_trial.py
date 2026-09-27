@@ -61,7 +61,6 @@ class AlphaTrialRecommender:
         # toggles between models. Fresh pairs are created only after an explicit
         # invalidation or a meaningful user-state/request change.
         self._round_cache: dict[str, dict] = {}
-        self._reuse_after_mode_switch: set[str] = set()
         self._ensure_audit_table()
         saved = str(self.db.get_setting("v5_visible_trial_mode", "") or "")
         if saved not in {MODE_V16, MODE_V5_20}:
@@ -128,12 +127,9 @@ class AlphaTrialRecommender:
             raise ValueError("Mod de trial necunoscut.")
         if wanted == MODE_V5_20 and not self._eligible():
             raise RuntimeError("V5 20% nu are un raport eligibil pentru trialul vizibil.")
-        changed = wanted != self._mode
         self._mode = wanted
         self.db.set_setting("v5_visible_trial_mode", wanted)
         self.db.set_setting("v5_visible_trial_changed_at", utcnow_iso())
-        if changed:
-            self._reuse_after_mode_switch.update(self._round_cache.keys())
         return self.trial_status()
 
     def invalidate_round(self, slot: str | None = None) -> None:
@@ -145,11 +141,9 @@ class AlphaTrialRecommender:
         """
         if slot is None:
             self._round_cache.clear()
-            self._reuse_after_mode_switch.clear()
             return
         key = str(slot or "")
         self._round_cache.pop(key, None)
-        self._reuse_after_mode_switch.discard(key)
 
     def _user_state_token(self) -> tuple:
         try:
@@ -308,11 +302,7 @@ class AlphaTrialRecommender:
             runtime_max=runtime_max, runtime_min=runtime_min,
         )
         cached = self._round_cache.get(slot_key)
-        reuse = (
-            slot_key in self._reuse_after_mode_switch
-            and isinstance(cached, dict)
-            and cached.get("request_key") == request_key
-        )
+        reuse = isinstance(cached, dict) and cached.get("request_key") == request_key
         if reuse:
             v16_recs = list(cached.get("v16") or [])
             v5_recs = list(cached.get("v5") or [])
@@ -330,7 +320,6 @@ class AlphaTrialRecommender:
                 "round_id": round_id,
                 "generated_at": generated_at,
             }
-        self._reuse_after_mode_switch.discard(slot_key)
         active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
         self._annotate_and_persist(
             active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
@@ -352,11 +341,7 @@ class AlphaTrialRecommender:
             self._user_state_token(),
         )
         cached = self._round_cache.get(slot_key)
-        reuse = (
-            slot_key in self._reuse_after_mode_switch
-            and isinstance(cached, dict)
-            and cached.get("request_key") == request_key
-        )
+        reuse = isinstance(cached, dict) and cached.get("request_key") == request_key
         if reuse:
             v16_recs = list(cached.get("v16") or [])
             v5_recs = list(cached.get("v5") or [])
@@ -374,7 +359,6 @@ class AlphaTrialRecommender:
                 "round_id": round_id,
                 "generated_at": generated_at,
             }
-        self._reuse_after_mode_switch.discard(slot_key)
         active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
         self._annotate_and_persist(
             active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
@@ -393,11 +377,7 @@ class AlphaTrialRecommender:
             self._user_state_token(),
         )
         cached = self._round_cache.get(slot_key)
-        reuse = (
-            slot_key in self._reuse_after_mode_switch
-            and isinstance(cached, dict)
-            and cached.get("request_key") == request_key
-        )
+        reuse = isinstance(cached, dict) and cached.get("request_key") == request_key
         if reuse:
             v16_recs = list(cached.get("v16") or [])
             v5_recs = list(cached.get("v5") or [])
@@ -421,7 +401,6 @@ class AlphaTrialRecommender:
                 "round_id": round_id,
                 "generated_at": generated_at,
             }
-        self._reuse_after_mode_switch.discard(slot_key)
         active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
         self._annotate_and_persist(
             active_recs, v16_recs, v5_recs, when=when, slot=slot_key,

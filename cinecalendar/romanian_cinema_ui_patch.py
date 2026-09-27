@@ -20,6 +20,12 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         window_cls.NAV = nav
 
     def _recalculate_romanian(self):
+        worker = getattr(self, "romanian_worker", None)
+        if worker is not None and worker.isRunning():
+            self.set_status("Selecția românească este deja în curs de calcul.", True)
+            return
+        self.romanian_result = None
+        self.romanian_cache_signature = None
         invalidate = getattr(self.s.recommender, "invalidate_round", None)
         if callable(invalidate):
             invalidate("romanian")
@@ -41,6 +47,12 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             content.addWidget(box); content.addStretch(1)
             return page
 
+        signature = self._browse_state_signature()
+        if (getattr(self, "romanian_cache_signature", None) == signature
+                and getattr(self, "romanian_result", None) is not None):
+            self._render_romanian(self.romanian_result)
+            return page
+
         content.addWidget(self.loading_panel(
             "Caut filme românești care chiar sunt românești…",
             "Criteriul principal și obligatoriu este limba originală română. România trebuie să apară și ca țară de origine, inclusiv la coproducții. Abia după această verificare ALS + profilul tău decid ordinea.",
@@ -50,10 +62,13 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         return page
 
     def _load_romanian_async(self):
+        if self._ui_closing or self.current_page != "romanian":
+            return
         worker = getattr(self, "romanian_worker", None)
         if worker is not None and worker.isRunning():
             return
         self.set_status("Calculez selecția de cinema românesc…", True)
+        signature = self._browse_state_signature()
         worker = WorkerThread(
             lambda progress: self.s.recommender.recommend_romanian(date.today(), count=9),
             self,
@@ -62,7 +77,13 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
 
         def success(recs):
             self.romanian_worker = None
+            if signature != self._browse_state_signature():
+                self.set_status("Datele s-au schimbat; actualizez selecția românească.", False)
+                if self.current_page == "romanian":
+                    QTimer.singleShot(0, self._load_romanian_async)
+                return
             self.romanian_result = list(recs or [])
+            self.romanian_cache_signature = signature
             self.set_status("Selecția de cinema românesc este gata.", False)
             if self.current_page == "romanian":
                 self._render_romanian(self.romanian_result)

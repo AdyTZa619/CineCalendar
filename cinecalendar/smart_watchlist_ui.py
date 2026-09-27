@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -361,12 +361,45 @@ def install_smart_watchlist_ui(window_cls) -> None:
             content.addWidget(_plain_card(self, row))
         content.addStretch(1)
 
+    def _watchlist_signature(self):
+        with self.db.connect() as con:
+            metadata = con.execute(
+                """SELECT COUNT(*),COALESCE(MAX(m.updated_at),'')
+                   FROM watchlist w JOIN movies m ON m.id=w.movie_id
+                   WHERE w.status='want_to_watch'"""
+            ).fetchone()
+        return (
+            self._browse_state_signature(),
+            int(metadata[0]), str(metadata[1]),
+            tuple(sorted(pinned_watchlist_ids(self.db))),
+            *(str(self.db.get_setting(key, default) or default) for key, default in (
+                ("watchlist_runtime_filter", "all"),
+                ("watchlist_type_filter", "all"),
+                ("watchlist_decision_mode", "decide"),
+            )),
+        )
+
+    def _recalculate_watchlist(self):
+        worker = getattr(self, "smart_watchlist_worker", None)
+        if worker is not None and worker.isRunning():
+            self.set_status("Clasarea Watchlist este deja în curs.", True)
+            return
+        self.smart_watchlist_result = None
+        self.smart_watchlist_cache_signature = None
+        self.show_page("watchlist")
+
     def page_watchlist(self):
         page, content = self.page_shell(
             "Watchlist",
             "Filmele salvate de tine, cu o coadă «Următoarele 5» ordonată de motorul personal.",
+            [("Recalculează coada", self._recalculate_watchlist, True)],
         )
         self.smart_watchlist_content = content
+        signature = self._watchlist_signature()
+        if (getattr(self, "smart_watchlist_cache_signature", None) == signature
+                and getattr(self, "smart_watchlist_result", None) is not None):
+            _render_result(self, self.smart_watchlist_result)
+            return page
         content.addWidget(_filters_card(self))
         content.addWidget(_loading_card(self))
 
@@ -389,7 +422,12 @@ def install_smart_watchlist_ui(window_cls) -> None:
 
         def success(result):
             self.smart_watchlist_worker = None
+            if signature != self._watchlist_signature():
+                if self.current_page == "watchlist":
+                    QTimer.singleShot(0, lambda: self.show_page("watchlist") if self.current_page == "watchlist" else None)
+                return
             self.smart_watchlist_result = result
+            self.smart_watchlist_cache_signature = signature
             _render_result(self, result)
 
         def failure(message):
@@ -402,4 +440,6 @@ def install_smart_watchlist_ui(window_cls) -> None:
         return page
 
     window_cls.page_watchlist = page_watchlist
+    window_cls._watchlist_signature = _watchlist_signature
+    window_cls._recalculate_watchlist = _recalculate_watchlist
     window_cls._cinecalendar_smart_watchlist_v4 = True

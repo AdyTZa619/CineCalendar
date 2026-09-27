@@ -37,6 +37,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         self.calendar_month_anchor: date = date.today().replace(day=1)
         self.calendar_pending: date | None = None
         self.calendar_last_result: dict | None = None
+        self.calendar_last_signature = None
         super().__init__(service)
 
     # ---------- calendar navigation ----------
@@ -146,7 +147,10 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         self.calendar_focus_layout.setContentsMargins(24,22,24,22)
         self.calendar_focus_layout.setSpacing(12)
         content.addWidget(focus)
-        self._render_calendar_loading(self.calendar_selected)
+        if self._calendar_cached(self.calendar_selected):
+            self._render_calendar_program(self.calendar_last_result)
+        else:
+            self._render_calendar_loading(self.calendar_selected)
 
         head = QLabel("Luna, zi cu zi")
         head.setObjectName("SectionTitle"); content.addWidget(head)
@@ -177,13 +181,24 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         wrap = QFrame(); wrap.setLayout(days_grid); content.addWidget(wrap)
         content.addStretch(1)
 
-        QTimer.singleShot(0, lambda d=self.calendar_selected: self._load_calendar_day_async(d))
+        if not self._calendar_cached(self.calendar_selected):
+            QTimer.singleShot(0, lambda d=self.calendar_selected: self._load_calendar_day_async(d))
         return page
+
+    def _calendar_cached(self, target: date) -> bool:
+        result = self.calendar_last_result
+        return bool(
+            isinstance(result, dict) and result.get("date") == target
+            and self.calendar_last_signature == (target, self._browse_state_signature())
+        )
 
     def _select_calendar_day(self, target: date):
         self.calendar_selected = target
-        self._render_calendar_loading(target)
-        self._load_calendar_day_async(target)
+        if self._calendar_cached(target):
+            self._render_calendar_program(self.calendar_last_result)
+        else:
+            self._render_calendar_loading(target)
+            self._load_calendar_day_async(target)
 
     def _render_calendar_loading(self, target: date):
         layout = self.calendar_focus_layout
@@ -203,28 +218,43 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         wait.setObjectName("Muted"); layout.addWidget(wait)
 
     def _load_calendar_day_async(self, target: date):
+        if self._ui_closing or self.current_page != "month" or target != self.calendar_selected:
+            return
+        if self._calendar_cached(target):
+            self._render_calendar_program(self.calendar_last_result)
+            return
         if self.calendar_worker and self.calendar_worker.isRunning():
             self.calendar_pending = target
             return
         self.calendar_pending = None
+        signature = (target, self._browse_state_signature())
         self.set_status(f"Calculez programul pentru {target:%d.%m}…", True)
         worker = WorkerThread(lambda progress: self.s.recommender.calendar_day_program(target, 6), self)
         self.calendar_worker = worker
 
         def success(result):
             self.calendar_worker = None
-            self.calendar_last_result = result
+            if signature == (target, self._browse_state_signature()):
+                self.calendar_last_result = result
+                self.calendar_last_signature = signature
             self.set_status("Programul zilei este gata.", False)
-            if self.current_page == "month" and self.calendar_selected == result.get("date"):
+            if self.current_page == "month" and self.calendar_selected == result.get("date") and self._calendar_cached(target):
                 self._render_calendar_program(result)
             pending = self.calendar_pending
             self.calendar_pending = None
             if pending is not None and pending != result.get("date"):
                 self._render_calendar_loading(pending)
                 QTimer.singleShot(0, lambda d=pending: self._load_calendar_day_async(d))
+            elif self.current_page == "month" and self.calendar_selected == target and not self._calendar_cached(target):
+                QTimer.singleShot(0, lambda d=target: self._load_calendar_day_async(d))
 
         def failure(message):
             self.calendar_worker = None
+            pending = self.calendar_pending
+            self.calendar_pending = None
+            if pending is not None and pending != target:
+                QTimer.singleShot(0, lambda d=pending: self._load_calendar_day_async(d))
+                return
             self.set_status("Programul calendaristic a eșuat.", False)
             if self.current_page == "month" and self.calendar_focus_layout is not None:
                 self._clear_layout(self.calendar_focus_layout)

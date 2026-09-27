@@ -103,6 +103,8 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         QTimer.singleShot(350, lambda: _auto_prepare_library(self, force=True))
 
     def _auto_prepare_library(self, force: bool = False):
+        if getattr(self, "_ui_closing", False):
+            return
         worker = getattr(self, "romanian_assets_worker", None)
         if worker is not None and worker.isRunning():
             return

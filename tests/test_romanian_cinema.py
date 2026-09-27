@@ -110,6 +110,40 @@ def test_imdb_query_requires_romanian_language_and_romania_origin():
     assert 'languageConstraint: {anyLanguages:["ro"]}' in query
 
 
+def test_imdb_discovery_splits_saturated_date_windows(tmp_path, monkeypatch):
+    db = Database(tmp_path / "discovery.db")
+    provider = RomanianCinemaProvider(db)
+    queries = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    def post(_url, *, json, **_kwargs):
+        query = json["query"]
+        queries.append(query)
+        if 'start:"2000-01-01" end:"2019-12-31"' in query:
+            edges = [{"node": {"title": {"id": f"tt{i:07d}"}}} for i in range(999)]
+        elif 'start:"2000-01-01" end:"2009-12-31"' in query:
+            edges = [{"node": {"title": {"id": "tt9990001"}}}]
+        elif 'start:"2010-01-01" end:"2019-12-31"' in query:
+            edges = [{"node": {"title": {"id": "tt9990002"}}}]
+        else:
+            edges = []
+        return Response({"data": {"advancedTitleSearch": {"edges": edges}}})
+
+    monkeypatch.setattr(provider.session, "post", post)
+    assert provider._fetch_imdb_ids() == {"tt9990001", "tt9990002"}
+    assert any('start:"2000-01-01" end:"2009-12-31"' in q for q in queries)
+    assert any('start:"2010-01-01" end:"2019-12-31"' in q for q in queries)
+
+
 def test_multisource_verification_unions_independent_strong_sources(tmp_path, monkeypatch):
     db = Database(tmp_path / "cinecalendar.db")
     _insert_movie(db, "tt0000304", "Suport local", ["Romania"])

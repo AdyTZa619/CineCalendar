@@ -191,3 +191,34 @@ def test_romanian_lane_uses_same_frozen_v16_v5_pair(tmp_path):
             "SELECT DISTINCT round_id FROM v5_trial_audit WHERE slot='romanian'"
         ).fetchall()
     assert len(rounds) == 1
+
+
+def test_plain_navigation_reuses_rounds_until_state_change_or_recalculate(tmp_path):
+    db = Database(tmp_path / "trial-navigation.db")
+    _eligible(db)
+    v16 = FakeEngine([_rec(1, 0.76), _rec(2, 0.72)])
+    v5 = FakeEngine([_rec(2, 0.81), _rec(1, 0.74)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    when = date(2026, 9, 28)
+
+    for _ in range(3):
+        proxy.recommend(when=when, count=2, slot="browse")
+        proxy.recommend_romanian(when=when, count=2)
+        proxy.decision_pick(when=when)
+    assert (v16.recommend_calls, v5.recommend_calls) == (1, 1)
+    assert (v16.romanian_calls, v5.romanian_calls) == (1, 1)
+    assert (v16.decision_calls, v5.decision_calls) == (1, 1)
+
+    proxy.invalidate_round("browse")
+    proxy.recommend(when=when, count=2, slot="browse")
+    assert (v16.recommend_calls, v5.recommend_calls) == (2, 2)
+    assert (v16.romanian_calls, v5.romanian_calls) == (1, 1)
+
+    db.set_setting("watchlist_decision_mode", "safe")
+    # The trial's user state deliberately watches ratings/feedback/watchlist/profile,
+    # not an unrelated preference setting. A rating change must still refresh it.
+    with db.tx() as con:
+        con.execute("INSERT INTO user_profile(profile_key,value_json,updated_at) VALUES(?,?,?)",
+                    ('test', '{}', '2030-01-01T00:00:00+00:00'))
+    proxy.recommend_romanian(when=when, count=2)
+    assert (v16.romanian_calls, v5.romanian_calls) == (2, 2)

@@ -83,3 +83,14 @@ Un rezultat doar din căutarea IMDb nu dovedește limba originală și așteapt�
 confirmarea unei surse care oferă explicit această informație.
 Pe card, explicația de eligibilitate enumeră sursele confirmării. Datele locale
 doar despre țară rămân suport, fără a permite singure admiterea unui film.
+
+## Navigare și stabilitate în Alpha 17
+
+Navigarea între pagini reutilizează rezultatele calculate cât timp data și starea
+utilizatorului nu s-au schimbat. Recalcularea explicită creează un tur nou; listele
+Watchlist, de cinema românesc și programul zilei se actualizează când se schimbă
+datele relevante. Rezultatele unui worker pornit pe o stare veche nu mai înlocuiesc
+selecția curentă. Închiderea oprește și workerii paginilor, inclusiv cei porniți
+pentru catalogul românesc. Bara laterală poate fi derulată la ferestre mai mici.
+Căutarea IMDb pentru titluri românești împarte intervalele care ating limita de
+rezultate, ca să nu piardă în tăcere filme din catalog.

@@ -280,7 +280,9 @@ class PremiumDecisionWindow(DecisionWindow):
         QApplication.instance().setStyleSheet(f"""
             QWidget {{ background:{bg}; color:{text}; font-family:'Segoe UI'; font-size:14px; }}
             QMainWindow, QScrollArea, QScrollArea>QWidget>QWidget {{ background:{bg}; }}
+            QLabel {{ background:transparent; }}
             QFrame#Sidebar {{ background:{surface}; border-right:1px solid {border}; }}
+            QScrollArea#SidebarNav, QWidget#SidebarNavContent {{ background:transparent; border:0; }}
             QFrame#PremiumCard, QFrame#Card {{ background:{card}; border:1px solid {border}; border-radius:18px; }}
             QFrame#HeroCard {{
                 background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {card2},stop:.58 {card},stop:1 {surface});
@@ -548,12 +550,18 @@ class PremiumDecisionWindow(DecisionWindow):
         return page
 
     def _load_today_async(self):
+        if self._ui_closing or self.current_page != "today": return
         if self.today_worker and self.today_worker.isRunning():
             return
         self.set_status("Calculez alegerea zilei…", True)
         contextual_feedback = self.active_contextual_feedback()
         contextual_exclusions = {movie_id for _kind, movie_id in contextual_feedback}
         exclude_ids = set(self.session_skips) | contextual_exclusions
+        signature = (
+            self._browse_state_signature(), self.decision_mode,
+            str(self.db.get_setting("chooser_runtime_bucket", "all")),
+            str(self.db.get_setting("chooser_mood", "neutral")),
+        )
         worker = WorkerThread(
             lambda progress: self.s.recommender.decision_pick(
                 date.today(),
@@ -566,6 +574,16 @@ class PremiumDecisionWindow(DecisionWindow):
         self.today_worker = worker
         def success(result):
             self.today_worker = None
+            current = (
+                self._browse_state_signature(), self.decision_mode,
+                str(self.db.get_setting("chooser_runtime_bucket", "all")),
+                str(self.db.get_setting("chooser_mood", "neutral")),
+            )
+            if signature != current:
+                self.set_status("Contextul s-a schimbat; actualizez alegerea.", False)
+                if self.current_page == "today" and not self._ui_closing:
+                    QTimer.singleShot(0, self._load_today_async)
+                return
             self.set_status("Alegerea este gata.", False)
             self.today_result = result
             if self.current_page == "today":
@@ -789,6 +807,7 @@ class PremiumDecisionWindow(DecisionWindow):
         return page
 
     def _load_browse_async(self):
+        if self._ui_closing: return
         if self.browse_worker and self.browse_worker.isRunning(): return
         if self.metadata_worker and self.metadata_worker.isRunning():
             self.set_status("Finalizez verificarea datelor listei curente…",True)
@@ -802,6 +821,11 @@ class PremiumDecisionWindow(DecisionWindow):
         self.browse_worker=worker
         def success(recs):
             self.browse_worker=None
+            if generation_signature != self._browse_state_signature():
+                self.set_status("Datele s-au schimbat; actualizez recomandările.", False)
+                if self.current_page == "recommendations" and not self._ui_closing:
+                    QTimer.singleShot(0, self._load_browse_async)
+                return
             self.browse_result=list(recs)
             self.browse_cache_signature=generation_signature
             self.set_status("Recomandările sunt gata.",False)

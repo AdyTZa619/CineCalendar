@@ -220,8 +220,7 @@ class RomanianCinemaProvider:
             "x-imdb-user-country": "RO",
             "User-Agent": USER_AGENT,
         }
-        for start in range(1880, current_year + 1, 20):
-            end = min(current_year, start + 19)
+        def fetch_window(start: int, end: int) -> None:
             response = self.session.post(
                 IMDB_GRAPHQL,
                 json={"query": self.imdb_query(start, end)},
@@ -232,7 +231,18 @@ class RomanianCinemaProvider:
             payload = response.json()
             if payload.get("errors"):
                 raise requests.RequestException("IMDb GraphQL returned errors")
+            edges = (((payload.get("data") or {}).get("advancedTitleSearch") or {}).get("edges") or [])
+            if len(edges) >= 999:
+                if start == end:
+                    raise requests.RequestException(f"IMDb search capped at 999 titles for {start}")
+                middle = (start + end) // 2
+                fetch_window(start, middle)
+                fetch_window(middle + 1, end)
+                return
             out.update(self._extract_imdb_graphql_ids(payload))
+
+        for start in range(1880, current_year + 1, 20):
+            fetch_window(start, min(current_year, start + 19))
         return out
 
     def _curated_imdb_ids(self) -> set[str]:

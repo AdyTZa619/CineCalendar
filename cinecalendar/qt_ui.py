@@ -141,6 +141,7 @@ class CineCalendarWindow(QMainWindow):
 
     def __init__(self, service):
         super().__init__()
+        self._ui_closing = False
         self.s = service; self.db = service.db
         self.theme = self.db.get_setting("theme", "dark")
         self.current_page = "today"
@@ -160,15 +161,15 @@ class CineCalendarWindow(QMainWindow):
         self.undo_feedback_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
         self.undo_feedback_shortcut.activated.connect(self.undo_last_feedback)
         self.watch_timer = QTimer(self); self.watch_timer.timeout.connect(self.scan_ratings_folder); self.watch_timer.start(15000)
-        QTimer.singleShot(1200, self.auto_catalog_if_needed)
+        QTimer.singleShot(1200, lambda: self.auto_catalog_if_needed() if not self._ui_closing else None)
         self.imdb_sync_timer = QTimer(self)
         self.imdb_sync_timer.timeout.connect(lambda: self.sync_imdb_public(silent=True))
         self.imdb_sync_timer.start(30 * 60 * 1000)
-        QTimer.singleShot(2500, lambda: self.sync_imdb_public(silent=True))
+        QTimer.singleShot(2500, lambda: self.sync_imdb_public(silent=True) if not self._ui_closing else None)
         self.metadata_queue_timer = QTimer(self)
         self.metadata_queue_timer.timeout.connect(lambda: self.run_metadata_doctor(silent=True))
         self.metadata_queue_timer.start(15 * 60 * 1000)
-        QTimer.singleShot(20000, lambda: self.run_metadata_doctor(silent=True))
+        QTimer.singleShot(20000, lambda: self.run_metadata_doctor(silent=True) if not self._ui_closing else None)
 
     def _shutdown_ui_workers(self) -> None:
         """Stop timers and QThreads so closing the last window really ends the process."""
@@ -179,9 +180,14 @@ class CineCalendarWindow(QMainWindow):
             pass
 
         workers = []
-        for name in ("worker", "metadata_queue_worker", "update_worker", "metadata_worker", "v5_eval_worker"):
-            thread = getattr(self, name, None)
-            if thread is not None and thread not in workers:
+        # Pages attach their workers dynamically. Include every live page worker,
+        # otherwise closing during Romanian/Watchlist/calendar ranking leaves the EXE alive.
+        for name, thread in vars(self).items():
+            if (name == "worker" or name.endswith("_worker")) and isinstance(thread, QThread):
+                if thread not in workers:
+                    workers.append(thread)
+        for thread in self.findChildren(QThread):
+            if thread not in workers:
                 workers.append(thread)
         for thread in list(getattr(self, "poster_threads", []) or []):
             if thread is not None and thread not in workers:
@@ -208,6 +214,7 @@ class CineCalendarWindow(QMainWindow):
                 pass
 
     def closeEvent(self, event):
+        self._ui_closing = True
         self._shutdown_ui_workers()
         try:
             event.accept()
@@ -270,13 +277,18 @@ class CineCalendarWindow(QMainWindow):
 
     def _build_shell(self):
         root = QWidget(); self.setCentralWidget(root); h = QHBoxLayout(root); h.setContentsMargins(0,0,0,0); h.setSpacing(0)
-        side = QFrame(); side.setObjectName("Sidebar"); side.setFixedWidth(235); sv = QVBoxLayout(side); sv.setContentsMargins(16,18,16,16); sv.setSpacing(6)
+        side = QFrame(); side.setObjectName("Sidebar"); side.setFixedWidth(275); sv = QVBoxLayout(side); sv.setContentsMargins(16,18,16,16); sv.setSpacing(6)
         brand = QLabel("CineCalendar"); brand.setObjectName("Brand"); sv.addWidget(brand)
-        sub = QLabel("calendar cinematografic personal"); sub.setObjectName("Muted"); sv.addWidget(sub); sv.addSpacing(18)
+        sub = QLabel("calendar cinematografic personal"); sub.setObjectName("Muted"); sub.setWordWrap(True); sv.addWidget(sub); sv.addSpacing(12)
+        nav_scroll = QScrollArea(); nav_scroll.setObjectName("SidebarNav"); nav_scroll.setWidgetResizable(True)
+        nav_scroll.setFrameShape(QFrame.NoFrame)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        nav_body = QWidget(); nav_body.setObjectName("SidebarNavContent")
+        nav_layout = QVBoxLayout(nav_body); nav_layout.setContentsMargins(0,0,4,0); nav_layout.setSpacing(4)
         self.nav_buttons = {}
         for key, label in self.NAV:
-            b=QPushButton(label); b.setProperty("nav", True); b.clicked.connect(lambda _, k=key:self.show_page(k)); sv.addWidget(b); self.nav_buttons[key]=b
-        sv.addStretch(1)
+            b=QPushButton(label); b.setProperty("nav", True); b.clicked.connect(lambda _, k=key:self.show_page(k)); nav_layout.addWidget(b); self.nav_buttons[key]=b
+        nav_layout.addStretch(1); nav_scroll.setWidget(nav_body); sv.addWidget(nav_scroll,1)
         self.undo_feedback_button = QPushButton("Anulează ultimul feedback")
         self.undo_feedback_button.setEnabled(False)
         self.undo_feedback_button.setToolTip("Anulează exact ultima acțiune de feedback din sesiunea curentă (Ctrl+Z).")
@@ -292,6 +304,8 @@ class CineCalendarWindow(QMainWindow):
         self.status.setText(text); self.progress.setVisible(busy)
 
     def show_page(self, key: str):
+        if getattr(self, "_ui_closing", False):
+            return
         self.current_page = key
         while self.stack.count():
             w=self.stack.widget(0); self.stack.removeWidget(w); w.deleteLater()
@@ -416,6 +430,9 @@ class CineCalendarWindow(QMainWindow):
         QTimer.singleShot(0, self._pump_poster_queue)
 
     def _pump_poster_queue(self) -> None:
+        if self._ui_closing:
+            self._poster_queue.clear()
+            return
         while self._poster_active < self._poster_limit and self._poster_queue:
             request_id, url, path = self._poster_queue.pop(0)
             self._poster_active += 1
@@ -1260,7 +1277,7 @@ class CineCalendarWindow(QMainWindow):
 
         cat=self.card(); cl=QVBoxLayout(cat); ch=QLabel("Catalog de filme — automat"); ch.setObjectName("CardTitle"); cl.addWidget(ch)
         total,rated,cand=self.catalog_count(); info=QLabel(f"Catalog local: {total:,} titluri • evaluate: {rated:,} • candidați nevăzuți: {cand:,}. Catalogul se construiește automat din dataseturile oficiale IMDb."); info.setObjectName("Muted"); info.setWordWrap(True); cl.addWidget(info)
-        cr=QHBoxLayout(); b1=QPushButton("Pregătește / repară catalogul"); b1.setProperty("accent",True); b1.clicked.connect(lambda:self.bootstrap_catalog(False)); b2=QPushButton("Actualizează de la IMDb"); b2.clicked.connect(lambda:self.bootstrap_catalog(True)); b3=QPushButton("Import manual dataset (avansat)"); b3.clicked.connect(self.import_imdb_dataset_dialog); cr.addWidget(b1); cr.addWidget(b2); cr.addWidget(b3); cr.addStretch(1); cl.addLayout(cr); content.addWidget(cat)
+        cr=QGridLayout(); b1=QPushButton("Pregătește / repară catalogul"); b1.setProperty("accent",True); b1.clicked.connect(lambda:self.bootstrap_catalog(False)); b2=QPushButton("Actualizează de la IMDb"); b2.clicked.connect(lambda:self.bootstrap_catalog(True)); b3=QPushButton("Import manual dataset (avansat)"); b3.clicked.connect(self.import_imdb_dataset_dialog); cr.addWidget(b1,0,0); cr.addWidget(b2,0,1); cr.addWidget(b3,1,0,1,2,Qt.AlignLeft); cr.setColumnStretch(2,1); cl.addLayout(cr); content.addWidget(cat)
 
         tm=self.card(); tl=QVBoxLayout(tm); th=QLabel("TMDb — metadata semantică și postere"); th.setObjectName("CardTitle"); tl.addWidget(th)
         desc=QLabel("Opțional. Introdu propriul API Read Access Token pentru overview, keywords, țări, regizori și postere. Fără token, funcția rămâne dezactivată — nu este simulată."); desc.setObjectName("Muted"); desc.setWordWrap(True); tl.addWidget(desc)
@@ -1268,7 +1285,12 @@ class CineCalendarWindow(QMainWindow):
         tr=QHBoxLayout(); sv=QPushButton("Salvează token"); test=QPushButton("Testează"); enr=QPushButton("Îmbogățește 250 titluri"); sv.clicked.connect(lambda:self.save_tmdb_token(token.text())); test.clicked.connect(lambda:self.test_tmdb(token.text())); enr.clicked.connect(lambda:self.enrich_tmdb(token.text(),250)); tr.addWidget(sv); tr.addWidget(test); tr.addWidget(enr); tr.addStretch(1); tl.addLayout(tr); content.addWidget(tm)
 
         bk=self.card(); bl=QVBoxLayout(bk); bh=QLabel("Backup profil"); bh.setObjectName("CardTitle"); bl.addWidget(bh); br=QHBoxLayout(); e=QPushButton("Export profile"); i=QPushButton("Import profile"); e.clicked.connect(self.export_profile); i.clicked.connect(self.import_profile); br.addWidget(e); br.addWidget(i); br.addStretch(1); bl.addLayout(br); content.addWidget(bk)
-        credits=self.card(); xl=QVBoxLayout(credits); xh=QLabel("Surse și transparență"); xh.setObjectName("CardTitle"); xl.addWidget(xh); x=QLabel("Catalogul folosește dataseturile oficiale IMDb. Sincronizarea profilului și completarea unor metadate folosesc endpointurile publice IMDb, cu cache local și fallback-uri. TMDb rămâne opțional și folosește tokenul utilizatorului. Updaterul Stable este activ și verifică SHA-256, păstrează backup și face rollback dacă noua versiune nu pornește corect."); x.setObjectName("Muted"); x.setWordWrap(True); xl.addWidget(x); content.addWidget(credits)
+        update_text = (
+            "Updaterul Alpha este activ și verifică SHA-256, păstrează backup și face rollback dacă noua versiune nu pornește corect."
+            if is_v5_alpha() else
+            "Updaterul Stable este activ și verifică SHA-256, păstrează backup și face rollback dacă noua versiune nu pornește corect."
+        )
+        credits=self.card(); xl=QVBoxLayout(credits); xh=QLabel("Surse și transparență"); xh.setObjectName("CardTitle"); xl.addWidget(xh); x=QLabel("Catalogul folosește dataseturile oficiale IMDb. Sincronizarea profilului și completarea unor metadate folosesc endpointurile publice IMDb, cu cache local și fallback-uri. TMDb rămâne opțional și folosește tokenul utilizatorului. " + update_text); x.setObjectName("Muted"); x.setWordWrap(True); xl.addWidget(x); content.addWidget(credits)
         content.addStretch(1); return page
 
     def auto_catalog_if_needed(self):

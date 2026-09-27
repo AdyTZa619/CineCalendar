@@ -50,7 +50,7 @@ class DecisionWindow(CineCalendarWindow):
         alpha_mode = is_v5_alpha()
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Decision Engine")
         if bool(self.db.get_setting("auto_update_check", True)):
-            QTimer.singleShot(2800, lambda: self.check_updates(False))
+            QTimer.singleShot(2800, lambda: self.check_updates(False) if not self._ui_closing else None)
 
     def set_v5_trial_mode(self, mode: str):
         try:
