@@ -93,6 +93,60 @@ def test_queue_processor_completes_only_after_fields_are_saved(tmp_path):
     assert job["missing_json"] == "[]"
 
 
+
+
+def test_metadata_doctor_runs_imdb_batch_before_fallback_providers(tmp_path):
+    db = Database(tmp_path / "imdb-first.db")
+    movie_id = _movie(db, "tt9500001", "IMDb first")
+    assert queue_metadata_movie(db, movie_id, priority=900, reason="rated")
+
+    calls = []
+
+    def imdb_batch(provider_db, movie_ids):
+        calls.append("imdb")
+        assert movie_ids == [movie_id]
+        now = utcnow_iso()
+        with provider_db.tx() as con:
+            con.execute(
+                """UPDATE movies SET countries_json='["Romania"]',
+                   overview='Plot direct din IMDb',updated_at=? WHERE id=?""",
+                (now, movie_id),
+            )
+        return {movie_id: ["countries", "overview"]}
+
+    class FallbackProvider:
+        def __init__(self, provider_db):
+            self.db = provider_db
+
+        def enrich_by_imdb(self, movie):
+            calls.append("fallback")
+            assert movie.countries == ["Romania"]
+            assert movie.overview == "Plot direct din IMDb"
+            now = utcnow_iso()
+            with self.db.tx() as con:
+                con.execute(
+                    """UPDATE movies SET runtime_min=101,genres_json='["Drama"]',
+                       directors_json='["Director"]',poster_url='https://image.test/imdb-first.jpg',
+                       updated_at=? WHERE id=?""",
+                    (now, movie.id),
+                )
+            movie.runtime_min = 101
+            movie.genres = ["Drama"]
+            movie.directors = ["Director"]
+            movie.poster_url = "https://image.test/imdb-first.jpg"
+
+    result = process_metadata_queue(
+        db,
+        limit=5,
+        imdb_batch_enricher=imdb_batch,
+        open_factory=FallbackProvider,
+    )
+    assert calls[:2] == ["imdb", "fallback"]
+    assert result.attempted == 1
+    assert result.improved == 1
+    assert result.completed == 1
+
+
 def test_foreground_attempt_sets_backoff_and_requeue_does_not_cancel_it(tmp_path):
     db = Database(tmp_path / "backoff.db")
     movie_id = _movie(db, "tt9250001", "Still incomplete")
