@@ -496,6 +496,20 @@ class CineCalendarWindow(QMainWindow):
                 V5OnlineDiscovery(self.db).refresh(force=False)
             except Exception as exc:
                 self.s.log.warning("V5 online discovery refresh failed: %s", exc)
+
+            # Once factual readiness is reached, train/evaluate the personal utility model in the
+            # same background worker. This is shadow-only: it records diagnostics and does not
+            # change the visible ranking.
+            if is_v5_alpha():
+                try:
+                    live_knowledge = V5KnowledgeBase(self.db).status()
+                    if bool(live_knowledge.get("ready_for_rich_ranker")):
+                        v5 = getattr(self.s.recommender, "v5", None)
+                        ranker = getattr(v5, "personal_ranker", None)
+                        if ranker is not None:
+                            self.db.set_setting("v5_ranker_shadow_status", ranker.status())
+                except Exception as exc:
+                    self.s.log.warning("V5 shadow ranker evaluation failed: %s", exc)
             return result
 
         worker = WorkerThread(fn, self)
@@ -588,14 +602,31 @@ class CineCalendarWindow(QMainWindow):
         )
         v5_state.setWordWrap(True); v5_state.setObjectName("Muted"); v5_layout.addWidget(v5_state)
         ready = bool(v5_status.get("ready_for_rich_ranker"))
-        v5_note = QLabel(
-            "Rankerul V5 bogat este pregătit pentru testare."
-            if ready else
-            (
+        shadow = self.db.get_setting("v5_ranker_shadow_status", {}) or {}
+        shadow_validated = bool(shadow.get("validated")) if isinstance(shadow, dict) else False
+        if ready and isinstance(shadow, dict) and shadow.get("state") == "ready":
+            like_auc = shadow.get("like_auc")
+            dislike_auc = shadow.get("dislike_auc")
+            ndcg = shadow.get("model_ndcg25")
+            public_ndcg = shadow.get("public_ndcg25")
+            lift = shadow.get("top20_lift")
+            verdict = "trece validarea internă" if shadow_validated else "NU trece încă validarea internă"
+            note_text = (
+                f"Shadow ranker: {verdict}. "
+                f"AUC 8+: {like_auc if like_auc is not None else '—'} • "
+                f"AUC 1–4: {dislike_auc if dislike_auc is not None else '—'} • "
+                f"NDCG@25: {ndcg if ndcg is not None else '—'} vs public {public_ndcg if public_ndcg is not None else '—'} • "
+                f"lift Top20: {lift if lift is not None else '—'}. "
+                "Clasamentul vizibil NU este modificat."
+            )
+        elif ready:
+            note_text = "Datele sunt pregătite. Evaluarea shadow a rankerului V5 pornește automat în fundal; clasamentul vizibil rămâne neschimbat."
+        else:
+            note_text = (
                 "Rankerul V5 bogat rămâne blocat până când atât filmele apreciate, cât și cele respinse au suficiente date factuale. "
                 + ("Auto-completarea V5 este activă și continuă singură în fundal." if is_v5_alpha() else "")
             )
-        )
+        v5_note = QLabel(note_text)
         v5_note.setWordWrap(True); v5_note.setObjectName("Muted"); v5_layout.addWidget(v5_note)
         content.addWidget(v5_card)
 
