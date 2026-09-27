@@ -528,7 +528,8 @@ class DecisionWindow(CineCalendarWindow):
             f"V5 {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
             f"NDCG@25 mediu: V16 {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
             f"V5 {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
-            f"Gard extern: {'TRECUT' if event_guard.get('passed') else 'netrecut'} • "
+            f"Gard extern: "
+            f"{'TRECUT' if event_guard.get('passed') else ('NECONCLUDENT' if not event_guard.get('informative') else 'netrecut')} • "
             f"{event_guard.get('reason', '')}"
         )
         evt.setWordWrap(True); evt.setObjectName("Muted"); evl.addWidget(evt)
