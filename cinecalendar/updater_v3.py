@@ -127,7 +127,7 @@ def stage_and_start_update(
     helper = updates / "apply_update.ps1"
     request_path = updates / "apply_update.json"
 
-    progress("Descarc pachetul Premium…")
+    progress("Descarc pachetul CineCalendar…")
     _download_to(info.url, pending_zip, progress)
     got = sha256_path(pending_zip)
     if got.lower() != info.sha256.lower():
@@ -135,7 +135,7 @@ def stage_and_start_update(
         raise RuntimeError(f"SHA-256 diferit. Așteptat {info.sha256}, primit {got}.")
 
     progress("SHA-256 verificat. Pregătesc fișierele…")
-    _safe_extract_zip(pending_zip, staged)
+    _safe_extract_zip(pending_zip, staged, exe_name=current.name)
     helper.write_text(_powershell_helper(), encoding="utf-8-sig")
 
     req = NativeUpdateRequest(
@@ -149,6 +149,7 @@ def stage_and_start_update(
         log=str(log),
         expected_version=info.version,
         expected_sha256=info.sha256,
+        exe_name=current.name,
         updates_dir=str(updates),
         helper_script=str(helper),
         request_path=str(request_path),
