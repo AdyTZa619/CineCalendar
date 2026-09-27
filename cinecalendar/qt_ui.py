@@ -179,7 +179,7 @@ class CineCalendarWindow(QMainWindow):
             pass
 
         workers = []
-        for name in ("worker", "metadata_queue_worker", "update_worker", "metadata_worker"):
+        for name in ("worker", "metadata_queue_worker", "update_worker", "metadata_worker", "v5_eval_worker"):
             thread = getattr(self, name, None)
             if thread is not None and thread not in workers:
                 workers.append(thread)
