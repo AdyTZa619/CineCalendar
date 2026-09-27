@@ -273,8 +273,6 @@ def install_premium_tabs_v5(window_cls) -> None:
 
     def apply_theme(self):
         old_apply_theme(self)
-        app = QWidget().style()  # keep Qt initialized before the additive stylesheet is applied
-        del app
         current = self.styleSheet()
         extra = """
             QLabel#NavSection {
