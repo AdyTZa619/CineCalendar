@@ -55,17 +55,20 @@ def _event_guard(baseline: dict, challenger: dict) -> dict:
     bbad = _metric(baseline, "top25_dislike_rate")
     cbad = _metric(challenger, "top25_dislike_rate")
 
-    positive_candidate_hits = (
-        int(baseline.get("candidate_8_plus_hits", 0) or 0)
-        + int(baseline.get("candidate_9_plus_hits", 0) or 0)
-        + int(challenger.get("candidate_8_plus_hits", 0) or 0)
-        + int(challenger.get("candidate_9_plus_hits", 0) or 0)
-    )
     positive_targets = max(
         int(baseline.get("liked_8_plus", 0) or 0),
         int(challenger.get("liked_8_plus", 0) or 0),
     )
-    informative = bool(positive_targets > 0 and positive_candidate_hits > 0)
+    # Candidate hits only prove retrieval worked. For an external *ranking* guard we need at least
+    # one positive target to reach the evaluated final list. Otherwise a 0-vs-0 ranking comparison
+    # is inconclusive and must never authorize a visible trial.
+    positive_final_hits = (
+        int(baseline.get("top50_8_plus_hits", 0) or 0)
+        + int(baseline.get("top50_9_plus_hits", 0) or 0)
+        + int(challenger.get("top50_8_plus_hits", 0) or 0)
+        + int(challenger.get("top50_9_plus_hits", 0) or 0)
+    )
+    informative = bool(positive_targets > 0 and positive_final_hits > 0)
 
     checks = {
         "candidate_8_plus_not_worse": _not_worse(bc8, cc8, 0.010),
@@ -86,9 +89,9 @@ def _event_guard(baseline: dict, challenger: dict) -> dict:
             "top25_dislike": round(cbad - bbad, 6) if bbad is not None and cbad is not None else None,
         },
         "reason": (
-            "Replay-ul pe zile reale are suficiente hit-uri pentru gardul extern."
+            "Replay-ul pe zile reale are hit-uri pozitive în Top50 și poate valida rankingul final."
             if informative else
-            "Replay-ul pe zile reale este neconcludent: nici candidate pool-ul nu a prins suficiente rezultate pozitive."
+            "Replay-ul pe zile reale este NECONCLUDENT: candidate pool-ul poate găsi filme bune, dar nici V16, nici V5 nu au pus vreun 8+/9+ în Top50."
         ),
     }
 
@@ -123,7 +126,7 @@ def run_v5_evaluation(
     *,
     progress=None,
     rolling_folds: int = 3,
-    event_days: int = 8,
+    event_days: int = 12,
     candidate_limit: int = 1800,
     final_limit: int = 50,
     als_timeout: float = 150.0,
