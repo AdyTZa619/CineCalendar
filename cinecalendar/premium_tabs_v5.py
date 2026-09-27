@@ -280,7 +280,6 @@ def install_premium_tabs_v5(window_cls) -> None:
 
     def apply_theme(self):
         old_apply_theme(self)
-        current = self.styleSheet()
         extra = """
             QLabel#NavSection {
                 color: rgba(165,174,192,0.78);
@@ -295,7 +294,7 @@ def install_premium_tabs_v5(window_cls) -> None:
                 border-radius: 12px;
             }
         """
-        self.setStyleSheet(current + extra)
+        self.setStyleSheet(extra)
 
     # The application stylesheet lives on QApplication, while setStyleSheet on the window is
     # additive and keeps these two small navigation/guide styles local to this surface.
