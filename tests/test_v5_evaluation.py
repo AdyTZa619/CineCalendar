@@ -2,6 +2,7 @@ import pytest
 
 from cinecalendar.v5_lab import V5LabRecommendationEngine
 from cinecalendar.v5_event_replay import aggregate_event_reports
+from cinecalendar.v5_evaluation import _event_guard
 from cinecalendar.v5_shadow_ranker import (
     V5ShadowRankedEngine,
     V5ShadowRankedEngine10,
@@ -74,3 +75,43 @@ def test_event_replay_aggregates_candidate_top25_top50_and_ndcg():
     assert out["top25_8_plus_recall"] == pytest.approx(0.5)
     assert out["top50_8_plus_recall"] == pytest.approx(1.0)
     assert out["mean_ndcg25"] == pytest.approx(0.4)
+
+
+def test_external_guard_rejects_zero_final_hits_even_when_candidate_pool_has_hits():
+    baseline = {
+        "liked_8_plus": 6,
+        "loved_9_plus": 0,
+        "candidate_8_plus_hits": 4,
+        "candidate_8_plus_recall": 4/6,
+        "candidate_9_plus_recall": None,
+        "top25_8_plus_recall": 0.0,
+        "top25_9_plus_recall": None,
+        "top25_dislike_rate": 0.0,
+        "top50_8_plus_hits": 0,
+        "top50_9_plus_hits": 0,
+    }
+    challenger = dict(baseline)
+    out = _event_guard(baseline, challenger)
+    assert out["informative"] is False
+    assert out["passed"] is False
+    assert "NECONCLUDENT" in out["reason"]
+
+
+def test_external_guard_can_be_informative_with_positive_top50_evidence():
+    baseline = {
+        "liked_8_plus": 6,
+        "loved_9_plus": 0,
+        "candidate_8_plus_hits": 4,
+        "candidate_8_plus_recall": 4/6,
+        "candidate_9_plus_recall": None,
+        "top25_8_plus_recall": 1/6,
+        "top25_9_plus_recall": None,
+        "top25_dislike_rate": 0.0,
+        "top50_8_plus_hits": 1,
+        "top50_9_plus_hits": 0,
+    }
+    challenger = dict(baseline)
+    challenger["top50_8_plus_hits"] = 2
+    out = _event_guard(baseline, challenger)
+    assert out["informative"] is True
+    assert out["passed"] is True
