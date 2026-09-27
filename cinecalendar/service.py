@@ -13,6 +13,7 @@ from .util import AppPaths
 from .full_catalog_shadow_v414 import FullCatalogShadowEvaluatorV414
 from .v5_alpha_runtime import ensure_alpha_database, is_v5_alpha
 from .v5_lab import V5LabRecommendationEngine
+from .v5_visible_trial import AlphaTrialRecommender, V5VisibleTrialEngine20
 
 
 class CineCalendarService:
@@ -50,29 +51,62 @@ class CineCalendarService:
         # backtests have a verdict. Production and evaluation share the same canonical wrappers.
         self.quality_manager = RecommendationQualityManagerV47(self.db)
         if self.v5_alpha:
-            # Alpha must exercise the real V5 retrieval/pipeline while keeping all proven
-            # production wrappers around it. Stable selection and rollback policy remain untouched.
-            engine_cls = V5LabRecommendationEngine
+            # Alpha 7 keeps both sides resident so the user can switch instantly between the
+            # established V16 stack and the approved V5 20% trial. Stable uses neither object.
+            self.alpha_v16_recommender = build_production_recommender(
+                self.db, FastRecommendationEngineV16, self.calendar
+            )
+            self.alpha_v5_recommender = build_production_recommender(
+                self.db, V5VisibleTrialEngine20, self.calendar
+            )
+            self.recommender = AlphaTrialRecommender(
+                self.db, self.alpha_v16_recommender, self.alpha_v5_recommender
+            )
+            self.alpha_v16_recommender.collaborative.start_background()
+            self.alpha_v5_recommender.collaborative.start_background()
+            runtime_engine = self.recommender.active
         else:
             self.quality_manager.refresh_live_guard()
             engine_cls = self.quality_manager.preferred_engine_class()
             if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
                 engine_cls = FastRecommendationEngineV16
+            self.recommender = build_production_recommender(self.db, engine_cls, self.calendar)
+            self.recommender.collaborative.start_background()
+            runtime_engine = self.recommender
 
-        self.recommender = build_production_recommender(self.db, engine_cls, self.calendar)
-        self.quality_manager.set_runtime_engine(self.recommender)
-        self.production_stack = production_stack_status(self.recommender)
+        self.quality_manager.set_runtime_engine(runtime_engine)
+        self.production_stack = production_stack_status(runtime_engine)
         self.shadow_retrieval = FullCatalogShadowEvaluatorV414(
             self.db,
-            self.recommender.collaborative,
+            runtime_engine.collaborative,
             str(self.production_stack.get("recommendation_engine_identity") or ""),
         )
-        self.recommender.collaborative.start_background()
 
         # Stable keeps its established quality-manager schedule. Alpha deliberately freezes that
-        # selector so its measurements are about V5, not a background switch to another engine.
+        # selector so its measurements are about the explicit V16/V5 trial, not a background switch.
         if not self.v5_alpha:
             self.quality_manager.start_background()
+
+    def alpha_trial_status(self) -> dict:
+        if not self.v5_alpha or not hasattr(self.recommender, "trial_status"):
+            return {"available": False, "mode": "stable"}
+        status = dict(self.recommender.trial_status())
+        status["available"] = True
+        return status
+
+    def set_alpha_trial_mode(self, mode: str) -> dict:
+        if not self.v5_alpha or not hasattr(self.recommender, "set_mode"):
+            raise RuntimeError("Comutatorul V16/V5 este disponibil numai în V5 Alpha.")
+        status = dict(self.recommender.set_mode(mode))
+        runtime_engine = self.recommender.active
+        self.quality_manager.set_runtime_engine(runtime_engine)
+        self.production_stack = production_stack_status(runtime_engine)
+        self.log.info(
+            "V5 visible trial mode changed: mode=%s eligible=%s",
+            status.get("mode"),
+            status.get("eligible"),
+        )
+        return status
 
     def _defaults(self):
         # No global genre vetoes. Taste is learned from ratings instead of hard exclusions.
