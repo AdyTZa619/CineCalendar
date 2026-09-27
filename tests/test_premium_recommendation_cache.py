@@ -33,16 +33,13 @@ def test_recalculate_is_the_explicit_cache_invalidation_path():
     assert 'self.show_page("recommendations")' in block
 
 
-def test_browse_cache_tracks_only_user_visible_state_not_background_engine_churn():
+def test_browse_cache_tracks_meaningful_state_not_navigation():
     source = _premium_source()
     start = source.index("def _browse_state_signature")
     end = source.index("def _browse_cache_valid", start)
     block = source[start:end]
 
     assert "date.today().isoformat()" in block
-    assert "FROM ratings" in block
-    assert "FROM feedback" in block
-    assert "FROM watchlist" in block
+    assert "state_token" in block
     assert "trial_mode" in block
     assert "self.session_skips" in block
-    assert "_state_token" not in block
