@@ -12,12 +12,16 @@ from cinecalendar.v5_visible_trial import (
 class FakeEngine:
     def __init__(self, recs):
         self.recs = list(recs)
+        self.recommend_calls = 0
+        self.decision_calls = 0
 
     def recommend(self, **kwargs):
+        self.recommend_calls += 1
         count = int(kwargs.get("count", 3))
         return list(self.recs[:count])
 
     def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
+        self.decision_calls += 1
         recs = list(self.recs[:3])
         return (recs[0] if recs else None, recs[1:3])
 
@@ -98,3 +102,59 @@ def test_alpha_trial_refuses_v5_without_eligible_report(tmp_path):
         pass
     else:
         raise AssertionError("V5 trial should stay blocked without an eligible report")
+
+
+def test_model_switch_reuses_the_exact_same_frozen_pair(tmp_path):
+    db = Database(tmp_path / "trial-frozen.db")
+    _eligible(db)
+    v16 = FakeEngine([_rec(1, 0.75), _rec(2, 0.70), _rec(3, 0.68)])
+    v5 = FakeEngine([_rec(2, 0.80), _rec(1, 0.72), _rec(3, 0.69)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+
+    # First exposure computes both sides once.
+    first = proxy.recommend(
+        when=date(2026, 9, 27), count=3, slot="browse", candidate_limit=45000
+    )
+    assert [r.movie.id for r in first] == [2, 1, 3]
+    assert v16.recommend_calls == 1
+    assert v5.recommend_calls == 1
+
+    with db.connect() as con:
+        first_round = con.execute(
+            "SELECT round_id FROM v5_trial_audit ORDER BY id DESC LIMIT 1"
+        ).fetchone()["round_id"]
+
+    # Switching to V16 must not run either engine again.
+    proxy.set_mode(MODE_V16)
+    second = proxy.recommend(
+        when=date(2026, 9, 27), count=3, slot="browse", candidate_limit=45000
+    )
+    assert [r.movie.id for r in second] == [1, 2, 3]
+    assert v16.recommend_calls == 1
+    assert v5.recommend_calls == 1
+
+    with db.connect() as con:
+        second_round = con.execute(
+            "SELECT round_id FROM v5_trial_audit ORDER BY id DESC LIMIT 1"
+        ).fetchone()["round_id"]
+    assert second_round == first_round
+
+
+def test_explicit_invalidation_forces_a_fresh_pair(tmp_path):
+    db = Database(tmp_path / "trial-recalc.db")
+    _eligible(db)
+    v16 = FakeEngine([_rec(1, 0.75), _rec(2, 0.70)])
+    v5 = FakeEngine([_rec(2, 0.80), _rec(1, 0.72)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+
+    proxy.recommend(
+        when=date(2026, 9, 27), count=2, slot="browse", candidate_limit=45000
+    )
+    proxy.set_mode(MODE_V16)
+    proxy.invalidate_round("browse")
+    proxy.recommend(
+        when=date(2026, 9, 27), count=2, slot="browse", candidate_limit=45000
+    )
+
+    assert v16.recommend_calls == 2
+    assert v5.recommend_calls == 2
