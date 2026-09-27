@@ -17,6 +17,8 @@ permissions:
 
 jobs:
   build:
+    # v5/core-alpha1 is already validated by its push build; skip the duplicate PR-triggered copy.
+    if: github.event_name != 'pull_request' || github.head_ref != 'v5/core-alpha1'
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -263,6 +265,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          git fetch origin v5/core-alpha1 --tags
+          $current = (git rev-parse HEAD).Trim()
+          $remote = (git rev-parse origin/v5/core-alpha1).Trim()
+          if ($current -ne $remote) {
+            Write-Host "Un build V5 Alpha mai nou există deja ($remote); nu public buildul vechi $current."
+            exit 0
+          }
+
           $tag = 'cinecalendar-v5-alpha'
           $zipName = '${{ steps.package_v5_alpha.outputs.zip_name }}'
           $sha = '${{ steps.package_v5_alpha.outputs.zip_sha }}'
