@@ -7,6 +7,7 @@ import pytest
 from cinecalendar.db import Database
 from cinecalendar.imdb_sync import (
     backfill_public_rating_metadata,
+    enrich_movies_from_imdb_graphql,
     fetch_public_ratings,
     resolve_public_user_id,
     sync_public_ratings,
@@ -378,6 +379,88 @@ def test_public_sync_metadata_backfill_fills_sparse_profile_rows(tmp_path: Path)
     assert float(row["imdb_rating"]) == 4.5
     assert int(row["num_votes"]) == 16
     assert row["poster_url"] == "https://m.media-amazon.com/images/M/jana.jpg"
+
+
+
+
+def test_imdb_first_batch_enrichment_fills_plot_and_country_from_exact_tt_id(tmp_path: Path):
+    db = Database(tmp_path / "imdb-rich.db")
+    now = "2026-09-27T00:00:00+00:00"
+    with db.tx() as con:
+        cur = con.execute(
+            """INSERT INTO movies(
+                imdb_id,identity_key,title,original_title,title_norm,original_title_norm,
+                year,title_type,genres_json,directors_json,countries_json,overview,
+                keywords_json,semantic_json,source,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "tt0405094","lives|leben|2006|movie","The Lives of Others","Das Leben der Anderen",
+                "the lives of others","das leben der anderen",2006,"Movie","[]","[]","[]","",
+                "[]","{}","imdb_csv",now,now,
+            ),
+        )
+        movie_id = int(cur.lastrowid)
+
+    base = {
+        "data": {
+            "titles": [{
+                "id": "tt0405094",
+                "runtime": {"seconds": 8220},
+                "ratingsSummary": {"aggregateRating": 8.4, "voteCount": 420000},
+                "genres": {"genres": [{"text": "Drama"}, {"text": "Thriller"}]},
+                "primaryImage": {"url": "https://m.media-amazon.com/images/M/test.jpg"},
+                "principalCredits": [{
+                    "category": {"id": "director", "text": "Director"},
+                    "credits": [{"name": {"nameText": {"text": "Florian Henckel von Donnersmarck"}}}],
+                }],
+            }]
+        }
+    }
+    rich = {
+        "data": {
+            "titles": [{
+                "id": "tt0405094",
+                "plot": {"plotText": {"plainText": "An officer monitors a playwright in East Berlin."}},
+                "countriesOfOrigin": {"countries": [{"id": "DE", "text": "Germany"}]},
+            }]
+        }
+    }
+
+    changed = enrich_movies_from_imdb_graphql(
+        db,
+        [movie_id],
+        session=Session([base, rich]),
+    )
+    assert movie_id in changed
+    assert "overview" in changed[movie_id]
+    assert "countries" in changed[movie_id]
+
+    with db.connect() as con:
+        row = con.execute(
+            """SELECT runtime_min,genres_json,directors_json,countries_json,overview,
+                      imdb_rating,num_votes,poster_url,semantic_json
+               FROM movies WHERE id=?""",
+            (movie_id,),
+        ).fetchone()
+        provenance = {
+            r["field"]: r["provider"]
+            for r in con.execute(
+                "SELECT field,provider FROM metadata_provenance WHERE movie_id=?",
+                (movie_id,),
+            ).fetchall()
+        }
+
+    assert int(row["runtime_min"]) == 137
+    assert row["genres_json"] == '["Drama","Thriller"]'
+    assert row["directors_json"] == '["Florian Henckel von Donnersmarck"]'
+    assert row["countries_json"] == '["Germany"]'
+    assert "East Berlin" in row["overview"]
+    assert float(row["imdb_rating"]) == 8.4
+    assert int(row["num_votes"]) == 420000
+    assert row["poster_url"] == "https://m.media-amazon.com/images/M/test.jpg"
+    assert row["semantic_json"] != "{}"
+    assert provenance["overview"] == "imdb_graphql"
+    assert provenance["countries"] == "imdb_graphql"
 
 
 def test_existing_csv_rating_keeps_export_provenance_when_live_confirmed(tmp_path: Path):
