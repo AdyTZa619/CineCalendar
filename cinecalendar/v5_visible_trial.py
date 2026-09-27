@@ -7,7 +7,7 @@ from .util import utcnow_iso
 from .v5_shadow_ranker import V5ShadowRankedEngine20
 
 
-V5_VISIBLE_TRIAL_VERSION = "v5-visible-trial-alpha1"
+V5_VISIBLE_TRIAL_VERSION = "v5-visible-trial-alpha3"
 MODE_V16 = "v16"
 MODE_V5_20 = "v5_20"
 
@@ -340,6 +340,46 @@ class AlphaTrialRecommender:
             recorder = getattr(self.active, "_record_selected", None)
             if callable(recorder):
                 recorder(active_recs, when, slot, len(active_recs))
+        return active_recs
+
+    def recommend_romanian(self, when=None, count=9):
+        """Run the Romanian lane as the same frozen V16/V5 comparison used elsewhere."""
+        when = when or date.today()
+        slot_key = "romanian"
+        request_key = (
+            when.isoformat(),
+            int(count),
+            self._user_state_token(),
+        )
+        cached = self._round_cache.get(slot_key)
+        reuse = (
+            slot_key in self._reuse_after_mode_switch
+            and isinstance(cached, dict)
+            and cached.get("request_key") == request_key
+        )
+        if reuse:
+            v16_recs = list(cached.get("v16") or [])
+            v5_recs = list(cached.get("v5") or [])
+            round_id = str(cached.get("round_id") or uuid.uuid4().hex)
+            generated_at = str(cached.get("generated_at") or utcnow_iso())
+        else:
+            v16_recs = list(self.v16.recommend_romanian(when=when, count=count))
+            v5_recs = list(self.v5.recommend_romanian(when=when, count=count))
+            round_id = uuid.uuid4().hex
+            generated_at = utcnow_iso()
+            self._round_cache[slot_key] = {
+                "request_key": request_key,
+                "v16": list(v16_recs),
+                "v5": list(v5_recs),
+                "round_id": round_id,
+                "generated_at": generated_at,
+            }
+        self._reuse_after_mode_switch.discard(slot_key)
+        active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
+        self._annotate_and_persist(
+            active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
+            round_id=round_id, generated_at=generated_at,
+        )
         return active_recs
 
     def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
