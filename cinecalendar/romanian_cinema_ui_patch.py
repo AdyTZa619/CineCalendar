@@ -19,11 +19,17 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         nav.insert(position, ("romanian", "Recomandări românești"))
         window_cls.NAV = nav
 
+    def _recalculate_romanian(self):
+        invalidate = getattr(self.s.recommender, "invalidate_round", None)
+        if callable(invalidate):
+            invalidate("romanian")
+        self.show_page("romanian")
+
     def page_romanian(self):
         page, content = self.page_shell(
             "Recomandări românești",
             "Selecție personalizată din filme cu limba originală română. Nu trebuie să setezi nimic.",
-            [("Recalculează", lambda: self.show_page("romanian"), True)],
+            [("Recalculează", self._recalculate_romanian, True)],
         )
         self.romanian_content = content
         if self.catalog_count()[2] <= 0:
@@ -118,14 +124,33 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         fl = QVBoxLayout(footer); fl.setContentsMargins(18, 14, 18, 14)
         src = status.get("source", "")
         count = int(status.get("external_count", 0) or 0)
-        label = "Lista de eligibilitate verificată după limba originală este memorată local și se actualizează rar."
+        counts = dict(status.get("source_counts") or {})
+        source_labels = {
+            "imdb": "IMDb",
+            "wikidata": "Wikidata",
+            "tmdb": "TMDb",
+            "curated": "catalog RO verificat",
+            "verified": "cache verificat",
+        }
+        parts = [
+            f"{source_labels.get(key, key)} {int(value):,}"
+            for key, value in counts.items()
+            if int(value or 0) > 0
+        ]
+        label = "Eligibilitatea este verificată din mai multe surse; țara locală singură nu este suficientă."
         if count:
-            label = f"Bază strictă de eligibilitate: {count:,} identificatori IMDb verificați cu limba originală română și România ca țară de origine."
-        note = QLabel(label + (f" Sursă curentă: {src}." if src else ""))
+            label = (
+                f"Bază strictă: {count:,} identificatori IMDb confirmați ca producții cu limba originală română "
+                "și România ca țară de origine."
+            )
+        if parts:
+            label += " Surse: " + " • ".join(parts) + "."
+        note = QLabel(label + (f" Stare: {src}." if src else ""))
         note.setObjectName("Muted"); note.setWordWrap(True); fl.addWidget(note)
         content.addWidget(footer)
         content.addStretch(1)
 
+    window_cls._recalculate_romanian = _recalculate_romanian
     window_cls.page_romanian = page_romanian
     window_cls._load_romanian_async = _load_romanian_async
     window_cls._render_romanian = _render_romanian
