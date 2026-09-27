@@ -196,6 +196,64 @@ def install_premium_tabs_v5(window_cls) -> None:
         self.stack = QStackedWidget()
         h.addWidget(self.stack, 1)
 
+    def page_shell(self, title: str, subtitle: str = "", actions=None):
+        """Shared Premium shell used by every tab."""
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setSpacing(14)
+
+        header = QFrame()
+        header.setObjectName("PageHeader")
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(22, 18, 22, 18)
+        hl.setSpacing(16)
+
+        left = QVBoxLayout()
+        left.setSpacing(4)
+        group_name = next(
+            (name for name, keys in _GROUPS if self.current_page in keys),
+            "CINECALENDAR",
+        )
+        kicker = QLabel(group_name)
+        kicker.setObjectName("Kicker")
+        left.addWidget(kicker)
+        t = QLabel(title)
+        t.setObjectName("PageTitle")
+        t.setWordWrap(True)
+        left.addWidget(t)
+        if subtitle:
+            sub = QLabel(subtitle)
+            sub.setObjectName("Muted")
+            sub.setWordWrap(True)
+            left.addWidget(sub)
+        hl.addLayout(left, 1)
+
+        if actions:
+            action_box = QHBoxLayout()
+            action_box.setSpacing(8)
+            for text_value, fn, accent in actions:
+                button = QPushButton(text_value)
+                button.setProperty("accent", bool(accent))
+                button.clicked.connect(fn)
+                action_box.addWidget(button)
+            hl.addLayout(action_box)
+
+        outer.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        content = QVBoxLayout(inner)
+        content.setContentsMargins(0, 2, 6, 10)
+        content.setSpacing(14)
+        content.setAlignment(Qt.AlignTop)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll, 1)
+        return page, content
+
     def _insert_guide(self, page, heading: str, text: str):
         scroll = page.findChild(QScrollArea)
         if scroll is None or scroll.widget() is None:
@@ -227,9 +285,10 @@ def install_premium_tabs_v5(window_cls) -> None:
             return page
         return wrapped
 
-    # Replace the inherited shell itself. Without this assignment the grouped
-    # navigation code exists but the application still constructs the legacy sidebar.
+    # Replace both shared construction primitives. Every page calls page_shell(),
+    # so this changes the actual tab content surface as well as the sidebar.
     window_cls._build_shell = _build_shell
+    window_cls.page_shell = page_shell
 
     for key, original in originals.items():
         setattr(window_cls, f"page_{key}", _wrap_page(key, original))
@@ -237,6 +296,10 @@ def install_premium_tabs_v5(window_cls) -> None:
     if callable(original_v5_lab):
         def page_v5_lab(self):
             page = original_v5_lab(self)
+            # Hide the old duplicate model buttons; the new primary switch lives at the top.
+            for button in page.findChildren(QPushButton):
+                if button.text() in {"Folosește V16", "Folosește V5 20%"}:
+                    button.hide()
             scroll = page.findChild(QScrollArea)
             if scroll is None or scroll.widget() is None or scroll.widget().layout() is None:
                 return page
@@ -292,10 +355,15 @@ def install_premium_tabs_v5(window_cls) -> None:
                 letter-spacing: 1.1px;
                 padding: 8px 10px 3px 10px;
             }
+            QFrame#PageHeader {
+                background: rgba(255,255,255,0.025);
+                border: 1px solid rgba(170,178,192,0.18);
+                border-radius: 18px;
+            }
             QFrame#GuideCard {
                 background: rgba(215,170,85,0.055);
                 border: 1px solid rgba(215,170,85,0.22);
-                border-radius: 12px;
+                border-radius: 14px;
             }
         """
         self.setStyleSheet(extra)
