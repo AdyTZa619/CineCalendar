@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: ["main"]
   push:
-    branches: ["main", "feature/imdb-auto-sync"]
+    branches: ["main", "feature/imdb-auto-sync", "v5/core-alpha1"]
     paths-ignore:
       - "update-v2.json"
       - "collaborative-model.json"
@@ -185,7 +185,7 @@ jobs:
           retention-days: 30
 
       - name: Build V5 Alpha portable folder
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/v5/core-alpha1')
         shell: pwsh
         run: |
           python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar-V5-Alpha --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit launcher_v5_alpha.py
@@ -199,7 +199,7 @@ jobs:
           Write-Host "V5 Alpha folder bytes: $((Get-ChildItem 'dist\CineCalendar-V5-Alpha' -Recurse -File | Measure-Object Length -Sum).Sum)"
 
       - name: Smoke launch V5 Alpha
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/v5/core-alpha1')
         shell: pwsh
         run: |
           $env:CINECALENDAR_DATA_DIR = Join-Path $env:RUNNER_TEMP 'cinecalendar-v5-alpha-smoke-data'
@@ -216,7 +216,7 @@ jobs:
           if (!(Test-Path $db)) { throw 'V5 Alpha smoke DB was not created in isolated data root' }
 
       - name: Package V5 Alpha portable build
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/v5/core-alpha1')
         id: package_v5_alpha
         shell: pwsh
         run: |
@@ -229,7 +229,7 @@ jobs:
           - Pornește CineCalendar-V5-Alpha.exe.
           - La prima pornire, Alpha caută CineCalendarData\data\cinecalendar.db și creează o copie SQLite proprie în CineCalendarV5AlphaData.
           - Baza Stable este deschisă doar pentru snapshot și NU este modificată de Alpha.
-          - Updaterul Stable este dezactivat în acest build.
+          - V5 Alpha are canal de update automat separat; CineCalendar Stable nu este modificat.
           - Recomandările rulează motorul V5 Lab real, cu retrieval local + discovery online cache-uit.
           - Metadata Doctor îmbogățește copia profilului V5 și arată separat acoperirea ratingurilor 8–10 și 1–4.
           - Dacă baza Stable nu este găsită, Alpha se oprește în loc să creeze în tăcere un profil gol.
@@ -238,14 +238,17 @@ jobs:
           $zipName = 'CineCalendar-V5-Alpha-Windows-x64.zip'
           Compress-Archive -Path 'dist\CineCalendar-V5-Alpha\*' -DestinationPath $zipName -Force
           $sha = (Get-FileHash $zipName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $alphaVersion = (python -c "from cinecalendar.v5_alpha_runtime import V5_ALPHA_VERSION; print(V5_ALPHA_VERSION)").Trim()
+          Write-Host "V5 Alpha version: $alphaVersion"
           Write-Host "V5 Alpha ZIP: $zipName"
           Write-Host "V5 Alpha ZIP bytes: $((Get-Item $zipName).Length)"
           Write-Host "V5 Alpha ZIP SHA-256: $sha"
+          "version=$alphaVersion" >> $env:GITHUB_OUTPUT
           "zip_name=$zipName" >> $env:GITHUB_OUTPUT
           "zip_sha=$sha" >> $env:GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/v5/core-alpha1')
         with:
           name: CineCalendar-V5-Alpha-Windows-x64
           path: |
@@ -253,6 +256,46 @@ jobs:
             ${{ steps.package_v5_alpha.outputs.zip_name }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish V5 Alpha updater channel
+        if: github.event_name == 'push' && github.ref == 'refs/heads/v5/core-alpha1'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'cinecalendar-v5-alpha'
+          $zipName = '${{ steps.package_v5_alpha.outputs.zip_name }}'
+          $sha = '${{ steps.package_v5_alpha.outputs.zip_sha }}'
+          $version = '${{ steps.package_v5_alpha.outputs.version }}'
+          $repo = '${{ github.repository }}'
+          $url = "https://github.com/$repo/releases/download/$tag/$zipName"
+          $manifestName = 'update-v5-alpha.json'
+          $manifest = [ordered]@{
+            version = $version
+            url = $url
+            sha256 = $sha
+            notes = 'V5 Alpha: canal automat separat. Datele Alpha și Stable rămân separate.'
+            publishedAt = [DateTime]::UtcNow.ToString('o')
+            channel = 'alpha'
+          } | ConvertTo-Json -Depth 4
+          $manifest | Set-Content -Encoding utf8NoBOM $manifestName
+
+          if (-not (gh release view $tag --repo $repo 2>$null)) {
+            gh release create $tag --target '${{ github.sha }}' --title 'CineCalendar V5 Alpha' --notes 'Canal automat separat pentru testele V5 Alpha.' --prerelease --repo $repo
+            if ($LASTEXITCODE -ne 0) { throw 'Nu am putut crea release-ul V5 Alpha.' }
+          }
+
+          gh release upload $tag $zipName $manifestName --clobber --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Nu am putut publica V5 Alpha.' }
+
+          $verify = Join-Path $env:RUNNER_TEMP 'v5-alpha-manifest-verify'
+          New-Item -ItemType Directory -Force -Path $verify | Out-Null
+          gh release download $tag --pattern $manifestName --dir $verify --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Manifestul V5 Alpha nu poate fi verificat după publicare.' }
+          $publishedManifest = Get-Content (Join-Path $verify $manifestName) -Raw | ConvertFrom-Json
+          if ($publishedManifest.sha256 -ne $sha -or $publishedManifest.version -ne $version -or $publishedManifest.channel -ne 'alpha') {
+            throw 'Manifestul V5 Alpha publicat nu corespunde buildului.'
+          }
 
       - name: Publish Stable bundle and updater manifest
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
