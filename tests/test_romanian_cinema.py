@@ -167,3 +167,13 @@ def test_premium_startup_installs_romanian_cinema_patch():
     assert "compose_premium_window(CalendarPremiumWindow)" in app_source
     composition_source = inspect.getsource(ui_composition_module.compose_premium_window)
     assert "install_romanian_cinema_ui_patch(window_cls)" in composition_source
+
+
+
+def test_romanian_ui_recalculate_invalidates_trial_round_and_shows_sources():
+    source = inspect.getsource(install_romanian_cinema_ui_patch)
+    assert 'invalidate("romanian")' in source
+    assert 'status.get("source_counts")' in source
+    assert "IMDb" in source
+    assert "Wikidata" in source
+    assert "TMDb" in source
