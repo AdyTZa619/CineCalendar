@@ -126,7 +126,6 @@ def install_smart_watchlist_ui(window_cls) -> None:
             "Marcat «Vreau să-l văd curând»." if new_state else "Prioritatea din Watchlist a fost scoasă.",
             False,
         )
-        self.smart_watchlist_signature = None
         self.show_page("watchlist")
 
     def _remove(self, movie_id: int):
@@ -137,7 +136,6 @@ def install_smart_watchlist_ui(window_cls) -> None:
                 if removed else "Filmul nu mai era în Watchlist.",
                 False,
             )
-            self.smart_watchlist_signature = None
             self.show_page("watchlist")
         except Exception as exc:
             QMessageBox.warning(self, "Watchlist", f"Nu am putut scoate filmul din Watchlist:\n{exc}")
@@ -363,60 +361,15 @@ def install_smart_watchlist_ui(window_cls) -> None:
             content.addWidget(_plain_card(self, row))
         content.addStretch(1)
 
-    def _watchlist_signature(self):
-        try:
-            with self.db.connect() as con:
-                watchlist = con.execute(
-                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM watchlist WHERE status='want_to_watch'"
-                ).fetchone()
-                ratings = con.execute(
-                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM ratings"
-                ).fetchone()
-                feedback = con.execute(
-                    "SELECT COUNT(*),COALESCE(MAX(created_at),'') FROM feedback"
-                ).fetchone()
-            user_state = (
-                int(watchlist[0]), str(watchlist[1]),
-                int(ratings[0]), str(ratings[1]),
-                int(feedback[0]), str(feedback[1]),
-            )
-        except Exception:
-            user_state = ()
-        try:
-            trial_mode = str(getattr(self.s.recommender, "mode", "") or "")
-        except Exception:
-            trial_mode = ""
-        return (
-            date.today().isoformat(),
-            user_state,
-            str(self.db.get_setting("watchlist_runtime_filter", "all") or "all"),
-            str(self.db.get_setting("watchlist_type_filter", "all") or "all"),
-            str(self.db.get_setting("watchlist_decision_mode", "decide") or "decide"),
-            tuple(sorted(pinned_watchlist_ids(self.db))),
-            trial_mode,
-        )
-
-    def _recalculate_watchlist(self):
-        self.smart_watchlist_result = None
-        self.smart_watchlist_signature = None
-        self.show_page("watchlist")
-
     def page_watchlist(self):
         page, content = self.page_shell(
             "Watchlist",
             "Filmele salvate de tine, cu o coadă «Următoarele 5» ordonată de motorul personal.",
-            [("Recalculează coada", self._recalculate_watchlist, True)],
         )
         self.smart_watchlist_content = content
         content.addWidget(_filters_card(self))
-
-        cached = getattr(self, "smart_watchlist_result", None)
-        cached_signature = getattr(self, "smart_watchlist_signature", None)
-        if cached is not None and cached_signature == self._watchlist_signature():
-            _render_result(self, cached)
-            return page
-
         content.addWidget(_loading_card(self))
+
         worker = getattr(self, "smart_watchlist_worker", None)
         if worker is not None and worker.isRunning():
             return page
@@ -437,7 +390,6 @@ def install_smart_watchlist_ui(window_cls) -> None:
         def success(result):
             self.smart_watchlist_worker = None
             self.smart_watchlist_result = result
-            self.smart_watchlist_signature = self._watchlist_signature()
             _render_result(self, result)
 
         def failure(message):
@@ -449,7 +401,5 @@ def install_smart_watchlist_ui(window_cls) -> None:
         worker.start()
         return page
 
-    window_cls._watchlist_signature = _watchlist_signature
-    window_cls._recalculate_watchlist = _recalculate_watchlist
     window_cls.page_watchlist = page_watchlist
     window_cls._cinecalendar_smart_watchlist_v4 = True

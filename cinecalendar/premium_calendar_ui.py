@@ -146,14 +146,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         self.calendar_focus_layout.setContentsMargins(24,22,24,22)
         self.calendar_focus_layout.setSpacing(12)
         content.addWidget(focus)
-        cached_day = (
-            isinstance(self.calendar_last_result, dict)
-            and self.calendar_last_result.get("date") == self.calendar_selected
-        )
-        if cached_day:
-            self._render_calendar_program(self.calendar_last_result)
-        else:
-            self._render_calendar_loading(self.calendar_selected)
+        self._render_calendar_loading(self.calendar_selected)
 
         head = QLabel("Luna, zi cu zi")
         head.setObjectName("SectionTitle"); content.addWidget(head)
@@ -184,18 +177,11 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         wrap = QFrame(); wrap.setLayout(days_grid); content.addWidget(wrap)
         content.addStretch(1)
 
-        if not cached_day:
-            QTimer.singleShot(0, lambda d=self.calendar_selected: self._load_calendar_day_async(d))
+        QTimer.singleShot(0, lambda d=self.calendar_selected: self._load_calendar_day_async(d))
         return page
 
     def _select_calendar_day(self, target: date):
         self.calendar_selected = target
-        if (
-            isinstance(self.calendar_last_result, dict)
-            and self.calendar_last_result.get("date") == target
-        ):
-            self._render_calendar_program(self.calendar_last_result)
-            return
         self._render_calendar_loading(target)
         self._load_calendar_day_async(target)
 

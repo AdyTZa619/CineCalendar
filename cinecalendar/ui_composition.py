@@ -25,7 +25,6 @@ def compose_premium_window(window_cls) -> None:
     from .foundation_v33 import install_foundation_v33
     from . import library_ui
     from .learning_insight_ui_v43 import install_learning_insight_ui_v43
-    from .premium_tabs_v5 import install_premium_tabs_v5
 
     # Information/theme layers first, then action semantics, then immutable exposure handling.
     install_performance_ui_patch(window_cls)
@@ -49,9 +48,6 @@ def compose_premium_window(window_cls) -> None:
         library_ui._rating_sort_key = _rating_sort_key
     library_ui.install_library_ui(window_cls)
     install_learning_insight_ui_v43(window_cls)
-    # Final usability layer: it sees the fully composed page set and can make every inherited
-    # tab consistent without changing the underlying data/model logic.
-    install_premium_tabs_v5(window_cls)
 
     required = (
         "record_once",
