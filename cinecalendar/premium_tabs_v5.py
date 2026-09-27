@@ -254,7 +254,120 @@ def install_premium_tabs_v5(window_cls) -> None:
         outer.addWidget(scroll, 1)
         return page, content
 
-    def _insert_guide(self, page, heading: str, text: str):
+    def _page_metrics(self, key: str):
+        try:
+            with self.db.connect() as con:
+                if key == "ratings":
+                    row = con.execute(
+                        "SELECT COUNT(*),COALESCE(AVG(rating),0),COALESCE(MAX(updated_at),'') FROM ratings"
+                    ).fetchone()
+                    return [
+                        (f"{int(row[0]):,}", "ratinguri"),
+                        (f"{float(row[1]):.2f}/10", "media ta"),
+                        ((str(row[2])[:10] or "—"), "ultima modificare"),
+                    ]
+                if key == "profile":
+                    row = con.execute(
+                        "SELECT COUNT(*),COALESCE(AVG(rating),0) FROM ratings"
+                    ).fetchone()
+                    version = con.execute(
+                        "SELECT value_json FROM user_profile WHERE profile_key='profile_version'"
+                    ).fetchone()
+                    return [
+                        (f"{int(row[0]):,}", "ratinguri analizate"),
+                        (f"{float(row[1]):.2f}/10", "media ta"),
+                        (("actualizat" if version else "calculat"), "profil gust"),
+                    ]
+                if key == "watchlist":
+                    row = con.execute(
+                        "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM watchlist WHERE status='want_to_watch'"
+                    ).fetchone()
+                    pinned = self.db.get_setting("watchlist_pinned_movie_ids", []) or []
+                    return [
+                        (f"{int(row[0]):,}", "în Watchlist"),
+                        (f"{len(pinned):,}", "prioritare"),
+                        ((str(row[1])[:10] or "—"), "ultima schimbare"),
+                    ]
+                if key == "history":
+                    shown = con.execute(
+                        "SELECT COUNT(*) FROM recommendation_history WHERE action IS NULL"
+                    ).fetchone()[0]
+                    actions = con.execute(
+                        "SELECT COUNT(*) FROM recommendation_history WHERE action IS NOT NULL"
+                    ).fetchone()[0]
+                    return [
+                        (f"{int(shown):,}", "expuneri"),
+                        (f"{int(actions):,}", "acțiuni"),
+                        ("filtrabil", "istoric"),
+                    ]
+                if key == "metadata_doctor":
+                    row = con.execute(
+                        """SELECT COUNT(*),
+                                  SUM(CASE WHEN poster_url IS NULL OR poster_url='' THEN 1 ELSE 0 END),
+                                  SUM(CASE WHEN overview IS NULL OR overview='' THEN 1 ELSE 0 END)
+                           FROM movies"""
+                    ).fetchone()
+                    return [
+                        (f"{int(row[0] or 0):,}", "filme"),
+                        (f"{int(row[1] or 0):,}", "fără poster"),
+                        (f"{int(row[2] or 0):,}", "fără descriere"),
+                    ]
+        except Exception:
+            pass
+
+        if key == "settings":
+            try:
+                total, rated, candidates = self.catalog_count()
+                return [
+                    (f"{int(total):,}", "catalog"),
+                    (f"{int(rated):,}", "evaluate"),
+                    (f"{int(candidates):,}", "candidați"),
+                ]
+            except Exception:
+                return []
+        if key == "calendar":
+            try:
+                events = self.s.calendar.relevant_events(__import__("datetime").date.today())
+                return [
+                    (__import__("datetime").date.today().strftime("%d.%m.%Y"), "azi"),
+                    (str(len(events)), "repere active"),
+                    ("automat", "context"),
+                ]
+            except Exception:
+                return []
+        if key == "month":
+            today = __import__("datetime").date.today()
+            return [
+                (today.strftime("%m/%Y"), "luna curentă"),
+                ("pe zile", "program"),
+                ("cache", "rezultat reutilizat"),
+            ]
+        if key == "updates":
+            return [
+                (str(base_ui.APP_VERSION), "versiune"),
+                ("Alpha" if "Alpha" in str(base_ui.APP_VERSION) else "Stable", "canal"),
+                ("SHA-256", "verificare"),
+            ]
+        if key == "romanian":
+            count = len(getattr(self, "romanian_result", []) or [])
+            return [
+                (str(count), "în selecția curentă"),
+                ("română", "limbă originală"),
+                ("explicit", "recalculare"),
+            ]
+        if key == "romanian_list":
+            try:
+                total, rated, _ = self.catalog_count()
+                return [
+                    (f"{int(total):,}", "catalog local"),
+                    (f"{int(rated):,}", "evaluate"),
+                    ("cronologic", "mod explorare"),
+                ]
+            except Exception:
+                return []
+        return []
+
+    def _insert_guide(self, page, key: str, heading: str, text: str):
         scroll = page.findChild(QScrollArea)
         if scroll is None or scroll.widget() is None:
             return
@@ -262,26 +375,45 @@ def install_premium_tabs_v5(window_cls) -> None:
         if layout is None:
             return
         guide = QFrame()
-        guide.setObjectName("GuideCard")
-        gl = QHBoxLayout(guide)
-        gl.setContentsMargins(16, 12, 16, 12)
-        gl.setSpacing(14)
-        left = QVBoxLayout()
+        guide.setObjectName("HeroCard")
+        gl = QVBoxLayout(guide)
+        gl.setContentsMargins(20, 18, 20, 18)
+        gl.setSpacing(10)
+
+        kicker = QLabel("PE SCURT")
+        kicker.setObjectName("Kicker")
+        gl.addWidget(kicker)
+
         title = QLabel(heading)
-        title.setObjectName("BodyStrong")
-        left.addWidget(title)
+        title.setObjectName("SectionTitle")
+        gl.addWidget(title)
+
         body = QLabel(text)
         body.setObjectName("Muted")
         body.setWordWrap(True)
-        left.addWidget(body)
-        gl.addLayout(left, 1)
+        gl.addWidget(body)
+
+        metrics = self._page_metrics(key)
+        if metrics:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            for value, caption in metrics[:3]:
+                if hasattr(self, "metric_badge"):
+                    row.addWidget(self.metric_badge(str(value), str(caption)))
+                else:
+                    fallback = QLabel(f"{value} • {caption}")
+                    fallback.setObjectName("Muted")
+                    row.addWidget(fallback)
+            row.addStretch(1)
+            gl.addLayout(row)
+
         layout.insertWidget(0, guide)
 
     def _wrap_page(key, original):
         def wrapped(self):
             page = original(self)
             heading, text = _GUIDES[key]
-            _insert_guide(self, page, heading, text)
+            _insert_guide(self, page, key, heading, text)
             return page
         return wrapped
 
