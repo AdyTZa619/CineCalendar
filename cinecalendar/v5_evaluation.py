@@ -144,7 +144,7 @@ def run_v5_evaluation(
     selection = event_replay_windows(
         db,
         desired_days=max(2, int(event_days)),
-        minimum_train=180,
+        minimum_train=300,
         informative_only=True,
     )
     if selection.windows:
