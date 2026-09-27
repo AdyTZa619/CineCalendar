@@ -61,3 +61,25 @@ def test_grouped_sidebar_shell_is_actually_attached_to_window_class():
     assert "def _build_shell(self):" in source
     assert "window_cls._build_shell = _build_shell" in source
     assert source.index("def _build_shell(self):") < source.index("window_cls._build_shell = _build_shell")
+
+
+def test_runtime_calendar_window_really_uses_the_new_shell_and_wrapped_tabs():
+    from cinecalendar.premium_calendar_ui import CalendarPremiumWindow
+    from cinecalendar.ui_composition import compose_premium_window
+
+    # Ensure the assertion describes the class that app.py instantiates in production.
+    compose_premium_window(CalendarPremiumWindow)
+
+    assert CalendarPremiumWindow._build_shell.__module__ == "cinecalendar.premium_tabs_v5"
+    assert CalendarPremiumWindow.page_shell.__module__ == "cinecalendar.premium_tabs_v5"
+
+    for method_name in (
+        "page_ratings",
+        "page_profile",
+        "page_watchlist",
+        "page_history",
+        "page_metadata_doctor",
+        "page_settings",
+    ):
+        method = getattr(CalendarPremiumWindow, method_name)
+        assert method.__module__ == "cinecalendar.premium_tabs_v5", method_name
