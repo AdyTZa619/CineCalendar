@@ -148,3 +148,6 @@ def test_metadata_doctor_reprioritizes_v5_taste_boundary_automatically():
     assert "force=False, progress=progress" in source
     assert "v5_ranker_shadow_status" in source
     assert "Clasamentul vizibil NU este modificat." in source
+    assert "def closeEvent(self, event):" in source
+    assert "thread.terminate()" in source
+    assert "self.findChildren(QTimer)" in source
