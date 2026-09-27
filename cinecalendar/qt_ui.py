@@ -486,7 +486,9 @@ class CineCalendarWindow(QMainWindow):
                 batch_limit = 50 if not silent else 24
             result = process_metadata_queue(
                 self.db, token, limit=batch_limit,
-                force=not silent, progress=progress,
+                # Manual runs should accelerate due/fresh work, not smash through retry backoff
+                # and immediately hit the same hard titles again.
+                force=False, progress=progress,
             )
             try:
                 # Open-world V5 discovery is rate-limited internally to one refresh per 24h.
@@ -508,8 +510,10 @@ class CineCalendarWindow(QMainWindow):
                     f"Metadata Doctor: {result.improved} îmbunătățite, "
                     f"{result.completed} completate, {result.retrying} rămase în coadă.", False,
                 )
-                if self.current_page == "metadata_doctor":
-                    self.show_page("metadata_doctor")
+            if self.current_page == "metadata_doctor":
+                # Refresh the counters after silent passes too, otherwise the page looks frozen
+                # while the background worker is actually making progress.
+                QTimer.singleShot(0, lambda: self.show_page("metadata_doctor"))
 
             # V5 Alpha can finish the factual profile without repeated manual clicks.
             # Retry rows keep Metadata Doctor's normal backoff; these burst passes only consume
