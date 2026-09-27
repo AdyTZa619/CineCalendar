@@ -100,6 +100,19 @@ query CineCalendarTitleCredits($ids: [ID!]!) {
 """
 
 
+_TITLE_RICH_QUERY = """
+query CineCalendarTitleRichMetadata($ids: [ID!]!) {
+  titles(ids: $ids) {
+    id
+    plot { plotText { plainText } }
+    countriesOfOrigin {
+      countries { id text }
+    }
+  }
+}
+"""
+
+
 @dataclass(frozen=True)
 class RemoteRating:
     imdb_id: str
@@ -372,6 +385,254 @@ def _metadata_payload(
             if isinstance(item, dict):
                 item["principalCredits"] = credit_by_id.get(str(item.get("id") or ""), [])
         return core
+
+
+
+def enrich_movies_from_imdb_graphql(
+    db: Database,
+    movie_ids: list[int],
+    *,
+    timeout: int = 20,
+    session: requests.Session | None = None,
+) -> dict[int, list[str]]:
+    """IMDb-first factual enrichment for an explicit local movie batch.
+
+    Uses exact IMDb tt-ids already attached to the user's rated/catalog rows. Core metadata and
+    richer plot/country fields are fetched in batched GraphQL requests; callers can then fall back
+    to TMDb/Wikimedia only for fields IMDb still leaves empty.
+    """
+    ids: list[int] = []
+    seen: set[int] = set()
+    for raw in movie_ids:
+        try:
+            movie_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if movie_id <= 0 or movie_id in seen:
+            continue
+        seen.add(movie_id)
+        ids.append(movie_id)
+    if not ids:
+        return {}
+
+    rows_by_id: dict[int, Any] = {}
+    with db.connect() as con:
+        for start in range(0, len(ids), 700):
+            chunk = ids[start:start + 700]
+            marks = ",".join("?" for _ in chunk)
+            rows = con.execute(
+                f"""SELECT * FROM movies
+                    WHERE id IN ({marks})
+                      AND imdb_id GLOB 'tt[0-9]*'""",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                rows_by_id[int(row["id"])] = row
+    if not rows_by_id:
+        return {}
+
+    imdb_to_local = {
+        str(row["imdb_id"]): int(row["id"])
+        for row in rows_by_id.values()
+        if str(row["imdb_id"] or "").strip()
+    }
+    client = session or requests.Session()
+    changed_by_movie: dict[int, list[str]] = {}
+
+    for start in range(0, len(imdb_to_local), 60):
+        imdb_ids = list(imdb_to_local)[start:start + 60]
+        try:
+            base_payload = _metadata_payload(client, imdb_ids, timeout=timeout)
+        except RuntimeError:
+            base_payload = {"data": {"titles": []}}
+
+        try:
+            rich_payload = _graphql_post(
+                client,
+                _TITLE_RICH_QUERY,
+                {"ids": imdb_ids},
+                timeout=timeout,
+            )
+        except RuntimeError:
+            rich_payload = {"data": {"titles": []}}
+
+        merged: dict[str, dict[str, Any]] = {}
+        for payload in (base_payload, rich_payload):
+            items = (payload.get("data") or {}).get("titles") or []
+            if not isinstance(items, list):
+                continue
+            for meta in items:
+                if not isinstance(meta, dict):
+                    continue
+                iid = str(meta.get("id") or "").strip()
+                if not iid:
+                    continue
+                target = merged.setdefault(iid, {"id": iid})
+                for key, value in meta.items():
+                    if key != "id" and value not in (None, "", [], {}):
+                        target[key] = value
+
+        for iid, meta in merged.items():
+            movie_id = imdb_to_local.get(iid)
+            row = rows_by_id.get(movie_id or -1)
+            if movie_id is None or row is None:
+                continue
+
+            runtime = meta.get("runtime") or {}
+            try:
+                runtime_min = (
+                    int(round(int(runtime.get("seconds")) / 60))
+                    if runtime.get("seconds") is not None else None
+                )
+            except (TypeError, ValueError):
+                runtime_min = None
+
+            genres: list[str] = []
+            for item in ((meta.get("genres") or {}).get("genres") or []):
+                if isinstance(item, dict):
+                    value = str(item.get("text") or "").strip()
+                    if value and value not in genres:
+                        genres.append(value)
+
+            directors: list[str] = []
+            for group in meta.get("principalCredits") or []:
+                if not isinstance(group, dict):
+                    continue
+                category = group.get("category") or {}
+                cid = str(category.get("id") or "").lower()
+                ctext = str(category.get("text") or "").lower()
+                if cid != "director" and "director" not in ctext:
+                    continue
+                for credit in group.get("credits") or []:
+                    name = ((credit or {}).get("name") or {}).get("nameText") or {}
+                    value = str(name.get("text") or "").strip()
+                    if value and value not in directors:
+                        directors.append(value)
+
+            countries: list[str] = []
+            for item in ((meta.get("countriesOfOrigin") or {}).get("countries") or []):
+                if isinstance(item, dict):
+                    value = str(item.get("text") or item.get("id") or "").strip()
+                    if value and value not in countries:
+                        countries.append(value)
+
+            plot = str(
+                (((meta.get("plot") or {}).get("plotText") or {}).get("plainText") or "")
+            ).strip()
+            poster_url = str(((meta.get("primaryImage") or {}).get("url") or "")).strip() or None
+
+            rating_summary = meta.get("ratingsSummary") or {}
+            try:
+                imdb_rating = (
+                    float(rating_summary.get("aggregateRating"))
+                    if rating_summary.get("aggregateRating") is not None else None
+                )
+            except (TypeError, ValueError):
+                imdb_rating = None
+            try:
+                num_votes = (
+                    int(rating_summary.get("voteCount"))
+                    if rating_summary.get("voteCount") is not None else None
+                )
+            except (TypeError, ValueError):
+                num_votes = None
+
+            current_genres = json_loads(row["genres_json"], []) or []
+            current_directors = json_loads(row["directors_json"], []) or []
+            current_countries = json_loads(row["countries_json"], []) or []
+            current_overview = str(row["overview"] or "")
+            current_poster = str(row["poster_url"] or "").strip() or None
+
+            use_runtime = int(row["runtime_min"]) if row["runtime_min"] is not None else runtime_min
+            use_genres = current_genres or genres
+            use_directors = current_directors or directors
+            use_countries = current_countries or countries
+            use_overview = current_overview or plot
+            use_poster = current_poster or poster_url
+            use_rating = float(row["imdb_rating"]) if row["imdb_rating"] is not None else imdb_rating
+            use_votes = int(row["num_votes"]) if row["num_votes"] is not None else num_votes
+
+            changed: list[str] = []
+            if row["runtime_min"] is None and runtime_min is not None:
+                changed.append("runtime_min")
+            if not current_genres and genres:
+                changed.append("genres")
+            if not current_directors and directors:
+                changed.append("directors")
+            if not current_countries and countries:
+                changed.append("countries")
+            if not current_overview and plot:
+                changed.append("overview")
+            if not current_poster and poster_url:
+                changed.append("poster_url")
+            if row["imdb_rating"] is None and imdb_rating is not None:
+                changed.append("imdb_rating")
+            if row["num_votes"] is None and num_votes is not None:
+                changed.append("num_votes")
+            if not changed:
+                continue
+
+            movie = Movie(
+                id=movie_id,
+                imdb_id=iid,
+                title=str(row["title"] or ""),
+                original_title=str(row["original_title"] or row["title"] or ""),
+                year=int(row["year"]) if row["year"] is not None else None,
+                title_type=str(row["title_type"] or "Movie"),
+                runtime_min=use_runtime,
+                genres=list(use_genres),
+                directors=list(use_directors),
+                countries=list(use_countries),
+                overview=use_overview,
+                keywords=json_loads(row["keywords_json"], []) or [],
+                imdb_rating=use_rating,
+                num_votes=use_votes,
+                release_date=row["release_date"],
+                poster_url=use_poster,
+                source=str(row["source"] or ""),
+                semantic=json_loads(row["semantic_json"], {}) or {},
+            )
+            movie.semantic = extract_semantic(movie)
+            now = utcnow_iso()
+
+            with db.tx() as con:
+                con.execute(
+                    """UPDATE movies SET
+                         runtime_min=?,
+                         genres_json=?,
+                         directors_json=?,
+                         countries_json=?,
+                         overview=?,
+                         imdb_rating=?,
+                         num_votes=?,
+                         poster_url=?,
+                         semantic_json=?,
+                         updated_at=?
+                       WHERE id=?""",
+                    (
+                        use_runtime,
+                        json_dumps(use_genres),
+                        json_dumps(use_directors),
+                        json_dumps(use_countries),
+                        use_overview,
+                        use_rating,
+                        use_votes,
+                        use_poster,
+                        json_dumps(movie.semantic),
+                        now,
+                        movie_id,
+                    ),
+                )
+                record_metadata_sources(
+                    con,
+                    movie_id,
+                    changed,
+                    "imdb_graphql",
+                    updated_at=now,
+                )
+            changed_by_movie[movie_id] = changed
+
+    return changed_by_movie
 
 
 def backfill_public_rating_metadata(
