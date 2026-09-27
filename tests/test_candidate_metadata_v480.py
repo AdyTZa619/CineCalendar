@@ -289,17 +289,18 @@ def test_explicit_retry_clears_only_selected_movie_provider_cache(tmp_path):
     assert all("tt9000002" in row["cache_key"] or "/movie/802?" in row["cache_key"] for row in remaining)
 
 
-def test_recommendations_ui_exposes_coverage_and_reranks_only_after_new_facts():
+def test_recommendations_ui_exposes_coverage_without_blocking_or_silent_rerank():
     source = (Path(__file__).parents[1] / "cinecalendar" / "premium_ui.py").read_text(encoding="utf-8")
     assert "DATELE RECOMANDĂRILOR" in source
     assert "verificări per listă" in source
-    assert 'if report.get("ranking_change"):' in source
-    assert 'report["reranked"]=True' in source
-    assert "Recalculez ordinea cu metadatele factuale noi" in source
+    assert 'report["rerank_deferred"]=bool(report.get("ranking_change"))' in source
+    assert 'report["reranked"]=False' in source
+    assert "metadatele noi vor intra la următoarea recalculare" in source
     assert 'elif state == "partial":' in source
     success = source.split("def success(recs):", 1)[1].split("def failure(message):", 1)[0]
     assert "_ensure_metadata" in success
-    assert "_render_browse" not in success
+    assert "_render_browse(self.browse_result[:12])" in success
+    assert success.index("_render_browse(self.browse_result[:12])") < success.index("_ensure_metadata")
     assert "PREFLIGHT_POOL_SIZE" in source
     assert 'choose=QPushButton("Aleg filmul")' in source
     assert "ResponsiveRecommendationGrid" in source
