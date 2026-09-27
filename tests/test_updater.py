@@ -39,6 +39,27 @@ def test_version_compare_is_numeric_not_lexicographic():
     assert not is_newer_version("2.1.9", "2.2.0")
 
 
+def test_alpha_manifest_is_accepted_only_on_alpha_channel():
+    info = parse_manifest(
+        valid_manifest(
+            version="5.0 Alpha 2",
+            url="https://example.invalid/CineCalendar-V5-Alpha-Windows-x64.zip",
+            channel="alpha",
+        ),
+        expected_channel="alpha",
+    )
+    assert info.version == "5.0 Alpha 2"
+    assert info.channel == "alpha"
+    with pytest.raises(ValueError):
+        parse_manifest(
+            valid_manifest(
+                version="5.0 Alpha 2",
+                url="https://example.invalid/CineCalendar-V5-Alpha-Windows-x64.zip",
+                channel="alpha",
+            )
+        )
+
+
 def test_manifest_requires_https_hash_and_stable_channel():
     info = parse_manifest(valid_manifest())
     assert info.version == "2.2.1"
@@ -85,6 +106,17 @@ def test_safe_extract_accepts_premium_onedir_bundle(tmp_path):
     out = tmp_path / "stage"
     _safe_extract_zip(archive, out)
     assert (out / "CineCalendar.exe").read_bytes().startswith(b"MZ")
+    assert (out / "_internal" / "runtime.dll").is_file()
+
+
+def test_safe_extract_accepts_alpha_onedir_bundle(tmp_path):
+    archive = tmp_path / "alpha.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("CineCalendar-V5-Alpha.exe", b"MZ" + b"alpha executable")
+        z.writestr("_internal/runtime.dll", b"runtime")
+    out = tmp_path / "stage-alpha"
+    _safe_extract_zip(archive, out, exe_name="CineCalendar-V5-Alpha.exe")
+    assert (out / "CineCalendar-V5-Alpha.exe").read_bytes().startswith(b"MZ")
     assert (out / "_internal" / "runtime.dll").is_file()
 
 
