@@ -98,12 +98,12 @@ def main():
         from . import qt_ui as base_ui
         base_ui.APP_VERSION = V5_ALPHA_VERSION if alpha_mode else __version__
 
-        # Alpha never consumes the Stable updater channel. Stable keeps the verified exit guard.
+        # Stable and Alpha use separate manifests, but both use the same verified
+        # force-exit/rollback handoff so a frozen Windows process cannot block replacement.
         from . import qt_ui_v2 as decision_ui
         decision_ui.APP_VERSION = V5_ALPHA_VERSION if alpha_mode else __version__
-        if not alpha_mode:
-            from .update_exit_guard import install_update_exit_guard
-            install_update_exit_guard(decision_ui.DecisionWindow)
+        from .update_exit_guard import install_update_exit_guard
+        install_update_exit_guard(decision_ui.DecisionWindow)
 
         from .premium_calendar_ui import CalendarPremiumWindow, run_premium_calendar
         from .ui_composition import compose_premium_window
