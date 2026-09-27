@@ -151,6 +151,14 @@ def aggregate_event_reports(reports: list[dict]) -> dict:
         "top10_8_plus_hits": 0,
         "top10_9_plus_hits": 0,
         "top10_dislike_hits": 0,
+        "top25_8_plus_hits": 0,
+        "top25_9_plus_hits": 0,
+        "top25_dislike_hits": 0,
+        "top50_8_plus_hits": 0,
+        "top50_9_plus_hits": 0,
+        "top50_dislike_hits": 0,
+        "ndcg25_sum": 0.0,
+        "ndcg25_days": 0,
     }
     for report in reports:
         candidate = dict(report.get("candidate_recall") or {})
@@ -191,6 +199,33 @@ def aggregate_event_reports(reports: list[dict]) -> dict:
             out["top10_dislike_hits"] += _hit_count(
                 final, population_key="disliked_4_minus", recall_key="dislike_recall_at_10"
             )
+        if "recall_8_plus_at_25" in final:
+            out["top25_8_plus_hits"] += _hit_count(
+                final, population_key="liked_8_plus", recall_key="recall_8_plus_at_25"
+            )
+            out["top25_9_plus_hits"] += _hit_count(
+                final, population_key="loved_9_plus", recall_key="recall_9_plus_at_25"
+            )
+            out["top25_dislike_hits"] += _hit_count(
+                final, population_key="disliked_4_minus", recall_key="dislike_recall_at_25"
+            )
+        if "recall_8_plus_at_50" in final:
+            out["top50_8_plus_hits"] += _hit_count(
+                final, population_key="liked_8_plus", recall_key="recall_8_plus_at_50"
+            )
+            out["top50_9_plus_hits"] += _hit_count(
+                final, population_key="loved_9_plus", recall_key="recall_9_plus_at_50"
+            )
+            out["top50_dislike_hits"] += _hit_count(
+                final, population_key="disliked_4_minus", recall_key="dislike_recall_at_50"
+            )
+        final_quality = dict(report.get("final_quality") or {})
+        if "ndcg_at_25" in final_quality:
+            try:
+                out["ndcg25_sum"] += float(final_quality.get("ndcg_at_25") or 0.0)
+                out["ndcg25_days"] += 1
+            except (TypeError, ValueError):
+                pass
 
     out["candidate_8_plus_recall"] = round(
         out["candidate_8_plus_hits"] / out["liked_8_plus"], 6
@@ -210,4 +245,25 @@ def aggregate_event_reports(reports: list[dict]) -> dict:
     out["top10_dislike_rate"] = round(
         out["top10_dislike_hits"] / out["disliked_4_minus"], 6
     ) if out["disliked_4_minus"] else None
+    out["top25_8_plus_recall"] = round(
+        out["top25_8_plus_hits"] / out["liked_8_plus"], 6
+    ) if out["liked_8_plus"] else None
+    out["top25_9_plus_recall"] = round(
+        out["top25_9_plus_hits"] / out["loved_9_plus"], 6
+    ) if out["loved_9_plus"] else None
+    out["top25_dislike_rate"] = round(
+        out["top25_dislike_hits"] / out["disliked_4_minus"], 6
+    ) if out["disliked_4_minus"] else None
+    out["top50_8_plus_recall"] = round(
+        out["top50_8_plus_hits"] / out["liked_8_plus"], 6
+    ) if out["liked_8_plus"] else None
+    out["top50_9_plus_recall"] = round(
+        out["top50_9_plus_hits"] / out["loved_9_plus"], 6
+    ) if out["loved_9_plus"] else None
+    out["top50_dislike_rate"] = round(
+        out["top50_dislike_hits"] / out["disliked_4_minus"], 6
+    ) if out["disliked_4_minus"] else None
+    out["mean_ndcg25"] = round(
+        out["ndcg25_sum"] / out["ndcg25_days"], 6
+    ) if out["ndcg25_days"] else None
     return out
