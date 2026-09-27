@@ -8,6 +8,7 @@ V5_SHADOW_RANKED_VERSION = "v5-shadow-ranked-alpha1"
 
 
 class V5ShadowRankedEngine(V5LabRecommendationEngine):
+    SHADOW_BLEND_OVERRIDE: float | None = None
     """Evaluation-only V5 engine that lets the validated personal utility ranker reorder finalists.
 
     The normal V5 Alpha engine remains retrieval-only. This class is instantiated only by offline
@@ -23,7 +24,12 @@ class V5ShadowRankedEngine(V5LabRecommendationEngine):
         requested = max(1, int(count))
         knowledge = self.v5.knowledge.status()
         ranker_status = self.v5.personal_ranker.status()
-        blend_weight = float(ranker_status.get("blend_weight", 0.0) or 0.0)
+        learned_blend = float(ranker_status.get("blend_weight", 0.0) or 0.0)
+        blend_weight = (
+            learned_blend
+            if self.SHADOW_BLEND_OVERRIDE is None
+            else max(0.0, min(0.20, float(self.SHADOW_BLEND_OVERRIDE)))
+        )
         active = bool(
             knowledge.get("ready_for_rich_ranker")
             and ranker_status.get("validated")
@@ -89,7 +95,24 @@ class V5ShadowRankedEngine(V5LabRecommendationEngine):
             "version": V5_SHADOW_RANKED_VERSION,
             "knowledge_ready": bool(knowledge.get("ready_for_rich_ranker")),
             "ranker_validated": bool(ranker.get("validated")),
-            "blend_weight": float(ranker.get("blend_weight", 0.0) or 0.0),
+            "blend_weight": (
+                float(ranker.get("blend_weight", 0.0) or 0.0)
+                if self.SHADOW_BLEND_OVERRIDE is None
+                else float(self.SHADOW_BLEND_OVERRIDE)
+            ),
+            "learned_blend_weight": float(ranker.get("blend_weight", 0.0) or 0.0),
             "visible_ranking_changed": False,
         }
         return status
+
+
+class V5ShadowRankedEngine10(V5ShadowRankedEngine):
+    SHADOW_BLEND_OVERRIDE = 0.10
+
+
+class V5ShadowRankedEngine15(V5ShadowRankedEngine):
+    SHADOW_BLEND_OVERRIDE = 0.15
+
+
+class V5ShadowRankedEngine20(V5ShadowRankedEngine):
+    SHADOW_BLEND_OVERRIDE = 0.20
