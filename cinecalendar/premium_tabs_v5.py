@@ -17,6 +17,13 @@ _GROUPS = (
     ("TEST ȘI SISTEM", ("v5_lab", "updates", "settings")),
 )
 
+_NAV_LABELS = {
+    "romanian_list": "Cronologie filme RO",
+    "month": "Filme pe zile",
+    "metadata_doctor": "Reparare date",
+    "v5_lab": "Test V16 / V5",
+}
+
 _NAV_TIPS = {
     "today": "Alegerea principală pentru azi.",
     "recommendations": "Clasamentul personal complet.",
@@ -138,7 +145,7 @@ def install_premium_tabs_v5(window_cls) -> None:
             header.setObjectName("NavSection")
             nv.addWidget(header)
             for key in present:
-                label = available[key]
+                label = _NAV_LABELS.get(key, available[key])
                 b = QPushButton(label)
                 b.setProperty("nav", True)
                 b.setToolTip(_NAV_TIPS.get(key, ""))
@@ -154,7 +161,7 @@ def install_premium_tabs_v5(window_cls) -> None:
             header.setObjectName("NavSection")
             nv.addWidget(header)
             for key, label in leftovers:
-                b = QPushButton(label)
+                b = QPushButton(_NAV_LABELS.get(key, label))
                 b.setProperty("nav", True)
                 b.setToolTip(_NAV_TIPS.get(key, ""))
                 b.clicked.connect(lambda _checked=False, k=key: self.show_page(k))
