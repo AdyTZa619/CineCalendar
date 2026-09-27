@@ -56,9 +56,9 @@ def test_wikidata_query_requires_romanian_original_language_and_romania_origin()
     assert "FILTER NOT EXISTS" not in query
 
 
-def test_new_cache_key_invalidates_country_first_results():
-    assert CACHE_KEY.endswith("v3")
-    assert "language-first" in CACHE_KEY
+def test_new_cache_key_invalidates_single_source_results():
+    assert CACHE_KEY.endswith("v4")
+    assert "multisource" in CACHE_KEY
 
 
 def test_country_only_local_metadata_never_qualifies_without_language_verification(tmp_path):
@@ -70,7 +70,7 @@ def test_country_only_local_metadata_never_qualifies_without_language_verificati
     assert provider.local_imdb_ids() == set()
 
 
-def test_language_verified_cache_is_reused_when_wikidata_is_down(tmp_path, monkeypatch):
+def test_language_verified_cache_is_reused_when_all_live_sources_are_down(tmp_path, monkeypatch):
     db = Database(tmp_path / "cinecalendar.db")
     provider = RomanianCinemaProvider(db)
     provider._store({"tt0000101", "tt0000102"}, days=-1)
@@ -79,8 +79,11 @@ def test_language_verified_cache_is_reused_when_wikidata_is_down(tmp_path, monke
         raise requests.RequestException("offline")
 
     monkeypatch.setattr(provider, "_fetch_wikidata_ids", fail)
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", fail)
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
     assert provider.imdb_ids(refresh=True) == {"tt0000101", "tt0000102"}
-    assert provider.status()["source"] == "romanian-language-stale-cache"
+    assert provider.status()["source"] == "romanian-multisource-stale-cache"
 
 
 def test_without_verified_language_data_provider_fails_closed(tmp_path, monkeypatch):
@@ -92,8 +95,43 @@ def test_without_verified_language_data_provider_fails_closed(tmp_path, monkeypa
         raise requests.RequestException("offline")
 
     monkeypatch.setattr(provider, "_fetch_wikidata_ids", fail)
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", fail)
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
     assert provider.imdb_ids(refresh=True) == set()
     assert provider.status()["source"] == "language-unverified-empty"
+    assert provider.status()["local_count"] == 1
+
+
+def test_imdb_query_requires_romanian_language_and_romania_origin():
+    query = RomanianCinemaProvider.imdb_query(2000, 2010)
+    assert 'originCountryConstraint: {anyCountries:["RO"]}' in query
+    assert 'languageConstraint: {anyLanguages:["ro"]}' in query
+
+
+def test_multisource_verification_unions_independent_strong_sources(tmp_path, monkeypatch):
+    db = Database(tmp_path / "cinecalendar.db")
+    _insert_movie(db, "tt0000304", "Suport local", ["Romania"])
+    provider = RomanianCinemaProvider(db)
+
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", lambda: {"tt0000301", "tt0000302"})
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", lambda: {"tt0000302", "tt0000303"})
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: {"tt0000305"})
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: {"tt0000306"})
+
+    assert provider.imdb_ids(refresh=True) == {
+        "tt0000301", "tt0000302", "tt0000303", "tt0000305", "tt0000306"
+    }
+    status = provider.status()
+    assert status["source"] == "romanian-multisource-verified"
+    assert status["source_counts"] == {
+        "wikidata": 2,
+        "imdb": 2,
+        "curated": 1,
+        "tmdb": 1,
+    }
+    assert status["local_count"] == 1
+    assert "tt0000304" not in provider.imdb_ids()
 
 
 def test_romanian_rows_use_verified_language_pool_and_keep_rated_blocked(tmp_path, monkeypatch):
