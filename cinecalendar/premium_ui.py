@@ -700,25 +700,41 @@ class PremiumDecisionWindow(DecisionWindow):
 
     # ---------- premium browse ----------
     def _browse_state_signature(self):
-        """State that is allowed to invalidate the visible recommendation list.
+        """User-visible state for the browse page.
 
-        Merely leaving/re-entering the page is intentionally not part of this signature.
-        Ratings/feedback/watchlist/profile changes, temporary skips, the day and the V5/V16
-        trial mode are. This keeps one visible list stable until something meaningful changes
-        or the user explicitly presses Recalculează.
+        Background engine/metadata churn must not create a new recommendation round.
+        Trial mode stays in the signature so V16/V5 switching refreshes the page, while
+        AlphaTrialRecommender reuses the exact same frozen V16/V5 pair for that switch.
         """
-        token_fn = getattr(self.s.recommender, "_state_token", None)
         try:
-            state_token = tuple(token_fn()) if callable(token_fn) else ()
+            with self.db.connect() as con:
+                ratings = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM ratings"
+                ).fetchone()
+                feedback = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(created_at),'') FROM feedback"
+                ).fetchone()
+                watchlist = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM watchlist"
+                ).fetchone()
+                profile = con.execute(
+                    "SELECT COALESCE(MAX(updated_at),'') FROM user_profile"
+                ).fetchone()
+            user_state = (
+                int(ratings[0]), str(ratings[1]),
+                int(feedback[0]), str(feedback[1]),
+                int(watchlist[0]), str(watchlist[1]),
+                str(profile[0]),
+            )
         except Exception:
-            state_token = ()
+            user_state = ()
         try:
             trial_mode = str(getattr(self.s.recommender, "mode", "") or "")
         except Exception:
             trial_mode = ""
         return (
             date.today().isoformat(),
-            repr(state_token),
+            user_state,
             trial_mode,
             tuple(sorted(int(movie_id) for movie_id in self.session_skips)),
         )
@@ -737,6 +753,9 @@ class PremiumDecisionWindow(DecisionWindow):
         if self.metadata_worker and self.metadata_worker.isRunning():
             self.set_status("Finalizez verificarea listei curente înainte de recalculare.", True)
             return
+        invalidate = getattr(self.s.recommender, "invalidate_round", None)
+        if callable(invalidate):
+            invalidate("browse")
         self.browse_result = []
         self.browse_cache_signature = None
         self.recommendation_metadata_report = {"state": "idle"}
