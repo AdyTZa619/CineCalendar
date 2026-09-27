@@ -120,7 +120,9 @@ def install_premium_tabs_v5(window_cls) -> None:
         nav_scroll.setWidgetResizable(True)
         nav_scroll.setFrameShape(QFrame.NoFrame)
         nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        nav_scroll.setStyleSheet("QScrollArea { background: transparent; border: 0; }")
         nav_inner = QWidget()
+        nav_inner.setStyleSheet("background: transparent;")
         nv = QVBoxLayout(nav_inner)
         nv.setContentsMargins(0, 0, 4, 0)
         nv.setSpacing(3)
@@ -283,8 +285,8 @@ def install_premium_tabs_v5(window_cls) -> None:
                 padding: 8px 10px 3px 10px;
             }
             QFrame#GuideCard {
-                background: rgba(126,162,255,0.055);
-                border: 1px solid rgba(126,162,255,0.22);
+                background: rgba(215,170,85,0.055);
+                border: 1px solid rgba(215,170,85,0.22);
                 border-radius: 12px;
             }
         """
