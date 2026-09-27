@@ -15,6 +15,8 @@ from .qt_ui import CineCalendarWindow, ScoreDialog, WorkerThread
 from .recommendation import Recommendation, row_to_movie
 from .updater import UpdateInfo, check_for_update, stage_and_start_update, update_supported
 from .v5_alpha_runtime import is_v5_alpha
+from .v5_evaluation import run_v5_evaluation
+from .v5_knowledge import V5KnowledgeBase
 
 
 class DecisionWindow(CineCalendarWindow):
@@ -40,10 +42,14 @@ class DecisionWindow(CineCalendarWindow):
         self.decision_mode = str(service.db.get_setting("decision_mode", "decide") or "decide")
         self.available_update: UpdateInfo | None = None
         self.update_worker: WorkerThread | None = None
+        self.v5_eval_worker: WorkerThread | None = None
+        self.NAV = list(type(self).NAV)
+        if is_v5_alpha() and not any(key == "v5_lab" for key, _label in self.NAV):
+            self.NAV.insert(-2, ("v5_lab", "V5 Lab"))
         super().__init__(service)
         alpha_mode = is_v5_alpha()
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Decision Engine")
-        if (not alpha_mode) and bool(self.db.get_setting("auto_update_check", True)):
+        if bool(self.db.get_setting("auto_update_check", True)):
             QTimer.singleShot(2800, lambda: self.check_updates(False))
 
     def _confidence_label(self, confidence: float) -> str:
@@ -355,6 +361,153 @@ class DecisionWindow(CineCalendarWindow):
             ib = QPushButton("IMDb"); ib.clicked.connect(lambda _, iid=m.imdb_id:QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))); row.addWidget(ib)
         row.addStretch(1); l.addLayout(row)
         return box
+
+    def run_v5_lab_evaluation(self):
+        if not is_v5_alpha():
+            QMessageBox.information(self, "V5 Lab", "Evaluatorul V5 este disponibil numai în Alpha.")
+            return
+        if self.v5_eval_worker and self.v5_eval_worker.isRunning():
+            self.set_status("Evaluarea V5 rulează deja.", True)
+            return
+
+        self.set_status("V5 Lab: pregătesc replay-ul V16 vs V5…", True)
+        worker = WorkerThread(
+            lambda progress: run_v5_evaluation(self.db, progress=progress),
+            self,
+        )
+        self.v5_eval_worker = worker
+        worker.message.connect(lambda message: self.set_status(message, True))
+
+        def success(report):
+            self.v5_eval_worker = None
+            decision = dict((report or {}).get("decision") or {})
+            if bool(decision.get("eligible_for_visible_alpha_trial")):
+                self.set_status("V5 Lab: evaluare terminată; V5 poate intra într-un trial vizibil controlat.", False)
+            else:
+                self.set_status("V5 Lab: evaluare terminată; V5 rămâne shadow.", False)
+            if self.current_page == "v5_lab":
+                self.show_page("v5_lab")
+
+        def failure(message):
+            self.v5_eval_worker = None
+            self.set_status("V5 Lab: evaluarea a eșuat; recomandările live nu au fost schimbate.", False)
+            QMessageBox.warning(self, "V5 Lab", str(message))
+            if self.current_page == "v5_lab":
+                self.show_page("v5_lab")
+
+        worker.success.connect(success)
+        worker.failure.connect(failure)
+        worker.start()
+
+    @staticmethod
+    def _v5_metric(value, *, percent=False):
+        if value is None:
+            return "—"
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "—"
+        return f"{number * 100:.1f}%" if percent else f"{number:+.4f}"
+
+    def page_v5_lab(self):
+        page, content = self.page_shell(
+            "V5 Lab",
+            "Comparație offline pe istoricul tău: V16 actual vs retrieval V5 vs V5 + ranker personal. "
+            "Replay-ul nu modifică Stable și nu schimbă recomandările vizibile.",
+            [("Rulează evaluarea V16 vs V5", self.run_v5_lab_evaluation, True)],
+        )
+
+        knowledge = V5KnowledgeBase(self.db).status()
+        shadow = self.db.get_setting("v5_ranker_shadow_status", {}) or {}
+
+        readiness = self.card(); rl = QVBoxLayout(readiness)
+        rh = QLabel("Pregătirea modelului"); rh.setObjectName("CardTitle"); rl.addWidget(rh)
+        ready = bool(knowledge.get("ready_for_rich_ranker"))
+        rt = QLabel(
+            (
+                "Datele factuale sunt suficiente pentru evaluare."
+                if ready else
+                "Datele factuale nu au ajuns încă la pragul necesar."
+            )
+            + (
+                f"  Shadow intern: AUC 8+ {shadow.get('like_auc', '—')} • "
+                f"AUC 1–4 {shadow.get('dislike_auc', '—')} • "
+                f"NDCG@25 {shadow.get('model_ndcg25', '—')} • "
+                f"lift Top20 {shadow.get('top20_lift', '—')}."
+                if isinstance(shadow, dict) and shadow.get("state") == "ready"
+                else ""
+            )
+        )
+        rt.setWordWrap(True); rt.setObjectName("Muted"); rl.addWidget(rt)
+        content.addWidget(readiness)
+
+        report = self.db.get_setting("v5_evaluation_report", {}) or {}
+        if not isinstance(report, dict) or not report:
+            empty = self.card(); el = QVBoxLayout(empty)
+            eh = QLabel("Nicio evaluare completă încă"); eh.setObjectName("CardTitle"); el.addWidget(eh)
+            et = QLabel(
+                "Apasă butonul de mai sus. Evaluatorul folosește copii SQLite temporare pe rând, "
+                "le șterge după fiecare fereastră și păstrează doar raportul final."
+            )
+            et.setWordWrap(True); et.setObjectName("Muted"); el.addWidget(et)
+            content.addWidget(empty); content.addStretch(1)
+            return page
+
+        rolling = dict(report.get("rolling") or {})
+        retrieval_agg = dict(((rolling.get("retrieval_only") or {}).get("aggregate") or {}))
+        ranked_agg = dict(((rolling.get("ranked") or {}).get("aggregate") or {}))
+        event = dict(report.get("event_replay") or {})
+        baseline_event = dict(event.get("baseline") or {})
+        ranked_event = dict(event.get("ranked") or {})
+        decision = dict(report.get("decision") or {})
+
+        summary = self.card(); sl = QVBoxLayout(summary)
+        sh = QLabel("Replay temporal — 3 ferestre ne-suprapuse"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
+        st = QLabel(
+            "V5 retrieval-only: "
+            f"Δ compozit mediu {self._v5_metric(retrieval_agg.get('mean_composite_delta'))} • "
+            f"folduri pozitive {retrieval_agg.get('positive_folds', '—')}/{retrieval_agg.get('fold_count', '—')} • "
+            f"gate {'TRECUT' if retrieval_agg.get('approved') else 'netrecut'}\n"
+            "V5 + ranker: "
+            f"Δ compozit mediu {self._v5_metric(ranked_agg.get('mean_composite_delta'))} • "
+            f"Δ NDCG@25 {self._v5_metric(ranked_agg.get('mean_ndcg25_delta'))} • "
+            f"folduri pozitive {ranked_agg.get('positive_folds', '—')}/{ranked_agg.get('fold_count', '—')} • "
+            f"gate {'TRECUT' if ranked_agg.get('approved') else 'netrecut'}"
+        )
+        st.setWordWrap(True); st.setObjectName("Muted"); sl.addWidget(st)
+        content.addWidget(summary)
+
+        events = self.card(); evl = QVBoxLayout(events)
+        evh = QLabel("Replay pe zile reale de rating"); evh.setObjectName("CardTitle"); evl.addWidget(evh)
+        evt = QLabel(
+            f"Zile testate: {int((event.get('selection') or {}).get('window_count', 0) or 0)}\n"
+            f"V16 — Recall 8+ Top10: {self._v5_metric(baseline_event.get('top10_8_plus_recall'), percent=True)} • "
+            f"Recall 9+ Top10: {self._v5_metric(baseline_event.get('top10_9_plus_recall'), percent=True)} • "
+            f"1–4 în Top10: {self._v5_metric(baseline_event.get('top10_dislike_rate'), percent=True)}\n"
+            f"V5 ranker — Recall 8+ Top10: {self._v5_metric(ranked_event.get('top10_8_plus_recall'), percent=True)} • "
+            f"Recall 9+ Top10: {self._v5_metric(ranked_event.get('top10_9_plus_recall'), percent=True)} • "
+            f"1–4 în Top10: {self._v5_metric(ranked_event.get('top10_dislike_rate'), percent=True)}"
+        )
+        evt.setWordWrap(True); evt.setObjectName("Muted"); evl.addWidget(evt)
+        content.addWidget(events)
+
+        verdict = self.card(); vl = QVBoxLayout(verdict)
+        vh = QLabel("Decizie de siguranță pentru Alpha"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
+        eligible = bool(decision.get("eligible_for_visible_alpha_trial"))
+        vt = QLabel(
+            (
+                "Eligibil pentru următorul pas: trial vizibil controlat în V5 Alpha."
+                if eligible else
+                "Rămâne în shadow mode. Nu activăm rankerul în recomandările vizibile."
+            )
+            + "\n"
+            + str(decision.get("reason") or "")
+            + "\nStable 4.14.1 rămâne neatins."
+        )
+        vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
+        content.addWidget(verdict)
+        content.addStretch(1)
+        return page
 
     def page_updates(self):
         alpha_mode = is_v5_alpha()
