@@ -136,12 +136,19 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
             if score.confidence >= .55 and score.predicted_rating < 5.8:
                 continue
 
+            evidence = self.romanian_cinema.evidence_for(str(movie.imdb_id or ""))
+            sources = ", ".join(evidence.get("sources") or [])
+            source_count = int(evidence.get("source_count") or 0)
+            audit = (
+                f"Confirmat de {source_count} surse: {sources}. "
+                if sources else "Confirmat în baza verificată. "
+            )
             score.contributions.insert(
                 0,
                 (
                     "Film românesc verificat prin limbă",
                     0.0,
-                    "Limba originală este româna și România figurează ca țară de origine/coproducție; eligibilitatea nu adaugă puncte la scor.",
+                    audit + "Limba originală este româna și România figurează ca țară de origine/coproducție; eligibilitatea nu adaugă puncte la scor.",
                 ),
             )
 

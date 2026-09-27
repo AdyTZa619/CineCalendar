@@ -98,7 +98,11 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         content.addWidget(info)
 
         if not recs:
-            empty = QLabel("Nu am găsit momentan suficiente filme nevăzute cu limba originală română care să treacă și pragul de încredere al recomandării.")
+            held = int(self.s.recommender.romanian_cinema_status().get("conflict_count", 0) or 0)
+            message = "Nu am găsit momentan suficiente filme nevăzute cu limba originală română care să treacă și pragul de încredere al recomandării."
+            if held:
+                message += f" {held:,} titluri au date contradictorii și așteaptă verificare."
+            empty = QLabel(message)
             empty.setObjectName("Muted"); empty.setWordWrap(True); content.addWidget(empty); content.addStretch(1)
             return
 
@@ -129,6 +133,7 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             "imdb": "IMDb",
             "wikidata": "Wikidata",
             "tmdb": "TMDb",
+            "tmdb_details": "detalii TMDb",
             "curated": "catalog RO verificat",
             "verified": "cache verificat",
         }
@@ -145,6 +150,9 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             )
         if parts:
             label += " Surse: " + " • ".join(parts) + "."
+        conflicts = int(status.get("conflict_count", 0) or 0)
+        if conflicts:
+            label += f" {conflicts:,} titluri cu date contradictorii sunt reținute pentru verificare."
         note = QLabel(label + (f" Stare: {src}." if src else ""))
         note.setObjectName("Muted"); note.setWordWrap(True); fl.addWidget(note)
         content.addWidget(footer)

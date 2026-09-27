@@ -70,3 +70,16 @@ be penalized for failing to rank a Christmas film the user watches eleven months
 
 Neither replay mode can promote code by itself; stable promotion requires agreement across the
 broad rolling guardrail and date-aligned decision replay.
+# Recomandări românești în Alpha 16
+
+Eligibilitatea rămâne separată de scorul de recomandare. Pentru fiecare IMDb ID,
+cache-ul păstrează sursele care indică limba română și originea România,
+numărul de furnizori independenți și eventualele contradicții. Detaliile TMDb
+deja descărcate, legate prin ID TMDb și, când există, ID IMDb, pot confirma sau
+contrazice explicit limba originală și țările de producție. Titlurile cu astfel
+de contradicții sunt reținute pentru verificare și nu intră în recomandări;
+absența unui titlu din rezultatul unei surse nu este considerată contradicție.
+Un rezultat doar din căutarea IMDb nu dovedește limba originală și așteaptă
+confirmarea unei surse care oferă explicit această informație.
+Pe card, explicația de eligibilitate enumeră sursele confirmării. Datele locale
+doar despre țară rămân suport, fără a permite singure admiterea unui film.

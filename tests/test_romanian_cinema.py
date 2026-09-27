@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -57,7 +58,7 @@ def test_wikidata_query_requires_romanian_original_language_and_romania_origin()
 
 
 def test_new_cache_key_invalidates_single_source_results():
-    assert CACHE_KEY.endswith("v4")
+    assert CACHE_KEY.endswith("v5")
     assert "multisource" in CACHE_KEY
 
 
@@ -120,8 +121,9 @@ def test_multisource_verification_unions_independent_strong_sources(tmp_path, mo
     monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: {"tt0000306"})
 
     assert provider.imdb_ids(refresh=True) == {
-        "tt0000301", "tt0000302", "tt0000303", "tt0000305", "tt0000306"
+        "tt0000301", "tt0000302", "tt0000305", "tt0000306"
     }
+    assert provider.evidence_for("tt0000303")["decision"] == "needs-original-language"
     status = provider.status()
     assert status["source"] == "romanian-multisource-verified"
     assert status["source_counts"] == {
@@ -132,6 +134,130 @@ def test_multisource_verification_unions_independent_strong_sources(tmp_path, mo
     }
     assert status["local_count"] == 1
     assert "tt0000304" not in provider.imdb_ids()
+
+
+def test_evidence_counts_independent_sources_and_survives_cache(tmp_path, monkeypatch):
+    db = Database(tmp_path / "evidence.db")
+    provider = RomanianCinemaProvider(db)
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", lambda: {"tt0000401"})
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", lambda: {"tt0000401", "tt0000402"})
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    assert provider.imdb_ids(refresh=True) == {"tt0000401"}
+    assert provider.evidence_for("tt0000401")["source_count"] == 2
+    assert provider.evidence_for("tt0000402")["source_count"] == 1
+    assert RomanianCinemaProvider(db).evidence_for("tt0000401")["sources"] == ["imdb", "wikidata"]
+
+
+def test_explicit_tmdb_conflicts_hold_titles_but_missing_details_do_not(tmp_path, monkeypatch):
+    db = Database(tmp_path / "conflicts.db")
+    ids = ["tt0000501", "tt0000502", "tt0000503", "tt0000504"]
+    for i, imdb_id in enumerate(ids, start=501):
+        _insert_movie(db, imdb_id, f"Film {i}")
+        with db.tx() as con:
+            con.execute("UPDATE movies SET tmdb_id=? WHERE imdb_id=?", (i, imdb_id))
+    future = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    details = {
+        501: {"id": 501, "original_language": "en", "production_countries": [{"iso_3166_1": "RO"}]},
+        502: {"id": 502, "original_language": "ro", "production_countries": [{"iso_3166_1": "FR"}]},
+        503: {"id": 503, "external_ids": {"imdb_id": "tt9999999"}, "original_language": "ro", "production_countries": [{"iso_3166_1": "RO"}]},
+    }
+    with db.tx() as con:
+        for tmdb_id, payload in details.items():
+            con.execute(
+                "INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at) VALUES(?,?,?,?,?)",
+                ("tmdb", f'/movie/{tmdb_id}?{{"language": "ro-RO"}}', json_dumps(payload), utcnow_iso(), future),
+            )
+    provider = RomanianCinemaProvider(db)
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", lambda: set(ids))
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", lambda: set(ids))
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    assert provider.imdb_ids(refresh=True) == {"tt0000504"}
+    assert provider.status()["conflict_count"] == 3
+    assert provider.evidence_for("tt0000501")["decision"] == "review"
+    assert provider.evidence_for("tt0000502")["conflicts"] == ["TMDb: țara de producție fără RO"]
+    assert provider.evidence_for("tt0000503")["conflicts"] == ["TMDb: IMDb ID diferit"]
+    assert RomanianCinemaProvider(db).imdb_ids() == {"tt0000504"}
+
+
+def test_imdb_search_alone_does_not_claim_original_language(tmp_path, monkeypatch):
+    db = Database(tmp_path / "imdb-only.db")
+    _insert_movie(db, "tt0000551", "Coproducție", ["Romania"])
+    provider = RomanianCinemaProvider(db)
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", lambda: set())
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", lambda: {"tt0000551"})
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    assert provider.imdb_ids(refresh=True) == set()
+    assert provider.evidence_for("tt0000551")["decision"] == "needs-original-language"
+
+
+def test_conflict_cannot_resurrect_from_stale_positive_cache(tmp_path, monkeypatch):
+    db = Database(tmp_path / "held.db")
+    _insert_movie(db, "tt0000601", "Conflict")
+    with db.tx() as con:
+        con.execute("UPDATE movies SET tmdb_id=601 WHERE imdb_id='tt0000601'")
+        con.execute(
+            "INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at) VALUES(?,?,?,?,?)",
+            ("tmdb", '/movie/601?{}', json_dumps({"id": 601, "original_language": "en"}),
+             utcnow_iso(), (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()),
+        )
+    provider = RomanianCinemaProvider(db)
+    provider._store({"tt0000601"}, days=-1)
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", lambda: {"tt0000601"})
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    assert provider.imdb_ids(refresh=True) == set()
+    assert provider.status()["source"] == "romanian-conflicts-held-for-review"
+    assert RomanianCinemaProvider(db).imdb_ids() == set()
+
+
+def test_new_tmdb_detail_invalidates_romanian_snapshot(tmp_path, monkeypatch):
+    db = Database(tmp_path / "new-detail.db")
+    _insert_movie(db, "tt0000701", "Film")
+    with db.tx() as con:
+        con.execute("UPDATE movies SET tmdb_id=701 WHERE imdb_id='tt0000701'")
+    provider = RomanianCinemaProvider(db)
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", lambda: {"tt0000701"})
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    assert provider.imdb_ids(refresh=True) == {"tt0000701"}
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    with db.tx() as con:
+        con.execute(
+            "INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at) VALUES(?,?,?,?,?)",
+            ("tmdb", '/movie/701?{}', json_dumps({"id": 701, "original_language": "en"}),
+             utcnow_iso(), future),
+        )
+    assert provider.imdb_ids() == set()
+    assert provider.evidence_for("tt0000701")["decision"] == "review"
+
+
+def test_offline_stale_cache_still_holds_new_explicit_conflict(tmp_path, monkeypatch):
+    db = Database(tmp_path / "offline-detail.db")
+    _insert_movie(db, "tt0000801", "Conflict")
+    with db.tx() as con:
+        con.execute("UPDATE movies SET tmdb_id=801 WHERE imdb_id='tt0000801'")
+        con.execute(
+            "INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at) VALUES(?,?,?,?,?)",
+            ("tmdb", '/movie/801?{}', json_dumps({"id": 801, "original_language": "fr"}),
+             utcnow_iso(), (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()),
+        )
+    provider = RomanianCinemaProvider(db)
+    provider._store({"tt0000801", "tt0000802"}, days=-1)
+
+    def offline():
+        raise requests.RequestException("offline")
+
+    monkeypatch.setattr(provider, "_fetch_wikidata_ids", offline)
+    monkeypatch.setattr(provider, "_fetch_imdb_ids", offline)
+    monkeypatch.setattr(provider, "_curated_imdb_ids", lambda: set())
+    monkeypatch.setattr(provider, "_fetch_tmdb_ids", lambda: None)
+    assert provider.imdb_ids(refresh=True) == {"tt0000802"}
+    assert provider.evidence_for("tt0000801")["decision"] == "review"
 
 
 def test_romanian_rows_use_verified_language_pool_and_keep_rated_blocked(tmp_path, monkeypatch):

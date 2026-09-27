@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 
 import requests
 
@@ -13,10 +14,10 @@ IMDB_GRAPHQL = "https://caching.graphql.imdb.com/"
 TMDB_API = "https://api.themoviedb.org/3"
 USER_AGENT = "CineCalendar/5 Romanian cinema multi-source verification"
 CACHE_PROVIDER = "romanian-cinema"
-# v4 no longer makes Wikidata a single point of truth. A title may be verified by any strong
-# source that itself requires BOTH Romanian original language and Romanian origin; country-only
-# local metadata remains support-only and can never admit a title by itself.
-CACHE_KEY = "romanian-multisource-language-country-film-imdb-v4"
+# A positive IMDb language-search hit is a discovery signal: its constraint does not
+# document original language. Admission needs Wikidata, TMDb original-language data,
+# or the curated catalogue. Country-only local metadata remains support-only.
+CACHE_KEY = "romanian-multisource-language-country-film-imdb-v5"
 
 
 class RomanianCinemaProvider:
@@ -24,7 +25,8 @@ class RomanianCinemaProvider:
 
     Strong verification sources:
       * Wikidata: P364 Romanian + P495 Romania are both mandatory;
-      * IMDb public GraphQL advanced search: language=ro + origin country=RO;
+      * IMDb public GraphQL advanced search: language=ro + origin country=RO,
+        used for discovery and corroboration, not sufficient alone;
       * TMDb, when the user's token is available: discover filters require both RO origin
         and Romanian original language, then only local TMDb/IMDb mappings are used;
       * the app's manually curated Romanian-film catalogue, once its entries are resolved to
@@ -45,6 +47,8 @@ class RomanianCinemaProvider:
         self.last_error = ""
         self.last_source_counts: dict[str, int] = {}
         self.last_sources_available: list[str] = []
+        self._evidence: dict[str, dict] = {}
+        self.last_conflict_count = 0
 
     @staticmethod
     def _valid_imdb_id(value: str) -> bool:
@@ -86,7 +90,22 @@ class RomanianCinemaProvider:
             except ValueError:
                 return None
         payload = json_loads(row["payload_json"], {})
-        return payload if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            return None
+        if not allow_expired and payload.get("tmdb_detail_signature") != self._tmdb_detail_signature():
+            # A newly enriched title can supply a contradiction before the 90-day
+            # source snapshot expires. Re-evaluate it on the next Romanian request.
+            return None
+        return payload
+
+    def _tmdb_detail_signature(self) -> list:
+        with self.db.connect() as con:
+            row = con.execute(
+                """SELECT COUNT(*),COALESCE(MAX(fetched_at),'') FROM metadata_cache
+                   WHERE provider='tmdb' AND cache_key LIKE '/movie/%' AND expires_at > ?""",
+                (utcnow_iso(),),
+            ).fetchone()
+        return [int(row[0]), str(row[1])]
 
     def _restore_status_from_payload(self, payload: dict) -> set[str] | None:
         values = payload.get("imdb_ids")
@@ -104,6 +123,9 @@ class RomanianCinemaProvider:
             if isinstance(available, list) else sorted(self.last_source_counts)
         )
         self.last_local_count = int(payload.get("local_support_count", 0) or 0)
+        raw_evidence = payload.get("evidence") or {}
+        self._evidence = raw_evidence if isinstance(raw_evidence, dict) else {}
+        self.last_conflict_count = int(payload.get("conflict_count", 0) or 0)
         return ids
 
     def _cached(self, allow_expired: bool = False) -> set[str] | None:
@@ -117,6 +139,8 @@ class RomanianCinemaProvider:
         *,
         source_sets: dict[str, set[str]] | None = None,
         local_support: set[str] | None = None,
+        evidence: dict[str, dict] | None = None,
+        conflict_count: int = 0,
     ) -> None:
         expires = (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0).isoformat()
         source_sets = source_sets or {"verified": set(ids)}
@@ -127,6 +151,9 @@ class RomanianCinemaProvider:
             "sources_available": sorted(source_sets),
             "sources": {key: sorted(values) for key, values in source_sets.items()},
             "local_support_count": len(local_support),
+            "evidence": evidence or {},
+            "conflict_count": int(conflict_count),
+            "tmdb_detail_signature": self._tmdb_detail_signature(),
             "country": "Romania",
             "original_language": "Romanian",
             "policy": "multi-source-romanian-original-language-and-romania-origin",
@@ -295,6 +322,79 @@ class RomanianCinemaProvider:
                 )
         return out
 
+    def _cached_tmdb_details(self, candidates: set[str]) -> tuple[set[str], dict[str, list[str]]]:
+        """Use only fresh, explicitly linked TMDb detail records; absence proves nothing.
+
+        A discover search is a positive signal, but it cannot report why a title was
+        omitted. Detail payloads contain the actual original language and production
+        countries and can therefore supply either confirmation or a real conflict.
+        """
+        confirmed: set[str] = set()
+        conflicts: dict[str, list[str]] = {}
+        if not candidates:
+            return confirmed, conflicts
+        by_tmdb: dict[int, set[str]] = {}
+        with self.db.connect() as con:
+            ids = sorted(candidates)
+            for start in range(0, len(ids), 700):
+                chunk = ids[start:start + 700]
+                marks = ",".join("?" for _ in chunk)
+                for movie in con.execute(
+                    f"SELECT imdb_id,tmdb_id FROM movies WHERE imdb_id IN ({marks}) AND tmdb_id IS NOT NULL",
+                    chunk,
+                ):
+                    by_tmdb.setdefault(int(movie["tmdb_id"]), set()).add(str(movie["imdb_id"]))
+            if not by_tmdb:
+                return confirmed, conflicts
+            rows = con.execute(
+                """SELECT cache_key,payload_json FROM metadata_cache
+                   WHERE provider='tmdb' AND cache_key LIKE '/movie/%' AND expires_at > ?""",
+                (utcnow_iso(),),
+            ).fetchall()
+        for row in rows:
+            match = re.match(r"^/movie/(\d+)\?", str(row["cache_key"]))
+            if not match or int(match.group(1)) not in by_tmdb:
+                continue
+            tmdb_id = int(match.group(1))
+            details = json_loads(row["payload_json"], {})
+            if not isinstance(details, dict):
+                continue
+            try:
+                if int(details.get("id") or 0) != tmdb_id:
+                    continue
+            except (ValueError, TypeError):
+                continue
+            linked_id = str((details.get("external_ids") or {}).get("imdb_id") or "")
+            language = str(details.get("original_language") or "").lower()
+            countries = details.get("production_countries")
+            country_codes = {
+                str(item.get("iso_3166_1") or "").upper()
+                for item in countries if isinstance(item, dict) and item.get("iso_3166_1")
+            } if isinstance(countries, list) else set()
+            reasons = []
+            if language and language != "ro":
+                reasons.append(f"TMDb: limba originală {language}")
+            if country_codes and "RO" not in country_codes:
+                reasons.append("TMDb: țara de producție fără RO")
+            for imdb_id in by_tmdb[tmdb_id]:
+                if linked_id and linked_id != imdb_id:
+                    conflicts.setdefault(imdb_id, []).append("TMDb: IMDb ID diferit")
+                    continue
+                if reasons:
+                    for reason in reasons:
+                        if reason not in conflicts.setdefault(imdb_id, []):
+                            conflicts[imdb_id].append(reason)
+                elif language == "ro" and "RO" in country_codes:
+                    confirmed.add(imdb_id)
+        return confirmed - set(conflicts), conflicts
+
+    def evidence_for(self, imdb_id: str) -> dict:
+        """Explain one decision without interpreting a missing search hit as a conflict."""
+        if self.last_source == "not-verified":
+            self.imdb_ids()
+        item = self._evidence.get(str(imdb_id), {})
+        return dict(item) if isinstance(item, dict) else {}
+
     def local_imdb_ids(self) -> set[str]:
         """Country-only local metadata is diagnostic support, never an admission source."""
         self._local_country_support_ids()
@@ -309,6 +409,7 @@ class RomanianCinemaProvider:
             return set(cached)
 
         stale = self._cached(allow_expired=True)
+        stale_evidence = dict(self._evidence)
         errors: list[str] = []
         source_sets: dict[str, set[str]] = {}
 
@@ -330,13 +431,38 @@ class RomanianCinemaProvider:
             }
 
         local_support = self._local_country_support_ids()
-        verified: set[str] = set()
+        discovered: set[str] = set()
         for values in source_sets.values():
-            verified.update(values)
+            discovered.update(values)
+        detail_confirmed, conflicts = self._cached_tmdb_details(discovered | (stale or set()))
+        if detail_confirmed:
+            source_sets.setdefault("tmdb_details", set()).update(detail_confirmed)
+        verified = set().union(*(
+            values for name, values in source_sets.items() if name != "imdb"
+        )) if source_sets else set()
+        evidence = {
+            imdb_id: {
+                "sources": sorted(name for name, values in source_sets.items() if imdb_id in values),
+                "source_count": len({
+                    "tmdb" if name == "tmdb_details" else name
+                    for name, values in source_sets.items() if imdb_id in values
+                }),
+                "local_country_support": imdb_id in local_support,
+                "conflicts": conflicts.get(imdb_id, []),
+                "decision": (
+                    "review" if imdb_id in conflicts else
+                    "verified" if imdb_id in verified else "needs-original-language"
+                ),
+            }
+            for imdb_id in discovered | detail_confirmed
+        }
+        verified.difference_update(conflicts)
 
         self.last_source_counts = {key: len(values) for key, values in source_sets.items()}
         self.last_sources_available = sorted(source_sets)
         self.last_external_count = len(verified)
+        self._evidence = evidence
+        self.last_conflict_count = len(conflicts)
         self.last_error = " | ".join(errors)
 
         if verified:
@@ -344,14 +470,31 @@ class RomanianCinemaProvider:
                 verified,
                 source_sets=source_sets,
                 local_support=local_support,
+                evidence=evidence,
+                conflict_count=len(conflicts),
             )
             self.last_source = "romanian-multisource-verified"
             return verified
 
-        if stale:
+        stale_safe = (stale or set()) - set(conflicts)
+        if stale_safe:
+            self._evidence = {**stale_evidence, **evidence}
+            for imdb_id, reasons in conflicts.items():
+                self._evidence[imdb_id] = {
+                    **self._evidence.get(imdb_id, {}),
+                    "conflicts": reasons, "decision": "review",
+                }
             self.last_source = "romanian-multisource-stale-cache"
-            self.last_external_count = len(stale)
-            return set(stale)
+            self.last_external_count = len(stale_safe)
+            return stale_safe
+
+        if conflicts:
+            # A stale positive must not resurrect a title with explicit contradictory
+            # details. Persist the review decision even when every candidate is held.
+            self._store(set(), source_sets=source_sets, local_support=local_support,
+                        evidence=evidence, conflict_count=len(conflicts))
+            self.last_source = "romanian-conflicts-held-for-review"
+            return set()
 
         self.last_source = "language-unverified-empty"
         self.last_external_count = 0
@@ -368,4 +511,5 @@ class RomanianCinemaProvider:
             "source_counts": dict(self.last_source_counts),
             "sources_available": list(self.last_sources_available),
             "country_only_is_support": True,
+            "conflict_count": self.last_conflict_count,
         }
