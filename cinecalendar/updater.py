@@ -34,10 +34,15 @@ def _request_kwargs() -> dict:
 
 # v2 manifest is ZIP/folder aware. The legacy update.json remains a bridge manifest
 # so CineCalendar 2.1 can safely migrate from the old single-EXE updater.
-MANIFEST_URL = (
+STABLE_MANIFEST_URL = (
     "https://raw.githubusercontent.com/AdyTZa619/"
     "CineCalendar/main/update-v2.json"
 )
+ALPHA_MANIFEST_URL = (
+    "https://github.com/AdyTZa619/CineCalendar/releases/download/"
+    "cinecalendar-v5-alpha/update-v5-alpha.json"
+)
+MANIFEST_URL = STABLE_MANIFEST_URL
 POST_UPDATE_MODE = "--cinecalendar-post-update"
 
 
@@ -63,6 +68,7 @@ class NativeUpdateRequest:
     log: str
     expected_version: str
     expected_sha256: str
+    exe_name: str
     updates_dir: str
     helper_script: str
     request_path: str
@@ -80,7 +86,7 @@ def is_newer_version(remote: str, current: str) -> bool:
     return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
 
 
-def parse_manifest(payload: dict) -> UpdateInfo:
+def parse_manifest(payload: dict, *, expected_channel: str = "stable") -> UpdateInfo:
     version = str(payload.get("version") or "").strip()
     url = str(payload.get("url") or "").strip()
     sha = str(payload.get("sha256") or "").strip().lower()
@@ -91,8 +97,9 @@ def parse_manifest(payload: dict) -> UpdateInfo:
         raise ValueError("URL-ul update-ului trebuie să fie HTTPS.")
     if not re.fullmatch(r"[0-9a-f]{64}", sha):
         raise ValueError("SHA-256 invalid în manifestul de update.")
-    if channel != "stable":
-        raise ValueError("Canalul manifestului nu este stable.")
+    expected = str(expected_channel or "stable").strip().lower()
+    if channel != expected:
+        raise ValueError(f"Canalul manifestului nu este {expected}.")
     return UpdateInfo(
         version=version,
         url=url,
@@ -103,15 +110,20 @@ def parse_manifest(payload: dict) -> UpdateInfo:
     )
 
 
-def check_for_update(current_version: str, timeout: int = 12) -> UpdateInfo | None:
+def check_for_update(current_version: str, timeout: int = 12, *, channel: str | None = None) -> UpdateInfo | None:
+    if channel is None:
+        from .v5_alpha_runtime import is_v5_alpha
+        channel = "alpha" if is_v5_alpha() else "stable"
+    channel = str(channel or "stable").strip().lower()
+    manifest_url = ALPHA_MANIFEST_URL if channel == "alpha" else STABLE_MANIFEST_URL
     response = requests.get(
-        MANIFEST_URL,
+        manifest_url,
         **_request_kwargs(),
         timeout=(5, timeout),
         headers={"User-Agent": f"CineCalendar/{current_version}", "Cache-Control": "no-cache"},
     )
     response.raise_for_status()
-    info = parse_manifest(response.json())
+    info = parse_manifest(response.json(), expected_channel=channel)
     return info if is_newer_version(info.version, current_version) else None
 
 
@@ -127,9 +139,6 @@ def sha256_path(path: str | Path) -> str:
 
 
 def update_supported() -> bool:
-    from .v5_alpha_runtime import is_v5_alpha
-    if is_v5_alpha():
-        return False
     exe = Path(sys.executable)
     return bool(getattr(sys, "frozen", False) and os.name == "nt" and exe.suffix.lower() == ".exe")
 
@@ -173,7 +182,7 @@ def _download_to(url: str, destination: Path, progress: Callable[[str], None] | 
     os.replace(tmp, destination)
 
 
-def _safe_extract_zip(archive: Path, destination: Path) -> None:
+def _safe_extract_zip(archive: Path, destination: Path, *, exe_name: str = "CineCalendar.exe") -> None:
     if destination.exists():
         shutil.rmtree(destination, ignore_errors=True)
     destination.mkdir(parents=True, exist_ok=True)
@@ -184,10 +193,10 @@ def _safe_extract_zip(archive: Path, destination: Path) -> None:
             if target != root and root not in target.parents:
                 raise RuntimeError(f"Update ZIP invalid: cale nesigură {member.filename!r}.")
         zf.extractall(root)
-    exe = root / "CineCalendar.exe"
+    exe = root / str(exe_name)
     internal = root / "_internal"
     if not exe.is_file() or not internal.is_dir():
-        raise RuntimeError("Pachetul Premium nu conține CineCalendar.exe și folderul _internal.")
+        raise RuntimeError(f"Pachetul nu conține {exe_name} și folderul _internal.")
     with exe.open("rb") as fh:
         if fh.read(2) != b"MZ":
             raise RuntimeError("CineCalendar.exe din pachet nu este un executabil Windows valid.")
@@ -255,7 +264,7 @@ $appRoot = Norm $req.app_root
 $staged = Norm $req.staged_dir
 $backup = Norm $req.backup_dir
 $health = $req.health
-$current = Join-Path $appRoot 'CineCalendar.exe'
+$current = Join-Path $appRoot $req.exe_name
 
 try {
   if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Recurse -Force }
@@ -349,7 +358,7 @@ def stage_and_start_update(info: UpdateInfo, data_root: str | Path,
     helper = updates / "apply_update.ps1"
     request_path = updates / "apply_update.json"
 
-    progress("Descarc pachetul Premium…")
+    progress("Descarc pachetul CineCalendar…")
     _download_to(info.url, pending_zip, progress)
     got = sha256_path(pending_zip)
     if got.lower() != info.sha256.lower():
@@ -357,14 +366,14 @@ def stage_and_start_update(info: UpdateInfo, data_root: str | Path,
         raise RuntimeError(f"SHA-256 diferit. Așteptat {info.sha256}, primit {got}.")
 
     progress("SHA-256 verificat. Pregătesc fișierele…")
-    _safe_extract_zip(pending_zip, staged)
+    _safe_extract_zip(pending_zip, staged, exe_name=current.name)
     helper.write_text(_powershell_helper(), encoding="utf-8-sig")
 
     req = NativeUpdateRequest(
         parent_pid=os.getpid(), app_root=str(app_root), data_root=str(data_root),
         staged_dir=str(staged), backup_dir=str(backup), pending_zip=str(pending_zip),
         health=str(health), log=str(log), expected_version=info.version,
-        expected_sha256=info.sha256, updates_dir=str(updates), helper_script=str(helper),
+        expected_sha256=info.sha256, exe_name=current.name, updates_dir=str(updates), helper_script=str(helper),
         request_path=str(request_path),
     )
     request_path.write_text(json.dumps(asdict(req), ensure_ascii=False, indent=2), encoding="utf-8")
