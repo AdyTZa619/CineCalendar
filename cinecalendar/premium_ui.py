@@ -688,25 +688,37 @@ class PremiumDecisionWindow(DecisionWindow):
 
     # ---------- premium browse ----------
     def _browse_state_signature(self):
-        """State that is allowed to invalidate the visible recommendation list.
+        """Only user actions may invalidate the visible recommendation list.
 
-        Merely leaving/re-entering the page is intentionally not part of this signature.
-        Ratings/feedback/watchlist/profile changes, temporary skips, the day and the V5/V16
-        trial mode are. This keeps one visible list stable until something meaningful changes
-        or the user explicitly presses Recalculează.
+        Internal engine state is deliberately excluded here. Background metadata completion,
+        ALS readiness, V5 discovery refreshes and Lab diagnostics are allowed to evolve without
+        turning simple navigation into a new recommendation request.
         """
-        token_fn = getattr(self.s.recommender, "_state_token", None)
         try:
-            state_token = tuple(token_fn()) if callable(token_fn) else ()
+            with self.db.connect() as con:
+                ratings = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM ratings"
+                ).fetchone()
+                feedback = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(created_at),'') FROM feedback"
+                ).fetchone()
+                watchlist = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM watchlist"
+                ).fetchone()
+            user_state = (
+                int(ratings[0]), str(ratings[1]),
+                int(feedback[0]), str(feedback[1]),
+                int(watchlist[0]), str(watchlist[1]),
+            )
         except Exception:
-            state_token = ()
+            user_state = ()
         try:
             trial_mode = str(getattr(self.s.recommender, "mode", "") or "")
         except Exception:
             trial_mode = ""
         return (
             date.today().isoformat(),
-            repr(state_token),
+            user_state,
             trial_mode,
             tuple(sorted(int(movie_id) for movie_id in self.session_skips)),
         )
