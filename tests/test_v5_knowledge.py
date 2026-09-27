@@ -145,3 +145,6 @@ def test_metadata_doctor_reprioritizes_v5_taste_boundary_automatically():
     assert "5 * 60 * 1000" in source
     assert "is_v5_alpha()" in source
     assert "process_metadata_queue(" in source
+    assert "force=False, progress=progress" in source
+    assert "v5_ranker_shadow_status" in source
+    assert "Clasamentul vizibil NU este modificat." in source
