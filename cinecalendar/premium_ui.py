@@ -782,8 +782,8 @@ class PremiumDecisionWindow(DecisionWindow):
                 "pool_size":len(self.browse_result),
             }
             if self.current_page=="recommendations":
-                # Keep the loading panel until preflight finishes. Rendering this provisional
-                # list and then the reranked list would persist two exposure sets for one action.
+                # Show the locally ranked list immediately; metadata enrichment continues separately.
+                self._render_browse(self.browse_result[:12])
                 self._ensure_metadata(self.browse_result,"recommendations")
         def failure(message):
             self.browse_worker=None
@@ -966,6 +966,10 @@ class PremiumDecisionWindow(DecisionWindow):
             title="Date completate parțial; clasarea rămâne protejată"
             failed=int(report.get("failed",0) or 0); attempted=int(report.get("attempted",0) or 0)
             detail=f"Sursele publice nu au răspuns pentru {failed}/{attempted} titluri verificate. Au fost folosite numai datele factuale confirmate."
+        elif bool(report.get("rerank_deferred")):
+            title="Date noi pregătite pentru următoarea recalculare"
+            fields=sum(len(value) for value in (report.get("ranking_fields_added") or {}).values())
+            detail=f"Au fost adăugate {fields} câmpuri factuale în fundal. Lista curentă nu se reordonează singură; «Recalculează» le aplică."
         elif bool(report.get("reranked")):
             title="Clasare recalculată după completarea datelor"
             fields=sum(len(value) for value in (report.get("ranking_fields_added") or {}).values())
@@ -1176,20 +1180,8 @@ class PremiumDecisionWindow(DecisionWindow):
             report["before"]=coverage_report(recs[:12])
             final=list(recs[:12])
             report["reranked"]=False
-            if report.get("ranking_change"):
-                progress("Recalculez ordinea cu metadatele factuale noi…")
-                final=list(self.s.recommender.recommend(
-                    date.today(),12,
-                    exclude_ids=set(self.session_skips),
-                    record=False,
-                    slot="browse",
-                    candidate_limit=45000,
-                    mode="decide",
-                ))
-                report["reranked"]=True
-                report["after"]=coverage_report(final)
-            else:
-                report["after"]=coverage_report(final)
+            report["rerank_deferred"]=bool(report.get("ranking_change"))
+            report["after"]=coverage_report(final)
             return {"report":report,"recommendations":final}
 
         worker=WorkerThread(fn,self); self.metadata_worker=worker
@@ -1210,10 +1202,12 @@ class PremiumDecisionWindow(DecisionWindow):
                 message="Recomandările sunt gata; sursele de metadate nu au răspuns."
             elif state == "partial":
                 message=f"Recomandările sunt gata; {failed} titluri nu au putut fi verificate."
+            elif self.recommendation_metadata_report.get("rerank_deferred"):
+                message="Recomandările sunt gata; metadatele noi vor intra la următoarea recalculare."
             elif changed:
-                message="Clasarea finală folosește metadatele verificate."
+                message="Recomandările sunt gata; detaliile au fost completate în fundal."
             else:
-                message="Recomandările sunt gata; ordinea nu a necesitat modificări."
+                message="Recomandările sunt gata; ordinea curentă rămâne stabilă."
             self.set_status(message,False)
             if self.current_page=="recommendations":
                 self._render_browse(self.browse_result)
