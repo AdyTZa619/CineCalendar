@@ -251,6 +251,9 @@ class PremiumDecisionWindow(DecisionWindow):
         self.today_result: tuple[Recommendation | None, list[Recommendation]] | None = None
         self.browse_result: list[Recommendation] = []
         self.browse_generation = 0
+        # Navigation must never create a fresh recommendation exposure by itself.
+        # The signature is set only after an explicit/necessary generation completes.
+        self.browse_cache_signature = None
         self.recommendation_metadata_report: dict = {"state": "idle"}
         super().__init__(service)
         engine_identity = str((getattr(self.s, "production_stack", {}) or {}).get("recommendation_engine_identity") or "")
@@ -684,15 +687,71 @@ class PremiumDecisionWindow(DecisionWindow):
         main.addLayout(l,1); return box
 
     # ---------- premium browse ----------
+    def _browse_state_signature(self):
+        """State that is allowed to invalidate the visible recommendation list.
+
+        Merely leaving/re-entering the page is intentionally not part of this signature.
+        Ratings/feedback/watchlist/profile changes, temporary skips, the day and the V5/V16
+        trial mode are. This keeps one visible list stable until something meaningful changes
+        or the user explicitly presses Recalculează.
+        """
+        token_fn = getattr(self.s.recommender, "_state_token", None)
+        try:
+            state_token = tuple(token_fn()) if callable(token_fn) else ()
+        except Exception:
+            state_token = ()
+        try:
+            trial_mode = str(getattr(self.s.recommender, "mode", "") or "")
+        except Exception:
+            trial_mode = ""
+        return (
+            date.today().isoformat(),
+            repr(state_token),
+            trial_mode,
+            tuple(sorted(int(movie_id) for movie_id in self.session_skips)),
+        )
+
+    def _browse_cache_valid(self) -> bool:
+        return (
+            self.browse_cache_signature is not None
+            and self.browse_cache_signature == self._browse_state_signature()
+        )
+
+    def recalculate_browse(self):
+        """Explicitly invalidate the current list and build a new one once."""
+        if self.browse_worker and self.browse_worker.isRunning():
+            self.set_status("Recalcularea recomandărilor este deja în curs.", True)
+            return
+        if self.metadata_worker and self.metadata_worker.isRunning():
+            self.set_status("Finalizez verificarea listei curente înainte de recalculare.", True)
+            return
+        self.browse_result = []
+        self.browse_cache_signature = None
+        self.recommendation_metadata_report = {"state": "idle"}
+        self.show_page("recommendations")
+
     def page_recommendations(self):
         page, content = self.page_shell(
             "Recomandări pentru tine",
             "Selecție personală, nu top IMDb. Gustul tău conduce scorul; calendarul doar rafinează.",
-            [("Recalculează", lambda:self.show_page("recommendations"), True)],
+            [("Recalculează", self.recalculate_browse, True)],
         )
         self.browse_content=content
         if self.catalog_count()[2] <= 0:
             x=QLabel("Catalogul nu este încă pregătit."); x.setObjectName("Muted"); content.addWidget(x); return page
+
+        # Re-entering the page is navigation, not a request for a new recommendation round.
+        # Re-render the exact list already shown while its meaningful state is unchanged.
+        if self._browse_cache_valid():
+            self._render_browse(list(self.browse_result))
+            return page
+
+        # A real state change (rating/feedback/watchlist/day/trial mode) invalidates the cache.
+        if self.browse_cache_signature is not None:
+            self.browse_result = []
+            self.browse_cache_signature = None
+            self.recommendation_metadata_report = {"state": "idle"}
+
         content.addWidget(self.loading_panel("Construiesc selecția…","Caut printre filme nevăzute și evit titlurile deja evaluate, respinse sau repetate prea des."))
         content.addStretch(1)
         QTimer.singleShot(0,self._load_browse_async)
@@ -706,11 +765,15 @@ class PremiumDecisionWindow(DecisionWindow):
             return
         if self.current_page != "recommendations": return
         self.browse_generation += 1
+        generation_signature = self._browse_state_signature()
         self.set_status("Calculez recomandările…",True)
         worker=WorkerThread(lambda progress:self.s.recommender.recommend(date.today(),PREFLIGHT_POOL_SIZE,exclude_ids=set(self.session_skips),record=False,slot="browse",candidate_limit=45000,mode="decide"),self)
         self.browse_worker=worker
         def success(recs):
-            self.browse_worker=None; self.browse_result=list(recs); self.set_status("Recomandările sunt gata.",False)
+            self.browse_worker=None
+            self.browse_result=list(recs)
+            self.browse_cache_signature=generation_signature
+            self.set_status("Recomandările sunt gata.",False)
             coverage=coverage_report(self.browse_result[:12])
             self.recommendation_metadata_report={
                 "state":"checking", "before":coverage, "after":coverage,
@@ -723,7 +786,9 @@ class PremiumDecisionWindow(DecisionWindow):
                 # list and then the reranked list would persist two exposure sets for one action.
                 self._ensure_metadata(self.browse_result,"recommendations")
         def failure(message):
-            self.browse_worker=None; self.set_status("Recomandările au eșuat.",False)
+            self.browse_worker=None
+            self.browse_cache_signature=None
+            self.set_status("Recomandările au eșuat.",False)
             if self.current_page=="recommendations" and self.browse_content is not None:
                 self._clear_layout(self.browse_content); x=QLabel(message); x.setWordWrap(True); self.browse_content.addWidget(x)
         worker.success.connect(success); worker.failure.connect(failure); worker.start()
