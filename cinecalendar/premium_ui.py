@@ -115,6 +115,12 @@ class MovieDetailDialog(QDialog):
         score_row.addStretch(1)
         info.addLayout(score_row)
         info.addWidget(owner.reliability_widget(rec))
+        trial_text = owner._trial_audit_text(rec)
+        if trial_text:
+            trial = QLabel(trial_text)
+            trial.setObjectName("Muted")
+            trial.setWordWrap(True)
+            info.addWidget(trial)
 
         chips = QHBoxLayout()
         for text in owner.movie_chips(rec.movie, limit=6):
@@ -646,6 +652,9 @@ class PremiumDecisionWindow(DecisionWindow):
         if m.imdb_rating is not None: metric.addWidget(self.metric_badge(f"{m.imdb_rating:.1f}","IMDb"))
         metric.addStretch(1); right.addLayout(metric)
         right.addWidget(self.reliability_widget(rec))
+        trial_text=self._trial_audit_text(rec)
+        if trial_text:
+            trial=QLabel(trial_text); trial.setObjectName("Muted"); trial.setWordWrap(True); right.addWidget(trial)
 
         chips=QHBoxLayout()
         for text in self.movie_chips(m): chips.addWidget(self.pill(text))
@@ -678,6 +687,9 @@ class PremiumDecisionWindow(DecisionWindow):
         l=QVBoxLayout(); t=QLabel(m.title+(f" ({m.year})" if m.year else "")); t.setObjectName("CardTitle"); t.setWordWrap(True); l.addWidget(t)
         p=QLabel(f"{s.predicted_rating:.1f}/10 pentru tine • {round(s.confidence*100)}% dovezi personale"); p.setObjectName("Score"); l.addWidget(p)
         l.addWidget(self.reliability_widget(rec,compact=True))
+        trial_text=self._trial_audit_text(rec)
+        if trial_text:
+            trial=QLabel(trial_text); trial.setObjectName("Muted"); trial.setWordWrap(True); l.addWidget(trial)
         meta=" • ".join(self.movie_chips(m,4)); x=QLabel(meta); x.setObjectName("Muted"); x.setWordWrap(True); l.addWidget(x)
         if primary is not None:
             compare=QLabel("Față de alegerea #1: "+comparison_reason(primary, rec))
@@ -1058,6 +1070,9 @@ class PremiumDecisionWindow(DecisionWindow):
         head=QHBoxLayout(); title=QLabel(f"{index}. {m.title}"+(f" ({m.year})" if m.year else "")); title.setObjectName("CardTitle"); title.setWordWrap(True); head.addWidget(title,1)
         score=QLabel(f"{s.predicted_rating:.1f}/10"); score.setObjectName("Score"); head.addWidget(score); l.addLayout(head)
         l.addWidget(self.reliability_widget(rec,compact=True))
+        trial_text=self._trial_audit_text(rec)
+        if trial_text:
+            trial=QLabel(trial_text); trial.setObjectName("Muted"); trial.setWordWrap(True); l.addWidget(trial)
         meta=QLabel(" • ".join(self.movie_chips(m,5))); meta.setObjectName("Muted"); meta.setWordWrap(True); l.addWidget(meta)
         overview=QLabel(self.overview_text(m)); overview.setWordWrap(True); overview.setMaximumHeight(66); overview.setObjectName("Muted"); l.addWidget(overview)
         result=dict((self.recommendation_metadata_report or {}).get("title_results") or {}).get(int(m.id or 0),{})
