@@ -40,6 +40,7 @@ jobs:
             'cinecalendar\v5_lab.py',
             'cinecalendar\v5_shadow_ranker.py',
             'cinecalendar\v5_evaluation.py',
+            'cinecalendar\v5_visible_trial.py',
             'cinecalendar\v5_online_discovery.py',
             'cinecalendar\recommendation.py',
             'cinecalendar\recommender_v3.py',
