@@ -227,6 +227,10 @@ def install_premium_tabs_v5(window_cls) -> None:
             return page
         return wrapped
 
+    # Replace the inherited shell itself. Without this assignment the grouped
+    # navigation code exists but the application still constructs the legacy sidebar.
+    window_cls._build_shell = _build_shell
+
     for key, original in originals.items():
         setattr(window_cls, f"page_{key}", _wrap_page(key, original))
 
