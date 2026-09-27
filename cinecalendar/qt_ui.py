@@ -170,6 +170,52 @@ class CineCalendarWindow(QMainWindow):
         self.metadata_queue_timer.start(15 * 60 * 1000)
         QTimer.singleShot(20000, lambda: self.run_metadata_doctor(silent=True))
 
+    def _shutdown_ui_workers(self) -> None:
+        """Stop timers and QThreads so closing the last window really ends the process."""
+        try:
+            for timer in self.findChildren(QTimer):
+                timer.stop()
+        except Exception:
+            pass
+
+        workers = []
+        for name in ("worker", "metadata_queue_worker", "update_worker", "metadata_worker"):
+            thread = getattr(self, name, None)
+            if thread is not None and thread not in workers:
+                workers.append(thread)
+        for thread in list(getattr(self, "poster_threads", []) or []):
+            if thread is not None and thread not in workers:
+                workers.append(thread)
+
+        for thread in workers:
+            try:
+                if thread.isRunning():
+                    thread.requestInterruption()
+                    thread.quit()
+            except Exception:
+                pass
+
+        # Most workers are already near completion. Give them a short graceful window first.
+        for thread in workers:
+            try:
+                if thread.isRunning() and not thread.wait(900):
+                    # Network/library calls are not always interruption-aware. On application
+                    # shutdown it is safer to stop that worker than leave a hidden process holding
+                    # the portable bundle open indefinitely.
+                    thread.terminate()
+                    thread.wait(1200)
+            except Exception:
+                pass
+
+    def closeEvent(self, event):
+        self._shutdown_ui_workers()
+        try:
+            event.accept()
+        finally:
+            app = QApplication.instance()
+            if app is not None:
+                QTimer.singleShot(0, app.quit)
+
     def _set_icon(self):
         try:
             pm = QPixmap(64, 64); pm.fill(Qt.transparent)
