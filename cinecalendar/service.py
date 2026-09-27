@@ -101,6 +101,11 @@ class CineCalendarService:
         runtime_engine = self.recommender.active
         self.quality_manager.set_runtime_engine(runtime_engine)
         self.production_stack = production_stack_status(runtime_engine)
+        self.shadow_retrieval = FullCatalogShadowEvaluatorV414(
+            self.db,
+            runtime_engine.collaborative,
+            str(self.production_stack.get("recommendation_engine_identity") or ""),
+        )
         self.log.info(
             "V5 visible trial mode changed: mode=%s eligible=%s",
             status.get("mode"),
