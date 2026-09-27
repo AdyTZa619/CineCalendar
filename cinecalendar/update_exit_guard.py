@@ -22,7 +22,7 @@ def install_update_exit_guard(decision_cls) -> None:
             QMessageBox.information(
                 self,
                 "Actualizări",
-                "Updaterul automat funcționează numai din CineCalendar.exe pe Windows.",
+                "Updaterul automat funcționează numai din executabilul CineCalendar pentru Windows.",
             )
             return
         if confirm:
