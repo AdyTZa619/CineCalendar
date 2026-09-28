@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QGridLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 
 GENRES = (
@@ -58,17 +58,25 @@ def install_daily_genre_ui_patch(window_cls) -> None:
             text += f" Pentru azi ai cerut explicit genul {active}."
         # Secondary control: useful only when the user explicitly feels like watching a genre.
         chooser = QFrame(); chooser.setObjectName("PremiumCard")
-        row = QGridLayout(chooser); row.setContentsMargins(16,10,16,10); row.setSpacing(8)
-        label = QLabel("Opțional, doar dacă ai chef de ceva anume:")
-        label.setObjectName("Muted"); label.setWordWrap(True); row.addWidget(label,0,0)
+        compact = bool(getattr(self, "skin", None))
+        row = QHBoxLayout(chooser) if compact else QGridLayout(chooser)
+        row.setContentsMargins(16, 7 if compact else 10, 16, 7 if compact else 10); row.setSpacing(8)
+        label = QLabel("Genul de azi (opțional):" if compact else "Opțional, doar dacă ai chef de ceva anume:")
+        label.setObjectName("Muted"); label.setWordWrap(True)
+        if compact: row.addWidget(label)
+        else: row.addWidget(label,0,0)
         combo = QComboBox(); combo.addItems(list(GENRES)); combo.setMinimumWidth(180)
+        combo.setToolTip("Nu schimbă profilul; filtrul este valabil numai azi.")
         current = active
         combo.setCurrentText(current if current in GENRES else "Orice gen")
         combo.currentTextChanged.connect(lambda value: self._set_today_genre(value))
-        row.addWidget(combo,0,1)
-        note = QLabel("Nu schimbă profilul; este valabil numai azi.")
-        note.setObjectName("Muted"); note.setWordWrap(True); row.addWidget(note,1,0,1,2)
-        row.setColumnStretch(0,1)
+        if compact:
+            row.addStretch(1); row.addWidget(combo)
+        else:
+            row.addWidget(combo,0,1)
+            note = QLabel("Nu schimbă profilul; este valabil numai azi.")
+            note.setObjectName("Muted"); note.setWordWrap(True); row.addWidget(note,1,0,1,2)
+            row.setColumnStretch(0,1)
         # Ranking clears the result layout; keep this control outside it.
         page.layout().insertWidget(1, chooser)
 

@@ -77,6 +77,7 @@ jobs:
             'cinecalendar\autoseed.py',
             'cinecalendar\qt_ui_v2.py',
             'cinecalendar\premium_ui.py',
+            'cinecalendar\premium_skins.py',
             'cinecalendar\open_metadata.py',
             'cinecalendar\updater.py',
             'scripts\benchmark_engine_v3.py',

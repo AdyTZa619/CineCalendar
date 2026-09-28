@@ -133,3 +133,10 @@ sortarea și exportul lucrează în continuare pe toate ratingurile, iar
 schimbarea unui filtru revine la prima pagină. Cronologia românească afișează
 inițial opt afișe pentru fiecare capitol, cu buton pentru următoarele titluri;
 astfel nu mai creează simultan sute de carduri și solicitări de postere.
+# Alpha 21 — trei skinuri selectabile
+
+- În Setări → Aspectul aplicației se poate alege Cinematic, Editorial sau Workbench.
+- Navigarea și prezentarea alegerii zilei se schimbă imediat; selecția se păstrează în baza locală.
+- Aceleași rezultate, verificări, expuneri și acțiuni sunt folosite în toate cele trei skinuri.
+- Cinematic afișează navigarea sus și alternativele sub alegerea zilei; Editorial arată afișul și explicația lângă alternative; Workbench permite selectarea unui rând și inspectarea filmului în dreapta.
+- Skinurile nu schimbă ordinea recomandărilor sau formula motorului V5.
