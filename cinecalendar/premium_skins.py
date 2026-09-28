@@ -352,8 +352,10 @@ def _alternative(window, rec, index):
 def _quick_controls(window):
     bar = QFrame()
     bar.setObjectName("PremiumCard")
-    row = QHBoxLayout(bar)
-    row.setContentsMargins(14, 9, 14, 9)
+    layout = QVBoxLayout(bar)
+    layout.setContentsMargins(14, 9, 14, 9)
+    layout.setSpacing(6)
+    row = QHBoxLayout()
     row.setSpacing(8)
     row.addWidget(_label("Cum alegem:", "Muted"))
     for title, key in (("Echilibrat", "decide"), ("Mai sigur", "safe"),
@@ -361,13 +363,18 @@ def _quick_controls(window):
         row.addWidget(_action(window, title,
                     lambda _=False, value=key: window.set_decision_mode(value),
                     key == window.decision_mode))
+    row.addStretch(1)
+    layout.addLayout(row)
+    filters = QHBoxLayout()
+    filters.setSpacing(8)
+    filters.addWidget(_label("Filtre rapide:", "Muted"))
     runtime = QComboBox()
     for name, value in (("Orice durată", "all"), ("≤60 min", "60"),
                         ("≤90 min", "90"), ("≤120 min", "120"), ("180+ min", "180plus")):
         runtime.addItem(name, value)
     runtime.setCurrentIndex(max(0, runtime.findData(str(window.db.get_setting("chooser_runtime_bucket", "all")))))
     runtime.currentIndexChanged.connect(lambda _=0: _set_filter(window, "chooser_runtime_bucket", runtime.currentData()))
-    row.addWidget(runtime)
+    filters.addWidget(runtime)
     mood = QComboBox()
     for name, value in (("Orice ton", "neutral"), ("Lejer", "light"),
                         ("Intens", "intense"), ("Contemplativ", "contemplative"),
@@ -375,8 +382,9 @@ def _quick_controls(window):
         mood.addItem(name, value)
     mood.setCurrentIndex(max(0, mood.findData(str(window.db.get_setting("chooser_mood", "neutral")))))
     mood.currentIndexChanged.connect(lambda _=0: _set_filter(window, "chooser_mood", mood.currentData()))
-    row.addWidget(mood)
-    row.addStretch(1)
+    filters.addWidget(mood)
+    filters.addStretch(1)
+    layout.addLayout(filters)
     return bar
 
 

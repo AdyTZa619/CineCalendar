@@ -48,6 +48,7 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
         window.resize(1280, 720)
         window.show()
         expected_menus = {key for key, _ in window.NAV}
+        overflow_by_skin = {}
         for skin in ("cinematic", "editorial", "workbench"):
             window.set_skin(skin)
             assert service.db.get_setting("ui_skin") == skin
@@ -62,9 +63,14 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
             assert any("Aleg pentru azi" == x.text() for x in page.findChildren(QPushButton))
             assert any("Nu acum / motiv" == x.text() for x in page.findChildren(QPushButton))
             assert any("Aleg" == x.text() for x in page.findChildren(QPushButton))
-            horizontal_overflow = [scroll.horizontalScrollBar().maximum()
-                                   for scroll in page.findChildren(QScrollArea)]
-            assert all(value == 0 for value in horizontal_overflow), (skin, horizontal_overflow)
+            overflow_by_skin[skin] = [
+                (scroll.horizontalScrollBar().maximum(), scroll.viewport().width(),
+                 [(item.widget().objectName(), item.widget().sizeHint().width())
+                  for item in (scroll.widget().layout().itemAt(i)
+                               for i in range(scroll.widget().layout().count()))
+                  if item.widget() is not None])
+                for scroll in page.findChildren(QScrollArea)
+            ]
             assert window.today_worker is None
             window.show_page("settings")
             assert any("Aspectul aplicației" == x.text() for x in window.stack.currentWidget().findChildren(QLabel))
@@ -74,6 +80,8 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
                     window.show_page(key)
                     assert window.stack.currentWidget() is not None
             window.show_page("settings")
+        assert all(not maximum for data in overflow_by_skin.values()
+                   for maximum, _viewport, _children in data), overflow_by_skin
         assert window.skin == "workbench"
         # Switching from the actual Settings control must rebuild and persist the shell.
         choices = [button for button in window.stack.currentWidget().findChildren(QPushButton)
