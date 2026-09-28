@@ -449,8 +449,8 @@ def build_skin_shell(window):
     sl.addWidget(window.undo_feedback_button)
     sl.addWidget(window.status)
     sl.addWidget(window.progress)
-    sl.addWidget(_label("v" + str(window.windowTitle().split(" ")[1])
-                        if len(window.windowTitle().split(" ")) > 1 else "CineCalendar"))
+    version = window.windowTitle().removeprefix("CineCalendar ").split(" —", 1)[0]
+    sl.addWidget(_label("v" + version if version else "CineCalendar"))
     outer.addWidget(side)
     outer.addWidget(window.stack, 1)
 
