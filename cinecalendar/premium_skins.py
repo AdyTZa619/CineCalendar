@@ -5,7 +5,7 @@ stay in the existing service and decision methods.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 import json
 
 from PySide6.QtCore import Qt, QTimer, QEasingCurve, QPropertyAnimation, QSize, QPointF
@@ -586,6 +586,37 @@ def _alternative(window, rec, index, *, variant=None):
     return box
 
 
+def _calendar_context(window, rec):
+    box = QFrame()
+    box.setObjectName("AlternativeCard")
+    layout = QVBoxLayout(box)
+    layout.setContentsMargins(17, 15, 17, 15)
+    layout.setSpacing(12)
+    today = date.today()
+    layout.addWidget(_label("CONTEXT ÎN CALENDAR", "Eyebrow"))
+    layout.addWidget(_label(today.strftime("%d.%m.%Y"), "CardTitle"))
+    week = QHBoxLayout()
+    week.setSpacing(2)
+    monday = today - timedelta(days=today.weekday())
+    for offset, name in enumerate(("Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du")):
+        item = QVBoxLayout()
+        day = _label(name, "Muted")
+        day.setAlignment(Qt.AlignCenter)
+        number = _label(str((monday + timedelta(days=offset)).day),
+                        "Kicker" if offset == today.weekday() else "Muted")
+        number.setAlignment(Qt.AlignCenter)
+        item.addWidget(day); item.addWidget(number)
+        week.addLayout(item, 1)
+    layout.addLayout(week)
+    layout.addWidget(_label(rec.score.calendar_reason or
+                            "Consultă programul și contextul zilei pentru alegerea ta.",
+                            "Muted", True))
+    layout.addStretch(1)
+    layout.addWidget(_action(window, "Deschide calendarul  →",
+                             lambda: window.show_page("calendar")))
+    return box
+
+
 def _quick_controls(window):
     bar = QFrame()
     bar.setObjectName("PremiumCard")
@@ -672,6 +703,7 @@ def render_skin_today(window, primary, backups):
         sl.addWidget(_label("ALTERNATIVE PENTRU DISEARĂ", "Eyebrow", True))
         for i, rec in enumerate(backups[:2], 2):
             sl.addWidget(_alternative(window, rec, i, variant="editorial"))
+        sl.addWidget(_calendar_context(window, primary))
         see_all = _action(window, "Toate recomandările  →", lambda: window.show_page("recommendations"))
         sl.addWidget(see_all)
         sl.addStretch(1)
@@ -699,7 +731,12 @@ def render_skin_today(window, primary, backups):
             selector.layout().itemAt(1).layout().addWidget(pick)
             buttons.append(pick)
             row.addWidget(selector, 1)
+        context = _calendar_context(window, primary)
+        if window.width() >= 1500:
+            row.addWidget(context, 1)
         wrap = QWidget(); wrap.setLayout(row); content.addWidget(wrap)
+        if window.width() < 1500:
+            content.addWidget(context)
         inspector.setProperty("revealOnSelect", False)
         _select(inspector, buttons, 0)
     content.addWidget(_quick_controls(window))

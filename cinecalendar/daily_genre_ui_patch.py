@@ -62,7 +62,7 @@ def install_daily_genre_ui_patch(window_cls) -> None:
         row = QHBoxLayout(chooser) if compact else QGridLayout(chooser)
         row.setContentsMargins(16, 7 if compact else 10, 16, 7 if compact else 10); row.setSpacing(8)
         label = QLabel("Genul de azi (opțional):" if compact else "Opțional, doar dacă ai chef de ceva anume:")
-        label.setObjectName("Muted"); label.setWordWrap(True)
+        label.setObjectName("Muted"); label.setWordWrap(not compact)
         if compact: row.addWidget(label)
         else: row.addWidget(label,0,0)
         combo = QComboBox(); combo.addItems(list(GENRES)); combo.setMinimumWidth(180)
