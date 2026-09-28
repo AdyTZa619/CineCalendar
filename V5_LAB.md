@@ -94,3 +94,13 @@ selecția curentă. Închiderea oprește și workerii paginilor, inclusiv cei po
 pentru catalogul românesc. Bara laterală poate fi derulată la ferestre mai mici.
 Căutarea IMDb pentru titluri românești împarte intervalele care ating limita de
 rezultate, ca să nu piardă în tăcere filme din catalog.
+
+## Alegerea zilei în Alpha 18
+
+Pagina reală „Ce văd acum?” refolosește alegerea calculată la revenirea din alte
+pagini, cât timp data, modul și filtrele rămân aceleași. Butonul „Recalculează
+alegerea” cere explicit un tur nou. Filtrul opțional de gen rămâne vizibil și
+după apariția rezultatului. În trialul V16/V5, schimbarea genului, dispoziției
+sau duratei recalculează ambele variante, în loc să refolosească un rezultat
+pentru filtrele anterioare. Antetele paginilor permit descrieri pe mai multe
+rânduri și așază acțiunile sub titlu, ca textul să nu fie tăiat la ferestre mici.

@@ -374,6 +374,9 @@ class AlphaTrialRecommender:
             tuple(sorted(int(x) for x in (exclude_ids or set()))),
             str(mode or ""),
             tuple(sorted((str(key), repr(value)) for key, value in kwargs.items())),
+            str(self.db.get_setting("chooser_runtime_bucket", "all") or "all"),
+            str(self.db.get_setting("chooser_mood", "neutral") or "neutral"),
+            str(self.db.get_setting("daily_genre_filter", {}) or {}),
             self._user_state_token(),
         )
         cached = self._round_cache.get(slot_key)

@@ -4,7 +4,7 @@ from datetime import date
 import time
 
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel
 
 from cinecalendar.premium_calendar_ui import CalendarPremiumWindow
 from cinecalendar.service import CineCalendarService
@@ -45,6 +45,22 @@ def test_existing_results_open_immediately_without_new_page_workers(tmp_path, mo
         romanian_button = window.nav_buttons["romanian"]
         assert romanian_button.width() >= romanian_button.fontMetrics().horizontalAdvance(romanian_button.text()) + 28
         assert window.undo_feedback_button.width() >= window.undo_feedback_button.fontMetrics().horizontalAdvance(window.undo_feedback_button.text()) + 20
+
+        window.today_result = (None, [])
+        window.today_cache_signature = window._today_signature()
+        window.show_page("today")
+        app.processEvents()
+        assert window.today_worker is None
+        assert window.today_content.count() == 1
+        assert "Nu am găsit momentan" in window.today_content.itemAt(0).widget().text()
+        assert window.stack.currentWidget().findChildren(QComboBox)
+        window.recalculate_today()
+        assert window.today_result is None
+        assert window.today_cache_signature is None
+        assert any("Îți aleg filmul" in x.text() for x in window.stack.currentWidget().findChildren(QLabel))
+        window.db.set_setting("daily_genre_filter", {"date": date.today().isoformat(), "genre": "Horror"})
+        window.show_page("today")
+        assert any(combo.currentText() == "Horror" for combo in window.stack.currentWidget().findChildren(QComboBox))
 
         signature = window._browse_state_signature()
         window.romanian_result = []

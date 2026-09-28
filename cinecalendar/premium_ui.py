@@ -255,6 +255,7 @@ class PremiumDecisionWindow(DecisionWindow):
         self.today_content = None
         self.browse_content = None
         self.today_result: tuple[Recommendation | None, list[Recommendation]] | None = None
+        self.today_cache_signature = None
         self.browse_result: list[Recommendation] = []
         self.browse_generation = 0
         # Navigation must never create a fresh recommendation exposure by itself.
@@ -529,10 +530,30 @@ class PremiumDecisionWindow(DecisionWindow):
         return box
 
     # ---------- non-blocking home ----------
+    def _today_signature(self):
+        return (
+            self._browse_state_signature(), self.decision_mode,
+            str(self.db.get_setting("chooser_runtime_bucket", "all")),
+            str(self.db.get_setting("chooser_mood", "neutral")),
+            self._today_genre() if callable(getattr(self, "_today_genre", None)) else "",
+        )
+
+    def recalculate_today(self):
+        if self.today_worker and self.today_worker.isRunning():
+            self.set_status("Alegerea zilei este deja în curs de calcul.", True)
+            return
+        invalidate = getattr(self.s.recommender, "invalidate_round", None)
+        if callable(invalidate):
+            invalidate("decision")
+        self.today_result = None
+        self.today_cache_signature = None
+        self.show_page("today")
+
     def page_today(self):
         page, content = self.page_shell(
             "Ce văd acum?",
             "O singură alegere bine argumentată, construită din ratingurile tale. Fără listă infinită.",
+            [("Recalculează alegerea", self.recalculate_today, True)],
         )
         self.today_content = content
         _total, rated, cand = self.catalog_count()
@@ -544,6 +565,9 @@ class PremiumDecisionWindow(DecisionWindow):
             d.setObjectName("Muted"); d.setWordWrap(True); l.addWidget(d)
             b = QPushButton("Pregătește automat catalogul"); b.setProperty("accent",True); b.clicked.connect(lambda:self.bootstrap_catalog(False)); l.addWidget(b, alignment=Qt.AlignLeft)
             content.addWidget(box); content.addStretch(1); return page
+        if self.today_result is not None and self.today_cache_signature == self._today_signature():
+            self._render_today(*self.today_result)
+            return page
         content.addWidget(self.loading_panel("Îți aleg filmul…", "Analizez profilul, istoricul, calitatea titlurilor și contextul zilei. Fereastra rămâne utilizabilă în timp ce motorul lucrează."))
         content.addStretch(1)
         QTimer.singleShot(0, self._load_today_async)
@@ -551,17 +575,15 @@ class PremiumDecisionWindow(DecisionWindow):
 
     def _load_today_async(self):
         if self._ui_closing or self.current_page != "today": return
+        if self.today_result is not None and self.today_cache_signature == self._today_signature():
+            return
         if self.today_worker and self.today_worker.isRunning():
             return
         self.set_status("Calculez alegerea zilei…", True)
         contextual_feedback = self.active_contextual_feedback()
         contextual_exclusions = {movie_id for _kind, movie_id in contextual_feedback}
         exclude_ids = set(self.session_skips) | contextual_exclusions
-        signature = (
-            self._browse_state_signature(), self.decision_mode,
-            str(self.db.get_setting("chooser_runtime_bucket", "all")),
-            str(self.db.get_setting("chooser_mood", "neutral")),
-        )
+        signature = self._today_signature()
         worker = WorkerThread(
             lambda progress: self.s.recommender.decision_pick(
                 date.today(),
@@ -574,11 +596,7 @@ class PremiumDecisionWindow(DecisionWindow):
         self.today_worker = worker
         def success(result):
             self.today_worker = None
-            current = (
-                self._browse_state_signature(), self.decision_mode,
-                str(self.db.get_setting("chooser_runtime_bucket", "all")),
-                str(self.db.get_setting("chooser_mood", "neutral")),
-            )
+            current = self._today_signature()
             if signature != current:
                 self.set_status("Contextul s-a schimbat; actualizez alegerea.", False)
                 if self.current_page == "today" and not self._ui_closing:
@@ -586,6 +604,7 @@ class PremiumDecisionWindow(DecisionWindow):
                 return
             self.set_status("Alegerea este gata.", False)
             self.today_result = result
+            self.today_cache_signature = signature
             if self.current_page == "today":
                 self._render_today(*result)
                 recs = ([result[0]] if result[0] else []) + list(result[1] or [])

@@ -222,3 +222,28 @@ def test_plain_navigation_reuses_rounds_until_state_change_or_recalculate(tmp_pa
                     ('test', '{}', '2030-01-01T00:00:00+00:00'))
     proxy.recommend_romanian(when=when, count=2)
     assert (v16.romanian_calls, v5.romanian_calls) == (2, 2)
+
+
+def test_decision_trial_refreshes_both_engines_when_chooser_changes(tmp_path):
+    db = Database(tmp_path / "trial-chooser.db")
+    _eligible(db)
+    v16 = FakeEngine([_rec(1, 0.76)])
+    v5 = FakeEngine([_rec(2, 0.81)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    when = date(2026, 9, 28)
+
+    proxy.decision_pick(when=when)
+    proxy.decision_pick(when=when)
+    assert (v16.decision_calls, v5.decision_calls) == (1, 1)
+
+    db.set_setting("daily_genre_filter", {"date": when.isoformat(), "genre": "Horror"})
+    proxy.decision_pick(when=when)
+    assert (v16.decision_calls, v5.decision_calls) == (2, 2)
+
+    db.set_setting("chooser_mood", "intense")
+    proxy.decision_pick(when=when)
+    assert (v16.decision_calls, v5.decision_calls) == (3, 3)
+
+    db.set_setting("chooser_runtime_bucket", "90")
+    proxy.decision_pick(when=when)
+    assert (v16.decision_calls, v5.decision_calls) == (4, 4)

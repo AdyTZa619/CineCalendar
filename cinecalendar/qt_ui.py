@@ -316,13 +316,15 @@ class CineCalendarWindow(QMainWindow):
 
     def page_shell(self, title:str, subtitle:str="", actions:list[tuple[str,Callable,bool]]|None=None):
         page=QWidget(); outer=QVBoxLayout(page); outer.setContentsMargins(28,24,28,22); outer.setSpacing(14)
-        top=QHBoxLayout(); left=QVBoxLayout(); t=QLabel(title); t.setObjectName("PageTitle"); left.addWidget(t)
+        top=QVBoxLayout(); t=QLabel(title); t.setObjectName("PageTitle"); t.setWordWrap(True); top.addWidget(t)
         if subtitle:
-            s=QLabel(subtitle); s.setObjectName("Muted"); left.addWidget(s)
-        top.addLayout(left,1)
+            s=QLabel(subtitle); s.setObjectName("Muted"); s.setWordWrap(True); top.addWidget(s)
         if actions:
-            for text,fn,accent in actions:
-                b=QPushButton(text); b.setProperty("accent",accent); b.clicked.connect(fn); top.addWidget(b)
+            action_grid=QGridLayout()
+            for index,(text,fn,accent) in enumerate(actions):
+                b=QPushButton(text); b.setProperty("accent",accent); b.clicked.connect(fn)
+                action_grid.addWidget(b,index//2,index%2,Qt.AlignLeft)
+            top.addLayout(action_grid)
         outer.addLayout(top)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         if self.current_page == "recommendations":

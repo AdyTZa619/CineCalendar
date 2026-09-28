@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QGridLayout, QLabel, QPushButton, QVBoxLayout
 
 
 GENRES = (
@@ -39,6 +39,7 @@ def install_daily_genre_ui_patch(window_cls) -> None:
         page, content = self.page_shell(
             "Ce văd acum?",
             "Îți aleg automat filmul cu cea mai bună potrivire pentru tine. Nu trebuie să setezi nimic.",
+            [("Recalculează alegerea", self.recalculate_today, True)],
         )
         self.today_content = content
         _total, rated, cand = self.catalog_count()
@@ -55,22 +56,27 @@ def install_daily_genre_ui_patch(window_cls) -> None:
         text = "Analizez profilul colaborativ MovieLens, ratingurile tale, istoricul și contextul zilei."
         if active:
             text += f" Pentru azi ai cerut explicit genul {active}."
-        content.addWidget(self.loading_panel("Îți aleg filmul…", text))
-
         # Secondary control: useful only when the user explicitly feels like watching a genre.
         chooser = QFrame(); chooser.setObjectName("PremiumCard")
-        row = QHBoxLayout(chooser); row.setContentsMargins(16,10,16,10); row.setSpacing(12)
+        row = QGridLayout(chooser); row.setContentsMargins(16,10,16,10); row.setSpacing(8)
         label = QLabel("Opțional, doar dacă ai chef de ceva anume:")
-        label.setObjectName("Muted"); row.addWidget(label)
+        label.setObjectName("Muted"); label.setWordWrap(True); row.addWidget(label,0,0)
         combo = QComboBox(); combo.addItems(list(GENRES)); combo.setMinimumWidth(180)
         current = active
         combo.setCurrentText(current if current in GENRES else "Orice gen")
         combo.currentTextChanged.connect(lambda value: self._set_today_genre(value))
-        row.addWidget(combo)
+        row.addWidget(combo,0,1)
         note = QLabel("Nu schimbă profilul; este valabil numai azi.")
-        note.setObjectName("Muted"); row.addWidget(note, 1)
-        content.addWidget(chooser)
+        note.setObjectName("Muted"); note.setWordWrap(True); row.addWidget(note,1,0,1,2)
+        row.setColumnStretch(0,1)
+        # Ranking clears the result layout; keep this control outside it.
+        page.layout().insertWidget(1, chooser)
 
+        if self.today_result is not None and self.today_cache_signature == self._today_signature():
+            self._render_today(*self.today_result)
+            return page
+
+        content.addWidget(self.loading_panel("Îți aleg filmul…", text))
         content.addStretch(1)
         QTimer.singleShot(0, self._load_today_async)
         return page
