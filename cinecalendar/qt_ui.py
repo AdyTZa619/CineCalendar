@@ -395,6 +395,9 @@ class CineCalendarWindow(QMainWindow):
 
     def _apply_poster_pixmap(self, label: QLabel, pixmap: QPixmap) -> None:
         try:
+            if hasattr(label, "set_artwork"):
+                label.set_artwork(pixmap)
+                return
             label.setPixmap(
                 pixmap.scaled(
                     label.size(),

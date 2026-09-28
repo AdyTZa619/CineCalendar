@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QStackedWidget
+from PySide6.QtGui import QPixmap
 
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
 from cinecalendar.decision_action_patch import current_today_choice_state
 from cinecalendar.premium_calendar_ui import CalendarPremiumWindow
+from cinecalendar.premium_skins import HeroCanvas, PosterCanvas, _cached_backdrop_url
 from cinecalendar.service import CineCalendarService
 from cinecalendar.ui_composition import compose_premium_window
 from cinecalendar.util import AppPaths, json_dumps, utcnow_iso
@@ -63,6 +65,15 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
             assert any("Aleg pentru azi" == x.text() for x in page.findChildren(QPushButton))
             assert any("Nu acum / motiv" == x.text() for x in page.findChildren(QPushButton))
             assert any("Aleg" == x.text() for x in page.findChildren(QPushButton))
+            assert all(not button.icon().isNull() for button in window.nav_buttons.values())
+            artwork = (page.findChildren(HeroCanvas) if skin == "cinematic"
+                       else page.findChildren(PosterCanvas))
+            assert artwork
+            test_image = QPixmap(400, 600)
+            test_image.fill("#754b37")
+            window._apply_poster_pixmap(artwork[0], test_image)
+            assert not artwork[0].artwork.isNull()
+            assert not artwork[0].grab().isNull()
             overflow_by_skin[skin] = [
                 (scroll.horizontalScrollBar().maximum(), scroll.viewport().width(),
                  [(item.widget().objectName(), item.widget().sizeHint().width())
@@ -122,6 +133,13 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
     try:
         assert reopened.skin == "workbench"
         assert reopened.db.get_setting("ui_skin") == "workbench"
+        with service.db.tx() as con:
+            con.execute("UPDATE movies SET tmdb_id=98765 WHERE id=?", (recs[0].movie.id,))
+            con.execute("""INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at)
+                           VALUES('tmdb',?,?,?,?)""",
+                        ('/movie/98765?{}', '{"backdrop_path":"/scene.jpg"}',
+                         stamp, '2099-01-01T00:00:00+00:00'))
+        assert _cached_backdrop_url(reopened, recs[0]) == 'https://image.tmdb.org/t/p/w1280/scene.jpg'
     finally:
         reopened.close()
         app.processEvents()
