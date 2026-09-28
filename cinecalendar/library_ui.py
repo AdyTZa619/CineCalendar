@@ -60,6 +60,18 @@ class SmartItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
+class ResponsiveRatingTable(QTableWidget):
+    """Keep the useful columns visible without forcing a sideways page scroll."""
+
+    def resizeEvent(self, event):
+        width = event.size().width()
+        for column in (7, 8, 9):
+            self.setColumnHidden(column, width < 1080)
+        for column in (1, 6):
+            self.setColumnHidden(column, width < 690)
+        super().resizeEvent(event)
+
+
 class RatingTitleDelegate(QStyledItemDelegate):
     """Paint a two-line title without creating thousands of child widgets."""
 
@@ -75,8 +87,10 @@ class RatingTitleDelegate(QStyledItemDelegate):
         localized = str(index.data(Qt.UserRole + 2) or "")
         rect = option.rect.adjusted(12, 5, -8, -5)
         selected = bool(option.state & QStyle.State_Selected)
-        primary_color = option.palette.highlightedText().color() if selected else QColor("#f4f7fb")
-        secondary_color = option.palette.highlightedText().color() if selected else QColor("#9aa9bc")
+        primary_color = option.palette.highlightedText().color() if selected else option.palette.text().color()
+        secondary_color = QColor(primary_color)
+        if not selected:
+            secondary_color.setAlpha(170)
 
         primary_font = QFont(option.font)
         primary_font.setBold(True)
@@ -397,31 +411,31 @@ def install_library_ui(window_cls) -> None:
 
         search = QLineEdit()
         search.setPlaceholderText("Caută filme…")
-        grid.addWidget(search, 0, 0, 1, 2)
+        grid.addWidget(search, 0, 0, 1, 4)
 
         genre_filter = QComboBox()
         genre_filter.addItem("Toate genurile", "")
         for genre in all_genres:
             genre_filter.addItem(genre, genre)
-        grid.addWidget(genre_filter, 0, 2)
+        grid.addWidget(genre_filter, 1, 0)
 
         director_filter = QComboBox()
         director_filter.addItem("Toți regizorii", "")
         for director in all_directors:
             director_filter.addItem(director, director)
-        grid.addWidget(director_filter, 0, 3)
+        grid.addWidget(director_filter, 1, 1)
 
         year_filter = QComboBox()
         year_filter.addItem("Toți anii", None)
         for year in all_years:
             year_filter.addItem(str(year), year)
-        grid.addWidget(year_filter, 0, 4)
+        grid.addWidget(year_filter, 1, 2)
 
         rating_filter = QComboBox()
         rating_filter.addItem("Toate notele", None)
         for n in range(10, 0, -1):
             rating_filter.addItem(f"{n}/10", n)
-        grid.addWidget(rating_filter, 0, 5)
+        grid.addWidget(rating_filter, 1, 3)
 
         date_wrap = QWidget()
         date_layout = QHBoxLayout(date_wrap)
@@ -447,11 +461,15 @@ def install_library_ui(window_cls) -> None:
             date_layout.addWidget(button)
             date_buttons[key] = button
         date_layout.addStretch(1)
-        grid.addWidget(date_wrap, 1, 0, 1, 4)
+        grid.addWidget(date_wrap, 2, 0, 1, 4)
 
         sort_label = QLabel("Sortare:")
         sort_label.setObjectName("Muted")
-        grid.addWidget(sort_label, 1, 4, alignment=Qt.AlignRight)
+        sort_wrap = QWidget()
+        sort_layout = QHBoxLayout(sort_wrap)
+        sort_layout.setContentsMargins(0, 0, 0, 0)
+        sort_layout.setSpacing(6)
+        sort_layout.addWidget(sort_label)
 
         sort_combo = QComboBox()
         for label, key in (
@@ -464,26 +482,40 @@ def install_library_ui(window_cls) -> None:
             ("Titlu A–Z", "title_asc"),
         ):
             sort_combo.addItem(label, key)
-        grid.addWidget(sort_combo, 1, 5)
+        sort_layout.addWidget(sort_combo, 1)
+        grid.addWidget(sort_wrap, 3, 0, 1, 4)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+        grid.setColumnStretch(3, 2)
         content.addWidget(controls)
 
         status = QFrame()
         status.setObjectName("PremiumCard")
-        status_layout = QHBoxLayout(status)
+        status_layout = QVBoxLayout(status)
         status_layout.setContentsMargins(14, 9, 14, 9)
+        status_layout.setSpacing(4)
+        status_row = QHBoxLayout()
         count_label = QLabel("")
         count_label.setObjectName("Muted")
-        status_layout.addWidget(count_label)
-        status_layout.addStretch(1)
+        status_row.addWidget(count_label)
+        status_row.addStretch(1)
+        previous = QPushButton("← Anterioare")
+        following = QPushButton("Următoare →")
+        for button in (previous, following):
+            button.setProperty("compact", True)
+            status_row.addWidget(button)
+        status_layout.addLayout(status_row)
         health = rated_library_health(self.db)
         health_label = QLabel(
             f"Bibliotecă IMDb: {health.complete:,}/{health.total:,} metadate esențiale complete"
         )
         health_label.setObjectName("Muted")
+        health_label.setWordWrap(True)
         status_layout.addWidget(health_label)
         content.addWidget(status)
 
-        table = QTableWidget(0, 11)
+        table = ResponsiveRatingTable(0, 11)
         table.setHorizontalHeaderLabels([
             "#", "Poster", "Titlu (original / localizat)", "An", "Nota ta",
             "IMDb", "Δ", "Genuri", "Regizor", "Data", "⋯",
@@ -498,7 +530,8 @@ def install_library_ui(window_cls) -> None:
         table_font.setPointSize(max(10, table.font().pointSize() + 1))
         table.setFont(table_font)
         table.setSortingEnabled(False)
-        table.setMinimumHeight(650)
+        table.setMinimumHeight(380)
+        table.setMaximumHeight(520)
         table.setShowGrid(True)
         table.setItemDelegateForColumn(2, RatingTitleDelegate(table))
         table.setItemDelegateForColumn(7, GenreBadgeDelegate(table))
@@ -520,6 +553,8 @@ def install_library_ui(window_cls) -> None:
 
         poster_cells: dict[int, tuple[QLabel, str, str]] = {}
         loaded_posters: set[int] = set()
+        page_size = 100
+        page_index = 0
 
         def selected_period() -> str:
             for key, button in date_buttons.items():
@@ -620,6 +655,11 @@ def install_library_ui(window_cls) -> None:
                 )
             source_action = menu.addAction(f"Sursă rating: {source or '—'}")
             source_action.setEnabled(False)
+            for column, caption in ((7, "Genuri"), (8, "Regizor"), (9, "Data ratingului")):
+                detail = table.item(row_index, column)
+                if detail is not None and detail.text() not in {"", "—"}:
+                    action = menu.addAction(f"{caption}: {detail.text()}")
+                    action.setEnabled(False)
 
             if movie_id:
                 provenance = metadata_sources_for_movie(self.db, movie_id)
@@ -653,14 +693,21 @@ def install_library_ui(window_cls) -> None:
                         action.setEnabled(False)
             menu.exec(QCursor.pos())
 
-        def render():
+        def render(reset_page: bool = False):
+            nonlocal page_index
             selected = filtered_rows()
+            if reset_page:
+                page_index = 0
+            max_page = max(0, (len(selected) - 1) // page_size)
+            page_index = min(page_index, max_page)
+            start = page_index * page_size
+            visible = selected[start:start + page_size]
             table.clearContents()
-            table.setRowCount(len(selected))
+            table.setRowCount(len(visible))
             poster_cells.clear()
             loaded_posters.clear()
 
-            for i, row in enumerate(selected):
+            for i, row in enumerate(visible):
                 imdb_id = row["imdb_id"] or ""
                 original = _display_title(row)
                 localized = str(row["title"] or "").strip()
@@ -676,7 +723,7 @@ def install_library_ui(window_cls) -> None:
                     + f"\nIMDb ID: {imdb_id or '—'}\nSursă: {row['source'] or '—'}"
                 )
 
-                number = SmartItem(str(i + 1), i + 1)
+                number = SmartItem(str(start + i + 1), start + i + 1)
                 number.setTextAlignment(Qt.AlignCenter)
 
                 poster_item = SmartItem("", "")
@@ -750,8 +797,22 @@ def install_library_ui(window_cls) -> None:
                     table.setItem(i, column, item)
                 table.setCellWidget(i, 1, poster)
 
-            count_label.setText(f"Afișate {len(selected):,} din {len(rows):,} ratinguri")
+            count_label.setText(
+                f"{start + 1:,}–{start + len(visible):,} din {len(selected):,} ratinguri"
+                if visible else f"0 din {len(rows):,} ratinguri"
+            )
+            previous.setEnabled(page_index > 0)
+            following.setEnabled(page_index < max_page)
+            table.scrollToTop()
             QTimer.singleShot(0, refresh_visible_posters)
+
+        def change_page(delta: int):
+            nonlocal page_index
+            page_index += delta
+            render()
+
+        previous.clicked.connect(lambda: change_page(-1))
+        following.clicked.connect(lambda: change_page(1))
 
         def set_period(key: str):
             for candidate, button in date_buttons.items():
@@ -760,7 +821,7 @@ def install_library_ui(window_cls) -> None:
                 button.setProperty("accent", active)
                 button.style().unpolish(button)
                 button.style().polish(button)
-            render()
+            render(reset_page=True)
 
         for key, button in date_buttons.items():
             button.clicked.connect(lambda _checked=False, k=key: set_period(k))
@@ -781,16 +842,16 @@ def install_library_ui(window_cls) -> None:
         debounce = QTimer(page)
         debounce.setSingleShot(True)
         debounce.setInterval(120)
-        debounce.timeout.connect(render)
+        debounce.timeout.connect(lambda: render(reset_page=True))
         search.textChanged.connect(lambda _text: debounce.start())
-        rating_filter.currentIndexChanged.connect(lambda _i: render())
-        genre_filter.currentIndexChanged.connect(lambda _i: render())
-        director_filter.currentIndexChanged.connect(lambda _i: render())
-        year_filter.currentIndexChanged.connect(lambda _i: render())
-        sort_combo.currentIndexChanged.connect(lambda _i: render())
+        rating_filter.currentIndexChanged.connect(lambda _i: render(reset_page=True))
+        genre_filter.currentIndexChanged.connect(lambda _i: render(reset_page=True))
+        director_filter.currentIndexChanged.connect(lambda _i: render(reset_page=True))
+        year_filter.currentIndexChanged.connect(lambda _i: render(reset_page=True))
+        sort_combo.currentIndexChanged.connect(lambda _i: render(reset_page=True))
 
         hint = QLabel(
-            "Sfat: dublu-click pe un film pentru IMDb. Coloana ⋯ păstrează IMDb ID și sursa fără să aglomereze tabelul."
+            "Dublu-click pe un film pentru IMDb. Caută și filtrează în toate ratingurile; exportul include toate rezultatele filtrate."
         )
         hint.setObjectName("Muted")
         hint.setWordWrap(True)

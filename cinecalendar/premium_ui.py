@@ -271,19 +271,20 @@ class PremiumDecisionWindow(DecisionWindow):
     def apply_theme(self):
         dark = self.theme != "light"
         if dark:
-            bg, surface, card, card2 = "#090A0D", "#0F1116", "#151820", "#1B1F29"
-            text, muted, border = "#F7F7F4", "#9CA4B3", "#282E3A"
-            accent, accent2, good, bad = "#D7AA55", "#7EA2FF", "#6ED6A0", "#FF7E87"
+            bg, surface, card, card2 = "#0B0D12", "#11151D", "#171C27", "#212837"
+            text, muted, border = "#F8F7F2", "#A5B0C0", "#30394A"
+            accent, accent2, good, bad, on_accent = "#D7AA55", "#7EA2FF", "#6ED6A0", "#FF7E87", "#111217"
         else:
             bg, surface, card, card2 = "#F4F2ED", "#FAF9F6", "#FFFFFF", "#F0EEE9"
             text, muted, border = "#17181C", "#687180", "#DFDCD4"
-            accent, accent2, good, bad = "#9A6B18", "#315FD6", "#1B8751", "#C74650"
+            accent, accent2, good, bad, on_accent = "#9A6B18", "#315FD6", "#1B8751", "#C74650", "#FFFFFF"
         QApplication.instance().setStyleSheet(f"""
             QWidget {{ background:{bg}; color:{text}; font-family:'Segoe UI'; font-size:14px; }}
             QMainWindow, QScrollArea, QScrollArea>QWidget>QWidget {{ background:{bg}; }}
             QLabel {{ background:transparent; }}
             QFrame#Sidebar {{ background:{surface}; border-right:1px solid {border}; }}
             QScrollArea#SidebarNav, QWidget#SidebarNavContent {{ background:transparent; border:0; }}
+            QWidget#MetricBadge {{ background:transparent; }}
             QFrame#PremiumCard, QFrame#Card {{ background:{card}; border:1px solid {border}; border-radius:18px; }}
             QFrame#HeroCard {{
                 background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {card2},stop:.58 {card},stop:1 {surface});
@@ -293,9 +294,9 @@ class PremiumDecisionWindow(DecisionWindow):
                 background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {card2},stop:1 {card});
                 border:1px solid {border}; border-radius:22px;
             }}
-            QLabel#Brand {{ font-size:25px; font-weight:800; letter-spacing:.4px; color:{accent}; }}
-            QLabel#PageTitle {{ font-size:34px; font-weight:800; }}
-            QLabel#HeroTitle {{ font-size:34px; font-weight:800; }}
+            QLabel#Brand {{ font-size:24px; font-weight:800; letter-spacing:.4px; color:{accent}; }}
+            QLabel#PageTitle {{ font-size:32px; font-weight:800; }}
+            QLabel#HeroTitle {{ font-size:30px; font-weight:800; }}
             QLabel#SectionTitle {{ font-size:20px; font-weight:750; }}
             QLabel#CardTitle {{ font-size:17px; font-weight:750; }}
             QLabel#Kicker {{ color:{accent}; font-size:12px; font-weight:800; letter-spacing:1.2px; }}
@@ -312,13 +313,16 @@ class PremiumDecisionWindow(DecisionWindow):
             QLabel#Pill {{ background:{card2}; color:{muted}; border:1px solid {border}; border-radius:10px; padding:5px 9px; }}
             QLabel#ScoreBadge {{ background:{accent}; color:#101114; border-radius:38px; font-size:20px; font-weight:900; }}
             QLabel#MetricValue {{ color:{accent2}; font-size:22px; font-weight:850; }}
-            QPushButton {{ background:{card2}; border:1px solid {border}; border-radius:11px; padding:10px 14px; font-weight:600; }}
+            QPushButton {{ background:{card2}; border:1px solid {border}; border-radius:10px; padding:9px 13px; font-weight:600; }}
             QPushButton:hover {{ border-color:{accent}; background:{card}; }}
-            QPushButton[accent='true'] {{ background:{accent}; color:#111217; border-color:{accent}; font-weight:800; }}
-            QPushButton[nav='true'] {{ text-align:left; padding:12px 15px; background:transparent; border:0; color:{muted}; }}
+            QPushButton:focus {{ border-color:{accent2}; }}
+            QPushButton:disabled {{ color:{muted}; background:{surface}; border-color:{border}; }}
+            QPushButton[accent='true'] {{ background:{accent}; color:{on_accent}; border-color:{accent}; font-weight:800; }}
+            QPushButton[nav='true'] {{ text-align:left; padding:8px 12px; background:transparent; border:0; color:{muted}; }}
             QPushButton[nav='true']:hover {{ background:{card2}; color:{text}; }}
-            QPushButton[navActive='true'] {{ text-align:left; padding:12px 15px; background:{card2}; border:1px solid {border}; color:{text}; font-weight:750; }}
+            QPushButton[navActive='true'] {{ text-align:left; padding:8px 12px; background:{card2}; border:1px solid {border}; border-left:3px solid {accent}; color:{text}; font-weight:750; }}
             QLineEdit, QSpinBox, QComboBox {{ background:{card2}; border:1px solid {border}; border-radius:10px; padding:9px; }}
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {{ border-color:{accent2}; }}
             QProgressBar {{ border:1px solid {border}; border-radius:7px; background:{card2}; text-align:center; min-height:12px; }}
             QProgressBar::chunk {{ background:{accent2}; border-radius:6px; }}
             QScrollBar:vertical {{ background:transparent; width:12px; margin:2px; }}
@@ -343,6 +347,7 @@ class PremiumDecisionWindow(DecisionWindow):
 
     def score_badge(self, value: float, caption: str = "") -> QWidget:
         wrap = QWidget()
+        wrap.setObjectName("MetricBadge")
         l = QVBoxLayout(wrap)
         l.setContentsMargins(0, 0, 0, 0)
         l.setSpacing(4)
@@ -360,6 +365,7 @@ class PremiumDecisionWindow(DecisionWindow):
 
     def metric_badge(self, value: str, caption: str) -> QWidget:
         wrap = QWidget()
+        wrap.setObjectName("MetricBadge")
         l = QVBoxLayout(wrap)
         l.setContentsMargins(10, 2, 10, 2)
         l.setSpacing(1)

@@ -119,3 +119,17 @@ ratingurile se schimbă în timpul evaluării, raportul este respins înainte de
 salvare. Dacă se schimbă ulterior, trialul vizibil revine la V16 până la o nouă
 evaluare; pagina V5 Lab explică starea. Pentru rapoartele vechi fără amprentă,
 actualitatea nu poate fi confirmată și este afișată explicit ca necunoscută.
+
+## Interfață și încărcarea listelor în Alpha 20
+
+Navigarea și antetele folosesc spațiul mai eficient la ferestre de 1000×650,
+iar starea activă și focalizarea controalelor sunt mai clare. Cardurile și
+indicatorii cronologiei folosesc aceeași paletă în temele întunecată și luminoasă.
+La lățimi mici, tabelul de ratinguri păstrează coloanele esențiale și oferă
+detaliile prin meniul fiecărui rând.
+
+Ratingurile se construiesc în pagini de 100 de rânduri. Căutarea, filtrele,
+sortarea și exportul lucrează în continuare pe toate ratingurile, iar
+schimbarea unui filtru revine la prima pagină. Cronologia românească afișează
+inițial opt afișe pentru fiecare capitol, cu buton pentru următoarele titluri;
+astfel nu mai creează simultan sute de carduri și solicitări de postere.

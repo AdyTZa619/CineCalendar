@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QSizePolicy, QVBoxLayout, QWidget, QLineEdit, QProgressBar,
 )
 
@@ -425,10 +425,32 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         row = QHBoxLayout(strip)
         row.setContentsMargins(0, 0, 6, 8)
         row.setSpacing(12)
-        for item in items:
+        # Build only the first shelf. Hundreds of offscreen poster widgets and
+        # downloads used to delay navigation even when the user never scrolled.
+        shown = min(8, len(items))
+        for item in items[:shown]:
             row.addWidget(_poster_card(self, item), 0, Qt.AlignTop)
+        more = QPushButton()
+        more.setFixedSize(198, 180)
+        more.setProperty("accent", True)
+
+        def add_next():
+            nonlocal shown
+            end = min(len(items), shown + 12)
+            for item in items[shown:end]:
+                row.insertWidget(row.indexOf(more), _poster_card(self, item), 0, Qt.AlignTop)
+            shown = end
+            remaining = len(items) - shown
+            more.setText(f"Arată încă {min(12, remaining)}\n{remaining} rămase")
+            more.setVisible(remaining > 0)
+            strip.setMinimumWidth(shown * 210 + (210 if remaining else 0) + 24)
+
+        if shown < len(items):
+            more.setText(f"Arată încă {min(12, len(items) - shown)}\n{len(items) - shown} rămase")
+            more.clicked.connect(add_next)
+            row.addWidget(more, 0, Qt.AlignVCenter)
         row.addStretch(1)
-        strip.setMinimumWidth(max(1, len(items)) * 210 + 24)
+        strip.setMinimumWidth((shown + int(shown < len(items))) * 210 + 24)
         strip.setMinimumHeight(470)
         rail.setWidget(strip)
         outer.addWidget(rail)
@@ -477,15 +499,20 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         intro.setWordWrap(True)
         hl.addWidget(intro)
 
-        stats = QHBoxLayout()
-        stats.addWidget(self.metric_badge(str(len(all_entries)), "în colecție") if hasattr(self, "metric_badge") else QLabel(str(len(all_entries))))
-        stats.addWidget(self.metric_badge(str(len(unwatched)), "de văzut") if hasattr(self, "metric_badge") else QLabel(str(len(unwatched))))
-        stats.addWidget(self.metric_badge(str(len(watched)), "văzute") if hasattr(self, "metric_badge") else QLabel(str(len(watched))))
+        stats = QGridLayout()
+        stats.setHorizontalSpacing(8)
+        stats.setVerticalSpacing(8)
         linked_count = sum(1 for item in all_entries if item.imdb_id)
         poster_count = sum(1 for item in all_entries if item.poster_url)
-        stats.addWidget(self.metric_badge(str(linked_count), "IMDb identificate") if hasattr(self, "metric_badge") else QLabel(str(linked_count)))
-        stats.addWidget(self.metric_badge(str(poster_count), "postere") if hasattr(self, "metric_badge") else QLabel(str(poster_count)))
-        stats.addStretch(1)
+        for index, (value, caption) in enumerate((
+            (len(all_entries), "în colecție"), (len(unwatched), "de văzut"),
+            (len(watched), "văzute"), (linked_count, "IMDb identificate"),
+            (poster_count, "postere"),
+        )):
+            badge = self.metric_badge(str(value), caption) if hasattr(self, "metric_badge") else QLabel(str(value))
+            stats.addWidget(badge, index // 3, index % 3)
+        for column in range(3):
+            stats.setColumnStretch(column, 1)
         hl.addLayout(stats)
 
         progress = QProgressBar()

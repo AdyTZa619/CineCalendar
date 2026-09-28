@@ -155,7 +155,7 @@ class CineCalendarWindow(QMainWindow):
         self._poster_limit = 6
         self._feedback_undo_stack: list[FeedbackReceipt] = []
         self.setWindowTitle(f"CineCalendar {APP_VERSION}")
-        self.resize(1440, 900); self.setMinimumSize(1100, 700)
+        self.resize(1440, 900); self.setMinimumSize(1000, 650)
         self._set_icon()
         self._build_shell(); self.apply_theme(); self.show_page("today")
         self.undo_feedback_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
@@ -277,31 +277,31 @@ class CineCalendarWindow(QMainWindow):
 
     def _build_shell(self):
         root = QWidget(); self.setCentralWidget(root); h = QHBoxLayout(root); h.setContentsMargins(0,0,0,0); h.setSpacing(0)
-        side = QFrame(); side.setObjectName("Sidebar"); side.setFixedWidth(275); sv = QVBoxLayout(side); sv.setContentsMargins(16,18,16,16); sv.setSpacing(6)
+        side = QFrame(); side.setObjectName("Sidebar"); side.setFixedWidth(248); sv = QVBoxLayout(side); sv.setContentsMargins(14,17,14,12); sv.setSpacing(5)
         brand = QLabel("CineCalendar"); brand.setObjectName("Brand"); sv.addWidget(brand)
-        sub = QLabel("calendar cinematografic personal"); sub.setObjectName("Muted"); sub.setWordWrap(True); sv.addWidget(sub); sv.addSpacing(12)
+        sub = QLabel("cinema pe gustul tău"); sub.setObjectName("Muted"); sub.setWordWrap(True); sv.addWidget(sub); sv.addSpacing(8)
         nav_scroll = QScrollArea(); nav_scroll.setObjectName("SidebarNav"); nav_scroll.setWidgetResizable(True)
         nav_scroll.setFrameShape(QFrame.NoFrame)
         nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         nav_body = QWidget(); nav_body.setObjectName("SidebarNavContent")
-        nav_layout = QVBoxLayout(nav_body); nav_layout.setContentsMargins(0,0,4,0); nav_layout.setSpacing(4)
+        nav_layout = QVBoxLayout(nav_body); nav_layout.setContentsMargins(0,0,4,0); nav_layout.setSpacing(2)
         self.nav_buttons = {}
         for key, label in self.NAV:
             b=QPushButton(label); b.setProperty("nav", True); b.clicked.connect(lambda _, k=key:self.show_page(k)); nav_layout.addWidget(b); self.nav_buttons[key]=b
         nav_layout.addStretch(1); nav_scroll.setWidget(nav_body); sv.addWidget(nav_scroll,1)
-        self.undo_feedback_button = QPushButton("Anulează ultimul feedback")
+        self.undo_feedback_button = QPushButton("Anulează feedback")
         self.undo_feedback_button.setEnabled(False)
         self.undo_feedback_button.setToolTip("Anulează exact ultima acțiune de feedback din sesiunea curentă (Ctrl+Z).")
         self.undo_feedback_button.clicked.connect(self.undo_last_feedback)
         sv.addWidget(self.undo_feedback_button)
-        self.status = QLabel("Pregătit"); self.status.setObjectName("Muted"); self.status.setWordWrap(True); sv.addWidget(self.status)
+        self.status = QLabel("Pregătit"); self.status.setObjectName("Muted"); self.status.setWordWrap(True); self.status.setMaximumHeight(44); sv.addWidget(self.status)
         self.progress = QProgressBar(); self.progress.setVisible(False); self.progress.setRange(0,0); sv.addWidget(self.progress)
         version = QLabel(f"v{APP_VERSION}"); version.setObjectName("Muted"); sv.addWidget(version)
         h.addWidget(side)
         self.stack = QStackedWidget(); h.addWidget(self.stack,1)
 
     def set_status(self, text: str, busy: bool=False):
-        self.status.setText(text); self.progress.setVisible(busy)
+        self.status.setText(text); self.status.setToolTip(text); self.progress.setVisible(busy)
 
     def show_page(self, key: str):
         if getattr(self, "_ui_closing", False):
@@ -315,16 +315,16 @@ class CineCalendarWindow(QMainWindow):
             b.setProperty("navActive", k==key); b.setProperty("nav", k!=key); b.style().unpolish(b); b.style().polish(b)
 
     def page_shell(self, title:str, subtitle:str="", actions:list[tuple[str,Callable,bool]]|None=None):
-        page=QWidget(); outer=QVBoxLayout(page); outer.setContentsMargins(28,24,28,22); outer.setSpacing(14)
-        top=QVBoxLayout(); t=QLabel(title); t.setObjectName("PageTitle"); t.setWordWrap(True); top.addWidget(t)
+        page=QWidget(); outer=QVBoxLayout(page); outer.setContentsMargins(24,22,24,18); outer.setSpacing(14)
+        top=QVBoxLayout(); top.setSpacing(8); t=QLabel(title); t.setObjectName("PageTitle"); t.setWordWrap(True); top.addWidget(t)
         if subtitle:
             s=QLabel(subtitle); s.setObjectName("Muted"); s.setWordWrap(True); top.addWidget(s)
         if actions:
-            action_grid=QGridLayout()
+            action_grid=QGridLayout(); action_grid.setHorizontalSpacing(9); action_grid.setVerticalSpacing(8)
             for index,(text,fn,accent) in enumerate(actions):
                 b=QPushButton(text); b.setProperty("accent",accent); b.clicked.connect(fn)
-                action_grid.addWidget(b,index//2,index%2,Qt.AlignLeft)
-            action_grid.setColumnStretch(2,1)
+                action_grid.addWidget(b,index//4,index%4,Qt.AlignLeft)
+            action_grid.setColumnStretch(4,1)
             top.addLayout(action_grid)
         outer.addLayout(top)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
