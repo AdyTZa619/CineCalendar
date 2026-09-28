@@ -313,14 +313,10 @@ def _film_panel(window, rec, *, cinematic=False):
     feedback.clicked.connect(lambda _=False, mid=rec.movie.id, button=feedback:
                              window.contextual_feedback_menu(mid, button))
     skip = _action(window, "Alt film", lambda _=False, mid=rec.movie.id: window.skip_decision(mid))
-    actions = QHBoxLayout() if cinematic else QGridLayout()
-    if cinematic:
-        for button in (choose, details, feedback, skip):
-            actions.addWidget(button)
-    else:
-        for row, column, button in ((0, 0, choose), (0, 1, details),
-                                    (1, 0, feedback), (1, 1, skip)):
-            actions.addWidget(button, row, column)
+    actions = QGridLayout()
+    for row, column, button in ((0, 0, choose), (0, 1, details),
+                                (1, 0, feedback), (1, 1, skip)):
+        actions.addWidget(button, row, column)
     info.addLayout(actions)
     layout.addLayout(info, 1)
     if cinematic:
