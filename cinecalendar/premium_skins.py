@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
@@ -418,9 +418,10 @@ def render_skin_today(window, primary, backups):
             wrap.setLayout(row)
             content.addWidget(wrap)
     elif skin == "editorial":
-        row = QHBoxLayout()
+        narrow = window.width() < 1400
+        row = QVBoxLayout() if narrow else QHBoxLayout()
         row.setSpacing(10)
-        row.addWidget(_film_panel(window, primary), 3)
+        row.addWidget(_film_panel(window, primary), 0 if narrow else 3)
         side = QFrame()
         side.setObjectName("PremiumCard")
         sl = QVBoxLayout(side)
@@ -429,12 +430,13 @@ def render_skin_today(window, primary, backups):
         for i, rec in enumerate(backups[:2], 2):
             sl.addWidget(_alternative(window, rec, i))
         sl.addStretch(1)
-        row.addWidget(side, 1)
+        row.addWidget(side, 0 if narrow else 1)
         wrap = QWidget()
         wrap.setLayout(row)
         content.addWidget(wrap)
     else:
-        row = QHBoxLayout()
+        narrow = window.width() < 1400
+        row = QVBoxLayout() if narrow else QHBoxLayout()
         row.setSpacing(14)
         queue = QFrame()
         queue.setObjectName("PremiumCard")
@@ -452,8 +454,11 @@ def render_skin_today(window, primary, backups):
             inspector.addWidget(_film_panel(window, rec))
         ql.addStretch(1)
         _select(inspector, buttons, 0)
-        row.addWidget(queue, 2)
-        row.addWidget(inspector, 3)
+        inspector.setProperty("revealOnSelect", narrow)
+        row.addWidget(queue, 0 if narrow else 2)
+        if narrow:
+            inspector.setMinimumHeight(330)
+        row.addWidget(inspector, 0 if narrow else 3)
         wrap = QWidget()
         wrap.setLayout(row)
         content.addWidget(wrap)
@@ -466,6 +471,17 @@ def _select(stack, buttons, index):
         button.setProperty("accent", i == index)
         button.style().unpolish(button)
         button.style().polish(button)
+    if stack.property("revealOnSelect"):
+        page = stack.window().stack.currentWidget()
+        scroll = next(iter(page.findChildren(QScrollArea)), None)
+        if scroll is not None:
+            def reveal():
+                try:
+                    if stack.window().stack.currentWidget() is page:
+                        scroll.ensureWidgetVisible(stack)
+                except RuntimeError:
+                    pass  # The user may have changed pages before the queued scroll.
+            QTimer.singleShot(0, reveal)
 
 
 def install_premium_skins(window_cls) -> None:
@@ -473,6 +489,7 @@ def install_premium_skins(window_cls) -> None:
         return
     original_settings = window_cls.page_settings
     original_page_shell = window_cls.page_shell
+    original_resize_event = window_cls.resizeEvent
 
     def _build_shell(self):
         build_skin_shell(self)
@@ -545,10 +562,21 @@ def install_premium_skins(window_cls) -> None:
                     top.insertLayout(0, row)
         return page, content
 
+    def resizeEvent(self, event):
+        old_width = event.oldSize().width()
+        original_resize_event(self, event)
+        if (old_width > 0 and (old_width < 1400) != (event.size().width() < 1400)
+                and getattr(self, "current_page", None) == "today"
+                and getattr(self, "today_result", None) is not None):
+            QTimer.singleShot(0, lambda: self.show_page("today")
+                              if not getattr(self, "_ui_closing", False)
+                              and self.current_page == "today" else None)
+
     window_cls._build_shell = _build_shell
     window_cls.apply_theme = apply_theme
     window_cls.set_skin = set_skin
     window_cls.page_settings = page_settings
     window_cls.page_shell = page_shell
+    window_cls.resizeEvent = resizeEvent
     window_cls._render_today = render_skin_today
     window_cls._cinecalendar_skin_installed = True

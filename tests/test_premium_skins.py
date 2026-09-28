@@ -96,7 +96,13 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
         window.today_result = (recs[0], recs[1:])
         window.today_cache_signature = window._today_signature()
         window.show_page("today")
+        window.resize(1440, 900)
+        app.processEvents()
+        window.resize(1280, 720)
+        app.processEvents()
         page = window.stack.currentWidget()
+        assert all(scroll.horizontalScrollBar().maximum() == 0
+                   for scroll in page.findChildren(QScrollArea))
         selectors = [b for b in page.findChildren(QPushButton) if b.text() == "Selectează"]
         assert len(selectors) == 3
         selectors[1].click()
