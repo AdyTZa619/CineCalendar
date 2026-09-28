@@ -288,9 +288,9 @@ def _film_panel(window, rec, *, cinematic=False):
     box = QFrame()
     box.setObjectName("HeroCard" if cinematic else "PremiumCard")
     layout = QHBoxLayout(box)
-    layout.setContentsMargins(22, 17, 22, 17)
-    layout.setSpacing(25)
-    poster = window.poster_label(174 if cinematic else 192, 246 if cinematic else 282)
+    layout.setContentsMargins(22 if cinematic else 16, 17, 22 if cinematic else 16, 17)
+    layout.setSpacing(25 if cinematic else 16)
+    poster = window.poster_label(174 if cinematic else 164, 246)
     if not rec.movie.poster_url:
         poster.setText("Poster indisponibil")
     if not cinematic:
@@ -336,7 +336,7 @@ def _alternative(window, rec, index):
     layout = QHBoxLayout(box)
     layout.setContentsMargins(13, 12, 13, 12)
     layout.setSpacing(10)
-    poster = window.poster_label(67, 99)
+    poster = window.poster_label(58, 88)
     if not rec.movie.poster_url:
         poster.setText("Fără afiș")
     layout.addWidget(poster)
@@ -415,7 +415,7 @@ def render_skin_today(window, primary, backups):
             content.addWidget(wrap)
     elif skin == "editorial":
         row = QHBoxLayout()
-        row.setSpacing(16)
+        row.setSpacing(10)
         row.addWidget(_film_panel(window, primary), 3)
         side = QFrame()
         side.setObjectName("PremiumCard")

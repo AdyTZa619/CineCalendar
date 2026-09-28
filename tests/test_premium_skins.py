@@ -62,8 +62,9 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
             assert any("Aleg pentru azi" == x.text() for x in page.findChildren(QPushButton))
             assert any("Nu acum / motiv" == x.text() for x in page.findChildren(QPushButton))
             assert any("Aleg" == x.text() for x in page.findChildren(QPushButton))
-            assert all(scroll.horizontalScrollBar().maximum() == 0
-                       for scroll in page.findChildren(QScrollArea))
+            horizontal_overflow = [scroll.horizontalScrollBar().maximum()
+                                   for scroll in page.findChildren(QScrollArea)]
+            assert all(value == 0 for value in horizontal_overflow), (skin, horizontal_overflow)
             assert window.today_worker is None
             window.show_page("settings")
             assert any("Aspectul aplicației" == x.text() for x in window.stack.currentWidget().findChildren(QLabel))
