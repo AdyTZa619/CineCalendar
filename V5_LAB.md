@@ -104,3 +104,18 @@ după apariția rezultatului. În trialul V16/V5, schimbarea genului, dispoziți
 sau duratei recalculează ambele variante, în loc să refolosească un rezultat
 pentru filtrele anterioare. Antetele paginilor permit descrieri pe mai multe
 rânduri și așază acțiunile sub titlu, ca textul să nu fie tăiat la ferestre mici.
+
+## Diagnostic și evaluare în Alpha 19
+
+Pagina de recomandări românești arată și când lista este goală câți identificatori
+IMDb au fost confirmați, câte titluri există în catalogul local, câte au rămas
+după excluderea celor văzute/evaluate/respinse și câte au trecut filtrele de
+calitate și scor. Excluderile au motive separate; numerele de identificatori și
+cele de titluri locale sunt etichetate distinct. „Reverifică sursele” rulează în
+fundal și invalidează turul de recomandări fără să blocheze fereastra.
+
+Rapoartele noi V5 Lab includ amprenta istoricului de ratinguri folosit. Dacă
+ratingurile se schimbă în timpul evaluării, raportul este respins înainte de
+salvare. Dacă se schimbă ulterior, trialul vizibil revine la V16 până la o nouă
+evaluare; pagina V5 Lab explică starea. Pentru rapoartele vechi fără amprentă,
+actualitatea nu poate fi confirmată și este afișată explicit ca necunoscută.

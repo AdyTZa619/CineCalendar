@@ -8,6 +8,35 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLay
 from .qt_ui import WorkerThread
 
 
+def romanian_diagnostic_lines(status: dict, displayed: int) -> list[str]:
+    """Report measured stages, without treating different units as interchangeable."""
+    counts = dict(status.get("diagnostics") or {})
+    lines = (
+        ["Sursele nu au fost încă verificate."]
+        if status.get("source") == "not-verified" else
+        [f"Identificatori IMDb confirmați: {int(status.get('external_count', 0) or 0):,}."]
+    )
+    if "local_catalog_matches" in counts:
+        lines.append(f"Titluri potrivite găsite în catalogul local: {int(counts['local_catalog_matches']):,}.")
+    if "unseen_catalog_rows" in counts:
+        lines.append(f"Rămase după excluderea celor văzute/evaluate sau respinse: {int(counts['unseen_catalog_rows']):,}.")
+    if "scored_candidates" in counts:
+        lines.append(f"Cu scor personal eligibil: {int(counts['scored_candidates']):,}.")
+        reasons = (
+            ("metadate IMDb insuficiente", "quality_filtered"),
+            ("filtru de conținut", "policy_filtered"),
+            ("predicție personală prea slabă", "low_prediction_filtered"),
+            ("verificarea ALS", "als_guard_filtered"),
+        )
+        removed = [f"{label}: {int(counts[key]):,}" for label, key in reasons if int(counts.get(key, 0) or 0)]
+        if removed:
+            lines.append("Excluse înainte de clasare — " + " • ".join(removed) + ".")
+    lines.append(f"Afișate acum: {int(displayed):,}.")
+    if status.get("error"):
+        lines.append("Unele surse nu au răspuns; baza confirmată poate fi incompletă.")
+    return lines
+
+
 def install_romanian_cinema_ui_patch(window_cls) -> None:
     """Add a dedicated, precision-first Romanian cinema page."""
     if getattr(window_cls, "_romanian_cinema_patch_installed", False):
@@ -21,7 +50,8 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
 
     def _recalculate_romanian(self):
         worker = getattr(self, "romanian_worker", None)
-        if worker is not None and worker.isRunning():
+        refresh = getattr(self, "romanian_refresh_worker", None)
+        if (worker is not None and worker.isRunning()) or (refresh is not None and refresh.isRunning()):
             self.set_status("Selecția românească este deja în curs de calcul.", True)
             return
         self.romanian_result = None
@@ -31,11 +61,55 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             invalidate("romanian")
         self.show_page("romanian")
 
+    def _refresh_romanian_sources(self):
+        ranking = getattr(self, "romanian_worker", None)
+        refresh = getattr(self, "romanian_refresh_worker", None)
+        if (ranking is not None and ranking.isRunning()) or (refresh is not None and refresh.isRunning()):
+            self.set_status("Așteaptă terminarea verificării românești în curs.", True)
+            return
+
+        recommender = self.s.recommender
+        active = getattr(recommender, "active", recommender)
+        provider = active.romanian_cinema
+        self.set_status("Reverific sursele filmelor românești…", True)
+        def refresh_sources(progress):
+            ids = provider.imdb_ids(refresh=True)
+            # Refresh the other trial engine from the shared SQLite snapshot, off the UI thread.
+            if ids:
+                for engine in (getattr(recommender, "v16", None), getattr(recommender, "v5", None)):
+                    other = getattr(engine, "romanian_cinema", None)
+                    if other is not None and other is not provider:
+                        other.imdb_ids()
+            return ids
+
+        worker = WorkerThread(refresh_sources, self)
+        self.romanian_refresh_worker = worker
+
+        def success(_ids):
+            self.romanian_refresh_worker = None
+            self.romanian_result = None
+            self.romanian_cache_signature = None
+            invalidate = getattr(recommender, "invalidate_round", None)
+            if callable(invalidate):
+                invalidate("romanian")
+            self.set_status("Sursele românești au fost reverificate.", False)
+            if self.current_page == "romanian" and not self._ui_closing:
+                self.show_page("romanian")
+
+        def failure(message):
+            self.romanian_refresh_worker = None
+            self.set_status("Reverificarea surselor a eșuat: " + str(message), False)
+
+        worker.success.connect(success)
+        worker.failure.connect(failure)
+        worker.start()
+
     def page_romanian(self):
         page, content = self.page_shell(
             "Recomandări românești",
             "Selecție personalizată din filme cu limba originală română. Nu trebuie să setezi nimic.",
-            [("Recalculează", self._recalculate_romanian, True)],
+            [("Recalculează", self._recalculate_romanian, True),
+             ("Reverifică sursele", self._refresh_romanian_sources, False)],
         )
         self.romanian_content = content
         if self.catalog_count()[2] <= 0:
@@ -63,6 +137,9 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
 
     def _load_romanian_async(self):
         if self._ui_closing or self.current_page != "romanian":
+            return
+        refresh = getattr(self, "romanian_refresh_worker", None)
+        if refresh is not None and refresh.isRunning():
             return
         worker = getattr(self, "romanian_worker", None)
         if worker is not None and worker.isRunning():
@@ -118,33 +195,48 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         text.setObjectName("Muted"); text.setWordWrap(True); il.addWidget(text, 1)
         content.addWidget(info)
 
+        status = self.s.recommender.romanian_cinema_status()
         if not recs:
-            held = int(self.s.recommender.romanian_cinema_status().get("conflict_count", 0) or 0)
-            message = "Nu am găsit momentan suficiente filme nevăzute cu limba originală română care să treacă și pragul de încredere al recomandării."
+            confirmed = int(status.get("external_count", 0) or 0)
+            counts = dict(status.get("diagnostics") or {})
+            if status.get("source") == "not-verified":
+                message = "Verificarea surselor românești nu a rulat încă."
+            elif confirmed == 0:
+                message = "Nu există încă titluri confirmate simultan pentru limba originală română și originea România."
+            elif "local_catalog_matches" in counts and not int(counts["local_catalog_matches"]):
+                message = "Titlurile confirmate nu au corespondent în catalogul IMDb local."
+            elif "unseen_catalog_rows" in counts and not int(counts["unseen_catalog_rows"]):
+                message = "Titlurile confirmate din catalog sunt deja văzute, evaluate sau respinse."
+            else:
+                message = "Niciun titlu rămas nu a trecut filtrele de calitate și potrivire personală."
+            held = int(status.get("conflict_count", 0) or 0)
             if held:
                 message += f" {held:,} titluri au date contradictorii și așteaptă verificare."
             empty = QLabel(message)
-            empty.setObjectName("Muted"); empty.setWordWrap(True); content.addWidget(empty); content.addStretch(1)
-            return
+            empty.setObjectName("Muted"); empty.setWordWrap(True); content.addWidget(empty)
+        else:
+            self.record_once(recs[:1], date.today(), "romanian")
+            h = QLabel("Alegerea românească pentru tine")
+            h.setObjectName("SectionTitle")
+            content.addWidget(h)
+            content.addWidget(self.compact_recommendation_card(recs[0], 1))
+            if len(recs) > 1:
+                h2 = QLabel("Alte filme în limba română cu potrivire bună")
+                h2.setObjectName("SectionTitle")
+                content.addWidget(h2)
+                grid = QGridLayout(); grid.setHorizontalSpacing(14); grid.setVerticalSpacing(14)
+                for i, rec in enumerate(recs[1:], start=2):
+                    pos = i - 2
+                    grid.addWidget(self.compact_recommendation_card(rec, i), pos // 2, pos % 2)
+                wrap = QFrame(); wrap.setLayout(grid); content.addWidget(wrap)
 
-        self.record_once(recs[:1], date.today(), "romanian")
+        diagnostic = QFrame(); diagnostic.setObjectName("PremiumCard")
+        dl = QVBoxLayout(diagnostic); dl.setContentsMargins(18, 14, 18, 14)
+        heading = QLabel("Unde au rămas filmele?"); heading.setObjectName("SectionTitle"); dl.addWidget(heading)
+        for line in romanian_diagnostic_lines(status, len(recs)):
+            detail = QLabel(line); detail.setObjectName("Muted"); detail.setWordWrap(True); dl.addWidget(detail)
+        content.addWidget(diagnostic)
 
-        h = QLabel("Alegerea românească pentru tine")
-        h.setObjectName("SectionTitle")
-        content.addWidget(h)
-        content.addWidget(self.compact_recommendation_card(recs[0], 1))
-
-        if len(recs) > 1:
-            h2 = QLabel("Alte filme în limba română cu potrivire bună")
-            h2.setObjectName("SectionTitle")
-            content.addWidget(h2)
-            grid = QGridLayout(); grid.setHorizontalSpacing(14); grid.setVerticalSpacing(14)
-            for i, rec in enumerate(recs[1:], start=2):
-                pos = i - 2
-                grid.addWidget(self.compact_recommendation_card(rec, i), pos // 2, pos % 2)
-            wrap = QFrame(); wrap.setLayout(grid); content.addWidget(wrap)
-
-        status = self.s.recommender.romanian_cinema_status()
         footer = QFrame(); footer.setObjectName("PremiumCard")
         fl = QVBoxLayout(footer); fl.setContentsMargins(18, 14, 18, 14)
         src = status.get("source", "")
@@ -158,12 +250,24 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
             "curated": "catalog RO verificat",
             "verified": "cache verificat",
         }
+        source_states = {
+            "not-verified": "surse încă neverificate",
+            "romanian-multisource-verified": "verificare completă",
+            "romanian-multisource-verified-cache": "date verificate păstrate local",
+            "romanian-multisource-stale-cache": "date păstrate local; sursele au răspuns parțial",
+            "romanian-conflicts-held-for-review": "titlurile contradictorii așteaptă verificare",
+            "language-unverified-empty": "fără titluri confirmate în această verificare",
+        }
         parts = [
             f"{source_labels.get(key, key)} {int(value):,}"
             for key, value in counts.items()
             if int(value or 0) > 0
         ]
-        label = "Eligibilitatea este verificată din mai multe surse; țara locală singură nu este suficientă."
+        label = (
+            "Sursele urmează să fie verificate; țara locală singură nu este suficientă."
+            if src == "not-verified" else
+            "Eligibilitatea este verificată din mai multe surse; țara locală singură nu este suficientă."
+        )
         if count:
             label = (
                 f"Bază strictă: {count:,} identificatori IMDb confirmați ca producții cu limba originală română "
@@ -174,12 +278,13 @@ def install_romanian_cinema_ui_patch(window_cls) -> None:
         conflicts = int(status.get("conflict_count", 0) or 0)
         if conflicts:
             label += f" {conflicts:,} titluri cu date contradictorii sunt reținute pentru verificare."
-        note = QLabel(label + (f" Stare: {src}." if src else ""))
+        note = QLabel(label + (f" Stare: {source_states.get(src, 'verificare parțială')}." if src else ""))
         note.setObjectName("Muted"); note.setWordWrap(True); fl.addWidget(note)
         content.addWidget(footer)
         content.addStretch(1)
 
     window_cls._recalculate_romanian = _recalculate_romanian
+    window_cls._refresh_romanian_sources = _refresh_romanian_sources
     window_cls.page_romanian = page_romanian
     window_cls._load_romanian_async = _load_romanian_async
     window_cls._render_romanian = _render_romanian

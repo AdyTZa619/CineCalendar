@@ -20,6 +20,7 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
         super().__init__(db, calendar)
         self.romanian_cinema = RomanianCinemaProvider(db)
         self.last_romanian_candidate_count = 0
+        self.last_romanian_diagnostics: dict[str, int] = {}
 
     def _daily_genre_payload(self) -> dict:
         payload = self.db.get_setting("daily_genre_filter", {})
@@ -60,6 +61,7 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
 
     def _romanian_rows(self):
         imdb_ids = sorted(self.romanian_cinema.imdb_ids())
+        self.last_romanian_diagnostics = {"confirmed_ids": len(imdb_ids), "local_catalog_matches": 0}
         if not imdb_ids:
             self.last_romanian_candidate_count = 0
             return []
@@ -77,13 +79,17 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
                 ).fetchall()
                 movie_ids.extend(int(row["id"]) for row in rows)
 
-        rows = self._hydrate_ids(sorted(set(movie_ids)))
+        unique_movie_ids = sorted(set(movie_ids))
+        self.last_romanian_diagnostics["local_catalog_matches"] = len(unique_movie_ids)
+        rows = self._hydrate_ids(unique_movie_ids)
         self.last_romanian_candidate_count = len(rows)
+        self.last_romanian_diagnostics["unseen_catalog_rows"] = len(rows)
         return rows
 
     def romanian_cinema_status(self) -> dict:
         status = dict(self.romanian_cinema.status())
         status["eligible_catalog_rows"] = int(self.last_romanian_candidate_count)
+        status["diagnostics"] = dict(self.last_romanian_diagnostics)
         return status
 
     def recommend_romanian(self, when: date | None = None, count: int = 9):
@@ -104,6 +110,9 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
             )
 
         rows = list(self._romanian_rows())
+        counts = self.last_romanian_diagnostics
+        counts.update(quality_filtered=0, policy_filtered=0, low_prediction_filtered=0,
+                      als_guard_filtered=0, scored_candidates=0, selected_pool=0)
         if not rows:
             return []
 
@@ -120,6 +129,7 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
         for row in rows:
             movie = row_to_movie(row)
             if not self._catalog_quality_is_trustworthy(movie):
+                counts["quality_filtered"] += 1
                 continue
 
             # In the dedicated Romanian lane prefer the original-language title when IMDb's
@@ -132,8 +142,10 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
 
             score = self._score_one(movie, when, profile, context, exclude_romance, mode="decide")
             if score is None:
+                counts["policy_filtered"] += 1
                 continue
             if score.confidence >= .55 and score.predicted_rating < 5.8:
+                counts["low_prediction_filtered"] += 1
                 continue
 
             evidence = self.romanian_cinema.evidence_for(str(movie.imdb_id or ""))
@@ -158,6 +170,7 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
                 if not self._mapped_candidate_is_trustworthy(
                     als_score, float(score.predicted_rating), float(score.confidence)
                 ):
+                    counts["als_guard_filtered"] += 1
                     continue
                 old_final = float(score.final)
                 score.final, als_weight, content_weight = self._hybrid_blend(als_score, old_final)
@@ -178,6 +191,7 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
                 )
             candidates.append(Recommendation(movie, score))
 
+        counts["scored_candidates"] = len(candidates)
         candidates.sort(
             key=lambda r: (r.score.final, r.score.predicted_rating, r.score.confidence),
             reverse=True,
@@ -187,6 +201,7 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
         # quadratic diversity pass and dozens of ALS explanations for that internal shortlist;
         # both are applied after V13 has reduced it to the visible final results.
         selected = self._select_candidates(candidates, count, "decide")
+        counts["selected_pool"] = len(selected)
         self._assert_no_blocked_leak(selected)
         if collaborative_active and int(count) <= DIVERSITY_SHORTLIST_THRESHOLD:
             self._annotate_als_explanations(selected, collaborative, mapped_ratings)

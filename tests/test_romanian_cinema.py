@@ -10,7 +10,7 @@ from cinecalendar import ui_composition as ui_composition_module
 from cinecalendar.db import Database
 from cinecalendar.recommender_v12 import FastRecommendationEngineV12
 from cinecalendar.romanian_cinema import CACHE_KEY, RomanianCinemaProvider
-from cinecalendar.romanian_cinema_ui_patch import install_romanian_cinema_ui_patch
+from cinecalendar.romanian_cinema_ui_patch import install_romanian_cinema_ui_patch, romanian_diagnostic_lines
 from cinecalendar.util import json_dumps, utcnow_iso
 
 
@@ -310,6 +310,27 @@ def test_romanian_rows_use_verified_language_pool_and_keep_rated_blocked(tmp_pat
     monkeypatch.setattr(engine.romanian_cinema, "imdb_ids", lambda refresh=False: {"tt0000011", "tt0000012"})
     rows = list(engine._romanian_rows())
     assert [int(row["id"]) for row in rows] == [keep_id]
+    assert engine.romanian_cinema_status()["diagnostics"] == {
+        "confirmed_ids": 2, "local_catalog_matches": 2, "unseen_catalog_rows": 1,
+    }
+
+
+def test_romanian_diagnostics_name_each_measured_stage_and_exclusion():
+    status = {
+        "external_count": 12,
+        "diagnostics": {
+            "local_catalog_matches": 7, "unseen_catalog_rows": 4,
+            "quality_filtered": 2, "policy_filtered": 1,
+            "low_prediction_filtered": 1, "als_guard_filtered": 0,
+            "scored_candidates": 0,
+        },
+        "error": "imdb: offline",
+    }
+    lines = romanian_diagnostic_lines(status, displayed=0)
+    assert "12" in lines[0] and "7" in lines[1] and "4" in lines[2]
+    assert any("metadate IMDb insuficiente: 2" in line for line in lines)
+    assert any("Afișate acum: 0" in line for line in lines)
+    assert any("nu au răspuns" in line for line in lines)
 
 
 def test_ui_patch_adds_dedicated_romanian_page_after_recommendations():

@@ -14,6 +14,7 @@ from .v5_event_replay import aggregate_event_reports, event_replay_windows
 from .v5_knowledge import V5KnowledgeBase
 from .v5_lab import V5LabRecommendationEngine
 from .v5_personal_ranker import PersonalUtilityRankerV5
+from .v5_rating_snapshot import rating_history_snapshot
 from .v5_shadow_ranker import (
     V5ShadowRankedEngine,
     V5ShadowRankedEngine10,
@@ -141,6 +142,7 @@ def run_v5_evaluation(
     source = Path(db.path).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(source)
+    rating_snapshot = rating_history_snapshot(db)
 
     knowledge = V5KnowledgeBase(db).status()
     if not bool(knowledge.get("ready_for_rich_ranker")):
@@ -290,6 +292,7 @@ def run_v5_evaluation(
     report = {
         "version": V5_EVALUATION_VERSION,
         "generated_at": utcnow_iso(),
+        "rating_snapshot": rating_snapshot,
         "source_db": str(source),
         "knowledge": knowledge,
         "ranker_shadow": ranker_status,
@@ -318,6 +321,8 @@ def run_v5_evaluation(
             ),
         },
     }
+    if rating_history_snapshot(db) != rating_snapshot:
+        raise RuntimeError("Ratingurile s-au schimbat în timpul evaluării; rulează din nou V5 Lab pentru un raport coerent.")
     db.set_setting("v5_evaluation_report", report)
     db.set_setting("v5_evaluation_last_success", report["generated_at"])
     progress("V5 Lab: evaluarea s-a terminat; recomandările vizibile au rămas neschimbate.")

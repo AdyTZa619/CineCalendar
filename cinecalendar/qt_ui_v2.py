@@ -17,6 +17,7 @@ from .updater import UpdateInfo, check_for_update, stage_and_start_update, updat
 from .v5_alpha_runtime import is_v5_alpha
 from .v5_evaluation import run_v5_evaluation
 from .v5_knowledge import V5KnowledgeBase
+from .v5_rating_snapshot import report_rating_freshness
 
 
 class DecisionWindow(CineCalendarWindow):
@@ -491,6 +492,21 @@ class DecisionWindow(CineCalendarWindow):
             content.addWidget(empty); content.addStretch(1)
             return page
 
+        freshness = report_rating_freshness(self.db, report)
+        generated = str(report.get("generated_at") or "dată necunoscută")
+        history = self.card(); hl = QVBoxLayout(history)
+        hh = QLabel("Istoricul evaluat"); hh.setObjectName("CardTitle"); hl.addWidget(hh)
+        history_text = (
+            "Ratingurile sunt aceleași ca în evaluare."
+            if freshness is True else
+            "Ratingurile s-au schimbat după evaluare; V5 revine la V16 până la o reevaluare."
+            if freshness is False else
+            "Raportul vechi nu conține amprenta ratingurilor; actualitatea lui nu poate fi confirmată."
+        )
+        hinfo = QLabel(f"Raport generat: {generated}. {history_text}")
+        hinfo.setObjectName("Muted"); hinfo.setWordWrap(True); hl.addWidget(hinfo)
+        content.addWidget(history)
+
         rolling = dict(report.get("rolling") or {})
         retrieval_agg = dict(((rolling.get("retrieval_only") or {}).get("aggregate") or {}))
         ranked_payload = rolling.get("selected_ranked") or rolling.get("ranked") or {}
@@ -575,7 +591,7 @@ class DecisionWindow(CineCalendarWindow):
 
         verdict = self.card(); vl = QVBoxLayout(verdict)
         vh = QLabel("Decizie de siguranță pentru Alpha"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
-        eligible = bool(decision.get("eligible_for_visible_alpha_trial"))
+        eligible = bool(decision.get("eligible_for_visible_alpha_trial")) and freshness is not False
         vt = QLabel(
             (
                 "Eligibil pentru următorul pas: trial vizibil controlat în V5 Alpha."
@@ -583,7 +599,8 @@ class DecisionWindow(CineCalendarWindow):
                 "Rămâne în shadow mode. Nu activăm rankerul în recomandările vizibile."
             )
             + "\n"
-            + str(decision.get("reason") or "")
+            + ("Raportul trebuie refăcut după schimbarea ratingurilor." if freshness is False
+               else str(decision.get("reason") or ""))
             + "\nStable 4.14.1 rămâne neatins."
         )
         vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
@@ -606,7 +623,9 @@ class DecisionWindow(CineCalendarWindow):
                 else "Activ acum: V16."
             )
             + f"  Audit comparativ salvat: {audit_rows} recomandări."
-            + ("  Poți comuta instant; Stable rămâne neatins." if eligible_trial else "  V5 rămâne blocat până la un raport eligibil.")
+            + ("  Poți comuta instant; Stable rămâne neatins." if eligible_trial
+               else "  V5 necesită o reevaluare pe ratingurile actuale." if freshness is False
+               else "  V5 rămâne blocat până la un raport eligibil.")
         )
         tt.setWordWrap(True); tt.setObjectName("Muted"); tbl.addWidget(tt)
         tr = QHBoxLayout()

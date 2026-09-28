@@ -324,6 +324,7 @@ class CineCalendarWindow(QMainWindow):
             for index,(text,fn,accent) in enumerate(actions):
                 b=QPushButton(text); b.setProperty("accent",accent); b.clicked.connect(fn)
                 action_grid.addWidget(b,index//2,index%2,Qt.AlignLeft)
+            action_grid.setColumnStretch(2,1)
             top.addLayout(action_grid)
         outer.addLayout(top)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)

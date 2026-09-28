@@ -2,6 +2,8 @@ from datetime import date
 
 from cinecalendar.db import Database
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
+from cinecalendar.util import json_dumps, utcnow_iso
+from cinecalendar.v5_rating_snapshot import rating_history_snapshot, report_rating_freshness
 from cinecalendar.v5_visible_trial import (
     AlphaTrialRecommender,
     MODE_V16,
@@ -247,3 +249,37 @@ def test_decision_trial_refreshes_both_engines_when_chooser_changes(tmp_path):
     db.set_setting("chooser_runtime_bucket", "90")
     proxy.decision_pick(when=when)
     assert (v16.decision_calls, v5.decision_calls) == (4, 4)
+
+
+def test_trial_detects_changed_ratings_after_a_fingerprinted_report(tmp_path):
+    db = Database(tmp_path / "trial-history.db")
+    _eligible(db)
+    report = db.get_setting("v5_evaluation_report")
+    report["rating_snapshot"] = rating_history_snapshot(db)
+    db.set_setting("v5_evaluation_report", report)
+    v16 = FakeEngine([_rec(1, 0.75)])
+    v5 = FakeEngine([_rec(2, 0.82)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    assert proxy.mode == MODE_V5_20
+    assert report_rating_freshness(db, report) is True
+
+    now = utcnow_iso()
+    with db.tx() as con:
+        movie = con.execute(
+            """INSERT INTO movies(imdb_id,identity_key,title,original_title,year,title_type,
+                 genres_json,directors_json,countries_json,keywords_json,semantic_json,
+                 source,created_at,updated_at,title_norm,original_title_norm)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("tt0000902", "test:rating", "Test", "Test", 2020, "movie",
+             json_dumps([]), json_dumps([]), json_dumps([]), json_dumps([]),
+             json_dumps({}), "test", now, now, "test", "test"),
+        ).lastrowid
+        con.execute(
+            "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (movie, 9, "2026-09-28", "test", now, now),
+        )
+
+    assert report_rating_freshness(db, report) is False
+    assert proxy.mode == MODE_V16
+    assert proxy.trial_status()["eligible"] is False
+    assert proxy.trial_status()["report_current"] is False

@@ -4,6 +4,7 @@ from datetime import date
 import uuid
 
 from .util import utcnow_iso
+from .v5_rating_snapshot import report_rating_freshness
 from .v5_shadow_ranker import V5ShadowRankedEngine20
 
 
@@ -104,6 +105,7 @@ class AlphaTrialRecommender:
             isinstance(decision, dict)
             and decision.get("eligible_for_visible_alpha_trial")
             and str(decision.get("selected_variant") or "") == "20%"
+            and report_rating_freshness(self.db, report) is not False
         )
 
     @property
@@ -192,6 +194,8 @@ class AlphaTrialRecommender:
             "version": V5_VISIBLE_TRIAL_VERSION,
             "mode": self.mode,
             "eligible": self._eligible(),
+            "report_current": report_rating_freshness(self.db, report),
+            "report_generated_at": str(report.get("generated_at") or "") if isinstance(report, dict) else "",
             "selected_variant": str((decision or {}).get("selected_variant") or ""),
             "blend_weight": 0.20 if self.mode == MODE_V5_20 else 0.0,
             "dual_audit": True,

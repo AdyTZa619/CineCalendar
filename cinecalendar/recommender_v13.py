@@ -395,5 +395,6 @@ class FastRecommendationEngineV13(FastRecommendationEngineV12):
         expanded = min(self.ADAPTIVE_POOL_MAX, max(40, requested * 8))
         base = super().recommend_romanian(when=when, count=expanded)
         selected = self._adaptive_rerank(list(base), requested)
+        self.last_romanian_diagnostics["selected_final"] = len(selected)
         self._annotate_final_als(selected)
         return selected

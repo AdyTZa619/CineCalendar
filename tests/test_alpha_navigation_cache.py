@@ -4,13 +4,14 @@ from datetime import date
 import time
 
 from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton
 
 from cinecalendar.premium_calendar_ui import CalendarPremiumWindow
 from cinecalendar.service import CineCalendarService
 from cinecalendar.smart_watchlist import SmartWatchlistResult
 from cinecalendar.ui_composition import compose_premium_window
 from cinecalendar.util import AppPaths, json_dumps, utcnow_iso
+from cinecalendar.v5_rating_snapshot import rating_history_snapshot
 
 
 def test_existing_results_open_immediately_without_new_page_workers(tmp_path, monkeypatch):
@@ -68,6 +69,9 @@ def test_existing_results_open_immediately_without_new_page_workers(tmp_path, mo
         window.show_page("romanian")
         assert getattr(window, "romanian_worker", None) is None
         assert not any("Caut filme românești" in x.text() for x in window.findChildren(QLabel))
+        assert any("Unde au rămas filmele?" in x.text() for x in window.stack.currentWidget().findChildren(QLabel))
+        assert any("Reverifică sursele" in x.text() for x in window.stack.currentWidget().findChildren(QPushButton))
+        assert not any("not-verified" in x.text() for x in window.stack.currentWidget().findChildren(QLabel))
 
         window.smart_watchlist_result = SmartWatchlistResult((), 0, 0, 0, 0, 0, 0)
         window.smart_watchlist_cache_signature = window._watchlist_signature()
@@ -89,6 +93,33 @@ def test_existing_results_open_immediately_without_new_page_workers(tmp_path, mo
         for key, _label in window.NAV:
             window.show_page(key)
             assert window.stack.currentWidget() is not None
+
+        checked = []
+        provider = window.s.recommender.active.romanian_cinema
+        monkeypatch.setattr(provider, "imdb_ids", lambda refresh=False: checked.append(refresh) or set())
+        window._refresh_romanian_sources()
+        refresh_worker = window.romanian_refresh_worker
+        assert refresh_worker.wait(1500)
+        app.processEvents()
+        assert checked == [True]
+        assert window.romanian_cache_signature is None
+
+        service.db.set_setting("v5_evaluation_report", {
+            "generated_at": now,
+            "rating_snapshot": rating_history_snapshot(service.db),
+            "decision": {"eligible_for_visible_alpha_trial": True, "selected_variant": "20%"},
+        })
+        with service.db.tx() as con:
+            movie_id = con.execute("SELECT id FROM movies WHERE imdb_id='tt0000901'").fetchone()[0]
+            con.execute(
+                "INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (movie_id, 8, date.today().isoformat(), "test", now, now),
+            )
+        window.show_page("v5_lab")
+        assert any("Ratingurile s-au schimbat după evaluare" in x.text()
+                   for x in window.stack.currentWidget().findChildren(QLabel))
+        assert not any(b.isEnabled() for b in window.stack.currentWidget().findChildren(QPushButton)
+                       if b.text() == "Folosește V5 20%")
 
         class PageWorker(QThread):
             def run(self):
