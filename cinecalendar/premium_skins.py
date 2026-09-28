@@ -8,8 +8,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 import json
 
-from PySide6.QtCore import Qt, QTimer, QEasingCurve, QPropertyAnimation, QSize, QPointF
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QLinearGradient, QPolygonF
+from PySide6.QtCore import Qt, QTimer, QEasingCurve, QPropertyAnimation, QSize, QPointF, QRectF
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QLinearGradient, QPolygonF, QFont, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
@@ -130,11 +130,13 @@ def _nav_button(key: str, name: str, skin: str, handler, *, compact=False) -> QP
 class HeroCanvas(QFrame):
     """Paint a real poster behind cinematic content; resize never distorts the image."""
 
-    def __init__(self, skin: str):
+    def __init__(self, skin: str, title: str = "", year: int | None = None):
         super().__init__()
         self.skin = skin
         self.artwork = QPixmap()
         self.landscape = False
+        self.title = title
+        self.year = year
         self.setObjectName("ArtworkHero")
         self.setMinimumHeight(370 if skin == "cinematic" else 310)
 
@@ -159,12 +161,31 @@ class HeroCanvas(QFrame):
                          -(scaled.width() - image_area.width() - source_x),
                          -(scaled.height() - image_area.height() - source_y)))
         else:
-            p.setPen(QPen(QColor(199, 148, 89, 55), 3))
-            center_x, center_y = int(self.width() * .79), int(self.height() * .53)
-            for radius in (55, 115, 174, 245):
+            # A typographic cover for missing artwork. It deliberately uses only
+            # the actual title and year instead of inventing a film image.
+            w, h = self.width(), self.height()
+            glow = QRadialGradient(w * .82, h * .42, w * .48)
+            glow.setColorAt(0, QColor(167, 91, 54, 135))
+            glow.setColorAt(.62, QColor(95, 49, 41, 85))
+            glow.setColorAt(1, QColor(15, 13, 17, 0))
+            p.fillRect(self.rect(), glow)
+            p.setPen(QPen(QColor(230, 184, 116, 72), 1.5))
+            center_x, center_y = int(w * .82), int(h * .52)
+            for radius in (75, 150, 225, 300):
                 p.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
-            for x in range(max(0, center_x - 220), self.width(), 48):
-                p.drawRoundedRect(x, self.height() - 34, 25, 16, 2, 2)
+            p.setPen(QColor(242, 210, 165, 95))
+            font = QFont("Georgia", max(22, min(57, w // 26)))
+            font.setWeight(QFont.DemiBold)
+            title_area = QRectF(w * .62, h * .3, w * .33, h * .42)
+            for size in range(font.pointSize(), 16, -2):
+                font.setPointSize(size)
+                p.setFont(font)
+                if p.boundingRect(title_area, Qt.TextWordWrap, self.title).height() <= title_area.height():
+                    break
+            p.drawText(title_area, Qt.TextWordWrap | Qt.AlignCenter, self.title)
+            p.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+            p.drawText(QRectF(w * .68, h * .78, w * .27, 30), Qt.AlignRight,
+                       f"{self.year or ''}  ·  CINECALENDAR")
         gradient = QLinearGradient(0, 0, self.width(), 0)
         gradient.setColorAt(0, QColor(8, 9, 11, 252))
         gradient.setColorAt(.48, QColor(8, 9, 11, 220))
@@ -179,11 +200,14 @@ class HeroCanvas(QFrame):
 class PosterCanvas(QLabel):
     """Crop loaded artwork to the card at every window size, with a useful empty state."""
 
-    def __init__(self, width: int, height: int, skin: str, available: bool):
+    def __init__(self, width: int, height: int, skin: str, available: bool,
+                 title: str = "", year: int | None = None):
         super().__init__()
         self.artwork = QPixmap()
         self.skin = skin
         self.available = available
+        self.title = title
+        self.year = year
         self.setObjectName("FilmPoster")
         self.setFixedHeight(height)
         self.setMinimumWidth(width)
@@ -206,51 +230,132 @@ class PosterCanvas(QLabel):
             p.drawPixmap((self.width() - scaled.width()) // 2,
                          (self.height() - scaled.height()) // 2, scaled)
         else:
-            pen = QPen(QColor(c["muted"]), 1.4)
-            p.setPen(pen)
-            mid = self.rect().center()
-            p.drawRoundedRect(mid.x() - 20, mid.y() - 27, 40, 54, 3, 3)
-            p.drawEllipse(mid.x() - 8, mid.y() - 15, 16, 16)
-            p.drawLine(mid.x() - 11, mid.y() + 12, mid.x() + 11, mid.y() + 12)
-            if self.width() > 115:
-                p.drawText(self.rect().adjusted(4, 64, -4, -12), Qt.AlignBottom | Qt.AlignHCenter,
-                           "Se încarcă" if self.available else "Fără afiș")
+            w, h = self.width(), self.height()
+            light = self.skin == "editorial"
+            gradient = QLinearGradient(0, 0, w, h)
+            covers = (
+                (("#D9C4AA", "#A58778", "#503C41"),
+                 ("#B9C2B1", "#8B9A92", "#485A5B"),
+                 ("#DAC7BD", "#A08895", "#50495F")) if light else
+                (("#33484C", "#654743", "#181B22"),
+                 ("#3A465A", "#654C53", "#1C272F"),
+                 ("#414C40", "#735A42", "#1C2729")) if self.skin == "workbench" else
+                (("#7D5C4B", "#443E45", "#17191F"),
+                 ("#455D62", "#444D57", "#161C25"),
+                 ("#756475", "#4D4555", "#1B1A25"))
+            )
+            stops = covers[sum(ord(char) for char in self.title) % len(covers)]
+            for at, color in zip((0, .53, 1), stops):
+                gradient.setColorAt(at, QColor(color))
+            p.fillRect(self.rect(), gradient)
+            p.setPen(QPen(QColor(255, 241, 213, 53), 1))
+            for i in range(4):
+                radius = int(min(w, h) * (.38 + i * .2))
+                p.drawEllipse(int(w * .78) - radius, int(h * .38) - radius,
+                              radius * 2, radius * 2)
+            p.setPen(QPen(QColor(255, 240, 218, 130), 1))
+            p.drawLine(int(w * .09), int(h * .12), int(w * .91), int(h * .12))
+            p.drawLine(int(w * .09), int(h * .86), int(w * .91), int(h * .86))
+            ink = QColor("#FFF7EC" if not light else "#2F2225")
+            p.setPen(ink)
+            p.setFont(QFont("Segoe UI", max(8, min(11, w // 20)), QFont.DemiBold))
+            p.drawText(QRectF(w * .09, h * .045, w * .82, h * .07),
+                       Qt.AlignLeft | Qt.AlignVCenter,
+                       "C  /  FILM" if w < 150 else "CINECALENDAR  /  SELECȚIE")
+            font = QFont("Georgia", max(13, min(38, w // 8)))
+            font.setWeight(QFont.DemiBold)
+            title_area = QRectF(w * .09, h * .21, w * .82, h * .55)
+            for size in range(font.pointSize(), 10, -2):
+                font.setPointSize(size)
+                p.setFont(font)
+                if p.boundingRect(title_area, Qt.TextWordWrap, self.title).height() <= title_area.height():
+                    break
+            p.drawText(title_area, Qt.TextWordWrap | Qt.AlignVCenter, self.title)
+            p.setFont(QFont("Segoe UI", max(9, min(12, w // 20)), QFont.DemiBold))
+            p.drawText(QRectF(w * .09, h * .88, w * .82, h * .08),
+                       Qt.AlignLeft | Qt.AlignVCenter,
+                       str(self.year or "FILM") if w < 150 else
+                       f"{self.year or 'FILM'}  ·  {'SE ÎNCARCĂ' if self.available else 'AFIȘ INDISPONIBIL'}")
         p.end()
 
 
 def _skin_preview(skin: str) -> QFrame:
-    """Tiny layout preview made from Qt widgets, with no fictitious movie data."""
+    """Miniature of each layout, using neutral labels rather than fictitious films."""
     c = PALETTES[skin]
     frame = QFrame()
-    frame.setFixedHeight(84)
+    frame.setFixedHeight(146)
     frame.setStyleSheet(f"background:{c['bg']};border:1px solid {c['border']};border-radius:4px;")
 
-    def block(width=0, stretch=0, fill=None):
+    def block(width=0, fill=None):
         part = QFrame()
         part.setStyleSheet(f"background:{fill or c['card2']};border:0;border-radius:2px;")
         if width:
             part.setFixedWidth(width)
-        return part, stretch
+        return part
+
+    def mini(text, size=9, accent=False):
+        label = QLabel(text)
+        label.setStyleSheet(f"background:transparent;border:0;color:{c['accent'] if accent else c['text']};"
+                            f"font-size:{size}px;font-weight:700;")
+        return label
 
     if skin == "cinematic":
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-        top, _ = block(fill=c['accent']); top.setFixedHeight(8); layout.addWidget(top)
-        hero, _ = block(fill=c['card2']); layout.addWidget(hero, 1)
-        rail = QHBoxLayout(); rail.setSpacing(4)
+        layout.setContentsMargins(8, 7, 8, 7)
+        layout.setSpacing(5)
+        nav = QHBoxLayout()
+        nav.addWidget(mini("CINECALENDAR", 8, True))
+        nav.addStretch(1)
+        nav.addWidget(mini("ACASĂ    FILME    CALENDAR", 7))
+        layout.addLayout(nav)
+        hero = block(fill="#3F302D")
+        hl = QVBoxLayout(hero)
+        hl.setContentsMargins(10, 5, 8, 6)
+        hl.addWidget(mini("ALEGEREA SERII", 7, True))
+        hl.addWidget(mini("Filmul tău", 15))
+        hl.addStretch(1)
+        hl.addWidget(mini("▶  Alege     Detalii", 8))
+        layout.addWidget(hero, 1)
+        rail = QHBoxLayout(); rail.setSpacing(5)
         for _ in range(3):
-            tile, _ = block(); tile.setFixedHeight(13); rail.addWidget(tile, 1)
+            tile = block(fill=c['card2']); tile.setFixedHeight(24); rail.addWidget(tile, 1)
         layout.addLayout(rail)
+    elif skin == "editorial":
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(7, 7, 7, 7)
+        layout.setSpacing(5)
+        nav = block(44, c['surface']); nl = QVBoxLayout(nav); nl.setContentsMargins(4, 6, 2, 3)
+        nl.addWidget(mini("CINE", 7, True)); nl.addWidget(mini("Acasă", 7)); nl.addWidget(mini("Filme", 7)); nl.addStretch(1)
+        layout.addWidget(nav)
+        poster = block(65, "#B49A88"); pl = QVBoxLayout(poster); pl.setContentsMargins(5, 7, 5, 5)
+        pl.addStretch(1); pl.addWidget(mini("FILM", 13)); pl.addWidget(mini("SELECȚIE", 6))
+        layout.addWidget(poster)
+        copy = QVBoxLayout(); copy.setSpacing(4)
+        copy.addWidget(mini("RECOMANDAREA ZILEI", 7, True))
+        copy.addWidget(mini("O poveste pentru azi", 12))
+        copy.addWidget(mini("De ce ți se potrivește", 8))
+        copy.addStretch(1)
+        copy.addWidget(mini("CITEȘTE    →", 8, True))
+        layout.addLayout(copy, 1)
+        side = block(47, c['card2']); layout.addWidget(side)
     else:
         layout = QHBoxLayout(frame)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-        if skin == "workbench":
-            rail, _ = block(9, fill=c['accent']); layout.addWidget(rail)
-        nav, _ = block(27 if skin == "workbench" else 36, fill=c['surface']); layout.addWidget(nav)
-        main, _ = block(fill=c['card2']); layout.addWidget(main, 3)
-        info, _ = block(fill=c['card']); layout.addWidget(info, 1 if skin == "editorial" else 2)
+        layout.setContentsMargins(7, 7, 7, 7)
+        layout.setSpacing(5)
+        nav = block(42, c['surface']); nl = QVBoxLayout(nav); nl.setContentsMargins(4, 6, 2, 3)
+        nl.addWidget(mini("◉  HUB", 7, True)); nl.addWidget(mini("Filme", 7)); nl.addWidget(mini("Listă", 7)); nl.addStretch(1)
+        layout.addWidget(nav)
+        main = QVBoxLayout(); main.setSpacing(5)
+        main.addWidget(mini("ALEGEREA SERII   /   DETALII", 8, True))
+        hero = block(fill=c['card2']); hl = QHBoxLayout(hero); hl.setContentsMargins(5, 4, 5, 4)
+        art = block(46, "#67514A"); hl.addWidget(art)
+        hl.addWidget(mini("Film selectat\nScor personal\n▶  Alege", 9), 1)
+        main.addWidget(hero, 1)
+        tiles = QHBoxLayout(); tiles.setSpacing(4)
+        for _ in range(3):
+            tiles.addWidget(block(fill=c['card2']), 1)
+        main.addLayout(tiles, 1)
+        layout.addLayout(main, 1)
     return frame
 
 
@@ -282,8 +387,8 @@ def build_skin_shell(window):
         top = QFrame()
         top.setObjectName("Topbar")
         tl = QVBoxLayout(top)
-        tl.setContentsMargins(30, 12, 30, 9)
-        tl.setSpacing(9)
+        tl.setContentsMargins(24, 8, 24, 6)
+        tl.setSpacing(4)
         first = QHBoxLayout()
         first.addWidget(_label("◉  CineCalendar", "Brand"))
         first.addSpacing(40)
@@ -331,7 +436,7 @@ def build_skin_shell(window):
     nl.setContentsMargins(0, 0, 3, 0)
     nl.setSpacing(2)
     for index, (key, name) in enumerate(window.NAV):
-        if window.skin == "editorial" and index in (0, 4, 7, 10):
+        if window.skin in ("editorial", "workbench") and index in (0, 4, 7, 10):
             nl.addWidget(_label({0: "DESCOPERĂ", 4: "CONTUL MEU", 7: "PLANIFICĂ",
                                   10: "INSTRUMENTE"}[index], "NavGroup"))
         button = _nav_button(key, name, window.skin,
@@ -366,6 +471,19 @@ def skin_qss(skin: str) -> str:
         QFrame#Sidebar {{ border-right:1px solid {c['border']}; }}
         QFrame#Topbar {{ border-bottom:1px solid {c['border']}; }}
         QFrame#IconRail {{ border-right:1px solid {c['border']}; }}
+        QFrame#PageMasthead {{ border:{'0' if editorial else '1px solid ' + c['border']};
+            border-bottom:{'2px solid ' + c['accent'] if editorial else '1px solid ' + c['border']};
+            border-radius:{'0' if editorial else radius};
+            background:{'transparent' if editorial else 'qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #261C1C,stop:.55 #181619,stop:1 #121316)' if skin == 'cinematic' else '#1B2C32'}; }}
+        QFrame#PageMasthead[compact='true'] {{ border:0; background:transparent; }}
+        QFrame#PageMasthead QLabel#PageTitle {{ font-size:{'46' if editorial else '38'}px; }}
+        QFrame#PageMasthead QLabel#Eyebrow {{ font-size:11px; }}
+        QFrame#PageMasthead QFrame#PageEmblem {{ background:{c['card2']};
+            border:1px solid {c['border']}; border-radius:8px; }}
+        QFrame#PageMasthead QFrame#PageEmblem QLabel {{ color:{c['accent']}; }}
+        QWidget#MastheadCopy {{ background:transparent; }}
+        QFrame#TodayGenreChooser {{ background:transparent; border:0; }}
+        QFrame#TodayGenreChooser QLabel {{ color:{c['muted']}; }}
         QScrollArea#SidebarNav, QWidget#SidebarNavContent {{ background:transparent; border:0; }}
         QFrame#PremiumCard, QFrame#Card, QFrame#HeroCard, QFrame#DetailHero {{
             background:{c['card']}; border:1px solid {c['border']}; border-radius:{radius};
@@ -414,7 +532,7 @@ def skin_qss(skin: str) -> str:
         QPushButton[navActive='true'] {{ text-align:left; background:{c['card2']};
             color:{c['text']}; border-left:3px solid {c['accent']}; font-weight:750; padding:10px 12px; }}
         QFrame#Topbar QPushButton[nav='true'], QFrame#Topbar QPushButton[navActive='true'] {{
-            text-align:center; font-size:12px; padding:8px 3px; }}
+            text-align:center; font-size:12px; padding:5px 3px; }}
         QLineEdit, QSpinBox, QComboBox {{ background:{c['card2']}; color:{c['text']};
             border:1px solid {c['border']}; border-radius:{radius}; padding:7px; }}
         QComboBox QAbstractItemView {{ background:{c['surface']}; color:{c['text']};
@@ -446,7 +564,8 @@ def _film_title(rec) -> str:
 
 def _poster(window, rec, width, height, artwork_url=None):
     source = artwork_url or rec.movie.poster_url
-    poster = PosterCanvas(width, height, normalized_skin(window.skin), bool(source))
+    poster = PosterCanvas(width, height, normalized_skin(window.skin), bool(source),
+                          rec.movie.title, rec.movie.year)
     if source:
         window.load_poster_async(poster, source, rec.movie.imdb_id or str(rec.movie.id))
     return poster
@@ -478,7 +597,7 @@ def _cached_backdrop_url(window, rec) -> str | None:
 def _film_panel(window, rec, *, cinematic=False):
     skin = normalized_skin(window.skin)
     if cinematic:
-        box = HeroCanvas(skin)
+        box = HeroCanvas(skin, rec.movie.title, rec.movie.year)
         box.setMinimumHeight(405)
         layout = QHBoxLayout(box)
         layout.setContentsMargins(40, 34, 28, 30)
@@ -504,8 +623,8 @@ def _film_panel(window, rec, *, cinematic=False):
         layout.setSpacing(30)
         backdrop = _cached_backdrop_url(window, rec) if skin == "workbench" else None
         poster = _poster(window, rec,
-                         260 if skin == "editorial" else (390 if window.width() >= 1500 else 300),
-                         450 if skin == "editorial" else 360, backdrop)
+                         315 if skin == "editorial" and window.width() >= 1400 else 245 if skin == "editorial" else (390 if window.width() >= 1500 else 300),
+                         570 if skin == "editorial" else 390, backdrop)
         layout.addWidget(poster, 0, Qt.AlignTop)
         info = QVBoxLayout()
         info.setSpacing(13)
@@ -566,7 +685,8 @@ def _alternative(window, rec, index, *, variant=None):
     layout.setContentsMargins(0 if visual else 11, 0 if visual else 10,
                               0 if visual else 11, 10 if visual else 10)
     layout.setSpacing(7 if visual else 12)
-    poster = _poster(window, rec, 210 if visual else 72, 158 if visual else 115)
+    poster = _poster(window, rec, 210 if visual else 96,
+                     218 if variant == "cinematic" else 178 if visual else 142)
     if visual:
         poster.setMinimumWidth(1)
     if visual:
@@ -766,7 +886,6 @@ def install_premium_skins(window_cls) -> None:
     if getattr(window_cls, "_cinecalendar_skin_installed", False):
         return
     original_settings = window_cls.page_settings
-    original_page_shell = window_cls.page_shell
     original_resize_event = window_cls.resizeEvent
     original_show_page = window_cls.show_page
 
@@ -857,20 +976,79 @@ def install_premium_skins(window_cls) -> None:
         return page
 
     def page_shell(self, title, subtitle="", actions=None):
-        page, content = original_page_shell(self, title, subtitle, actions)
-        if getattr(self, "skin", None) == "cinematic" and title == "Ce văd acum?" and actions:
-            outer = page.layout()
-            outer.setContentsMargins(24, 12, 24, 12)
-            top = outer.itemAt(0).layout()
-            if top is not None and top.count() >= 3:
-                title_item = top.takeAt(0)
-                actions_item = top.takeAt(top.count() - 1)
-                title_widget, actions_layout = title_item.widget(), actions_item.layout()
-                if title_widget is not None and actions_layout is not None:
-                    row = QHBoxLayout()
-                    row.addWidget(title_widget, 1)
-                    row.addLayout(actions_layout)
-                    top.insertLayout(0, row)
+        skin = normalized_skin(getattr(self, "skin", None))
+        key = getattr(self, "current_page", "today")
+        compact = key == "today" and skin == "cinematic"
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(24 if skin == "cinematic" else 26,
+                                 12 if compact else 24, 24 if skin == "cinematic" else 26, 18)
+        outer.setSpacing(13 if compact else 18)
+        masthead = QFrame()
+        masthead.setObjectName("PageMasthead")
+        masthead.setProperty("compact", compact)
+        row = QHBoxLayout(masthead)
+        row.setContentsMargins(0 if compact or skin == "editorial" else 26,
+                               5 if compact else 12 if skin == "editorial" else 22,
+                               0 if compact or skin == "editorial" else 26,
+                               5 if compact else 18 if skin == "editorial" else 24)
+        row.setSpacing(20)
+        if not compact and skin != "editorial":
+            emblem = QFrame()
+            emblem.setObjectName("PageEmblem")
+            emblem.setFixedSize(62, 62)
+            el = QVBoxLayout(emblem)
+            el.setContentsMargins(0, 0, 0, 0)
+            glyph = _label("", "RailGlyph")
+            glyph.setPixmap(_icon(key, PALETTES[skin]["accent"], 31).pixmap(31, 31))
+            glyph.setAlignment(Qt.AlignCenter)
+            el.addWidget(glyph)
+            row.addWidget(emblem, 0, Qt.AlignLeft | Qt.AlignTop)
+        copy_holder = QWidget()
+        copy_holder.setObjectName("MastheadCopy")
+        copy = QVBoxLayout(copy_holder)
+        copy.setContentsMargins(0, 0, 0, 0)
+        copy.setSpacing(6)
+        section = ("SELECȚIA TA" if key in ("today", "recommendations", "romanian") else
+                   "CINEMATECĂ" if key == "romanian_list" else
+                   "CALENDAR & CONTEXT" if key in ("calendar", "month") else
+                   "BIBLIOTECA TA" if key in ("ratings", "watchlist", "history", "profile") else
+                   "INSTRUMENTE")
+        copy.addWidget(_label(section, "Eyebrow"))
+        heading = _label(title, "PageTitle", True)
+        if compact:
+            heading.setStyleSheet("font-size:19px;font-weight:700;")
+        copy.addWidget(heading)
+        if subtitle and not compact:
+            description = _label(subtitle, "Muted", True)
+            description.setMaximumWidth(660)
+            copy.addWidget(description)
+        copy_holder.setFixedWidth(235 if compact else
+                                  min(660, max(350, (self.width() -
+                                      (285 if skin != "cinematic" else 0)) // 2)))
+        row.addWidget(copy_holder, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        row.addStretch(1)
+        if actions:
+            commands = QGridLayout()
+            commands.setHorizontalSpacing(8)
+            commands.setVerticalSpacing(8)
+            for i, (label, handler, accent) in enumerate(actions):
+                button = _action(self, label, handler, accent)
+                commands.addWidget(button, i // 2, i % 2)
+            row.addLayout(commands)
+        masthead._utility_row = row
+        outer.addWidget(masthead)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        content = QVBoxLayout(inner)
+        content.setContentsMargins(0, 2, 6, 10)
+        content.setSpacing(15)
+        content.setAlignment(Qt.AlignTop)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll, 1)
         return page, content
 
     def resizeEvent(self, event):
@@ -888,6 +1066,19 @@ def install_premium_skins(window_cls) -> None:
         page = self.stack.currentWidget()
         if page is None or not self.isVisible():
             return
+        if key == "today" and normalized_skin(self.skin) == "cinematic":
+            outer = page.layout()
+            if outer.count() >= 3:
+                chooser = outer.itemAt(1).widget()
+                masthead = outer.itemAt(0).widget()
+                if (chooser is not None and chooser.objectName() == "PremiumCard"
+                        and masthead is not None and masthead.objectName() == "PageMasthead"):
+                    outer.removeWidget(chooser)
+                    chooser.setObjectName("TodayGenreChooser")
+                    chooser.setMaximumWidth(480)
+                    masthead._utility_row.insertWidget(1, chooser, 1)
+                    chooser.style().unpolish(chooser)
+                    chooser.style().polish(chooser)
         effect = QGraphicsOpacityEffect(page)
         page.setGraphicsEffect(effect)
         animation = QPropertyAnimation(effect, b"opacity", page)
