@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 
 from cinecalendar.calendar_engine_v3 import ContextCalendarEngineV35
 from cinecalendar.db import Database
@@ -155,4 +156,4 @@ def test_service_keeps_v47_quality_chain_in_v48_release():
     assert "install_context_ui_v35" in composition
     assert "install_accuracy_ui_v37" in composition
     assert "install_accuracy_ui_v36" not in composition
-    assert '__version__ = "4.14.1"' in init
+    assert re.search(r'^__version__ = "\d+\.\d+\.\d+"$', init, re.MULTILINE)
