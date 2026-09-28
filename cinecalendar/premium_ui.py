@@ -393,6 +393,7 @@ class PremiumDecisionWindow(DecisionWindow):
         layout.setSpacing(2)
         title = QLabel(verdict.label)
         title.setObjectName("BodyStrong")
+        title.setWordWrap(True)
         layout.addWidget(title)
         interval_kind = "interval măsurat" if verdict.empirical_interval else "interval conservator"
         interval = QLabel(f"Estimare {rec.score.predicted_rating:.1f}/10 • {interval_kind} {verdict.interval_low:.1f}–{verdict.interval_high:.1f}")

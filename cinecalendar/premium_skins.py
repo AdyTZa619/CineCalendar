@@ -297,7 +297,7 @@ def _film_panel(window, rec, *, cinematic=False):
         layout.addWidget(poster, 0, Qt.AlignTop)
     info = QVBoxLayout()
     info.setSpacing(11)
-    info.addWidget(_label("ALEGEREA ZILEI  ·  DATE REALE", "Kicker"))
+    info.addWidget(_label("ALEGEREA ZILEI  ·  DATE REALE", "Kicker", True))
     info.addWidget(_label(_film_title(rec), "HeroTitle", True))
     meta = "  ·  ".join(window.movie_chips(rec.movie, 4))
     info.addWidget(_label(meta, "Muted", True))
