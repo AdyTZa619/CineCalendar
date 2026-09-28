@@ -1054,7 +1054,10 @@ def install_premium_skins(window_cls) -> None:
     def resizeEvent(self, event):
         old_width = event.oldSize().width()
         original_resize_event(self, event)
-        if (old_width > 0 and (old_width < 1400) != (event.size().width() < 1400)
+        breakpoint = (1400 if getattr(self, "skin", None) == "editorial" else
+                      1500 if getattr(self, "skin", None) == "workbench" else None)
+        if (breakpoint is not None and old_width > 0
+                and (old_width < breakpoint) != (event.size().width() < breakpoint)
                 and getattr(self, "current_page", None) == "today"
                 and getattr(self, "today_result", None) is not None):
             QTimer.singleShot(0, lambda: self.show_page("today")
