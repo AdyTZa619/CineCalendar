@@ -1584,9 +1584,11 @@ def install_premium_skins(window_cls) -> None:
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
         content = QVBoxLayout(inner)
-        content.setContentsMargins(0 if skin == "cinematic" and compact else 14 if compact else 0,
+        compact_edge = (0 if skin == "cinematic" or
+                        (skin == "workbench" and self.width() < 1500) else 14)
+        content.setContentsMargins(compact_edge if compact else 0,
                                    0 if compact else 2,
-                                   0 if skin == "cinematic" and compact else 14 if compact else 6,
+                                   compact_edge if compact else 6,
                                    10)
         content.setSpacing(12 if compact else 15)
         content.setAlignment(Qt.AlignTop)
