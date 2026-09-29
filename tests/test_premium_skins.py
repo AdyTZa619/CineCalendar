@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QStackedWidget
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea, QStackedWidget, QTableWidget
 from PySide6.QtGui import QPixmap
 
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
@@ -120,6 +121,17 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         selectors[1].click()
         inspector = page.findChild(QStackedWidget)
         assert inspector.currentIndex() == 1
+        viewed = []
+        def close_comparison():
+            dialog = app.activeModalWidget()
+            assert isinstance(dialog, QDialog)
+            table = dialog.findChild(QTableWidget)
+            viewed.append(table.rowCount())
+            dialog.accept()
+        compare = next(b for b in page.findChildren(QPushButton) if "Comparație detaliată" in b.text())
+        QTimer.singleShot(0, close_comparison)
+        compare.click()
+        assert viewed == [3]
         choose = next(b for b in inspector.currentWidget().findChildren(QPushButton)
                       if "Aleg pentru azi" in b.text())
         choose.click()

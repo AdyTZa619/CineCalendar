@@ -13,9 +13,9 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QEasingCurve, QPropertyAnimation, QSize, QPointF, QRectF
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QLinearGradient, QPolygonF, QFont, QRadialGradient
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
-    QVBoxLayout, QWidget, QGraphicsOpacityEffect,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QGraphicsOpacityEffect,
 )
 
 
@@ -512,6 +512,9 @@ def build_skin_shell(window):
             window.nav_buttons[key] = button
             row.addWidget(button, 1)
         tl.addLayout(row)
+        for indicator in (window.status, window.progress, window.undo_feedback_button):
+            indicator.setParent(top)
+            indicator.setFixedSize(0, 0)
         window.status.hide()
         window.progress.hide()
         window.undo_feedback_button.hide()
@@ -667,6 +670,7 @@ def skin_qss(skin: str) -> str:
         QPushButton:focus {{ border-color:{c['accent']}; }}
         QPushButton:disabled {{ color:{c['muted']}; background:{c['surface']}; }}
         QPushButton[accent='true'] {{ background:{c['accent']}; color:{c['on']}; border-color:{c['accent']}; font-weight:750; }}
+        QPushButton#TextLink {{ background:transparent; border:0; color:{c['muted']}; padding:3px 0; font-size:11px; }}
         QPushButton[nav='true'] {{ text-align:left; background:transparent; border:0; color:{c['muted']}; padding:10px 9px; font-size:{'13' if editorial else '14'}px; }}
         QPushButton[nav='true']:hover {{ background:{c['card2']}; color:{c['text']}; }}
         QPushButton[navActive='true'] {{ text-align:left; background:{c['card2']};
@@ -760,7 +764,9 @@ def _film_panel(window, rec, *, cinematic=False):
         info.addStretch(1)
         info.addWidget(_label("━  ALEGEREA ZILEI", "Eyebrow"))
         title = _label(rec.movie.title, "HeroTitle", True)
-        title.setStyleSheet("font-family:Georgia;font-size:68px;color:#FFF9EE;")
+        title.setStyleSheet(f"font-family:Georgia;font-size:{49 if window.width() < 1500 else 68}px;color:#FFF9EE;")
+        title.setMinimumWidth(0)
+        title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         info.addWidget(title)
         info.addWidget(_label("   ·   ".join(window.movie_chips(rec.movie, 4)), "Muted", True))
         reason = _label(rec.movie.overview[:170] if rec.movie.overview else window.human_reason(rec), "HeroDescription", True)
@@ -815,8 +821,8 @@ def _film_panel(window, rec, *, cinematic=False):
             actions.addWidget(button, index // 2, index % 2)
     info.addLayout(actions)
     if cinematic:
-        feedback.setParent(box)
-        feedback.hide()
+        feedback.setObjectName("TextLink")
+        info.addWidget(feedback, 0, Qt.AlignLeft)
         info.addSpacing(13)
         reliability = window.reliability_gate.evaluate(rec)
         info.addWidget(_label(f"{reliability.label}  ·  Estimare personală {rec.score.predicted_rating:.1f}/10", "Muted", True))
@@ -951,7 +957,7 @@ def _ro_short_date(day):
 
 def _week_strip(window, *, dock=False):
     box = QFrame(); box.setObjectName("WeekDock" if dock else "PremiumCard")
-    layout = QHBoxLayout(box) if dock else QVBoxLayout(box)
+    layout = QHBoxLayout(box) if dock and window.width() >= 1500 else QVBoxLayout(box)
     layout.setContentsMargins(16, 12, 16, 12); layout.setSpacing(8)
     today = date.today(); monday = today - timedelta(days=today.weekday())
     if dock:
@@ -1058,14 +1064,15 @@ def _poster_wall(window, primary, backups):
               if r.movie.id not in {primary.movie.id, *(r.movie.id for r in backups)}]
     items = [primary, *backups, *extras][:6]
     grid = QGridLayout(); grid.setSpacing(12)
+    columns = 2 if narrow else 3
     for i, rec in enumerate(items):
-        grid.addWidget(_poster_tile(window, rec, height=195, featured=i == 0), i // 3, i % 3)
+        grid.addWidget(_poster_tile(window, rec, height=195, featured=i == 0), i // columns, i % columns)
     destinations = (("Mai multe filme", "Toate recomandările din catalog", "recommendations", "cinematic"),
                     ("Cinema românesc", "Selecția de filme românești", "romanian", "editorial"),
                     ("Lista mea", "Filmele salvate de tine", "watchlist", "workbench"))
     for i in range(len(items), 6):
         title, subtitle, destination, art = destinations[(i - len(items)) % len(destinations)]
-        grid.addWidget(_discovery_tile(window, title, subtitle, destination, art), i // 3, i % 3)
+        grid.addWidget(_discovery_tile(window, title, subtitle, destination, art), i // columns, i % columns)
     center.addLayout(grid); center.addStretch(1)
     center_wrap = QWidget(); center_wrap.setLayout(center)
     body.addWidget(center_wrap, 7 if not narrow else 0)
@@ -1084,17 +1091,22 @@ def _poster_wall(window, primary, backups):
 def _studio_choice(window, rec, index, stack, buttons):
     box = QFrame(); box.setObjectName("StudioChoice")
     row = QHBoxLayout(box); row.setContentsMargins(12, 10, 14, 10); row.setSpacing(12)
+    compact = window.width() < 1500
     radio = _action(window, "◉" if index == 0 else "○",
                     lambda _=False, i=index: _select_studio(stack, buttons, i))
-    radio.setFixedWidth(34); row.addWidget(radio)
-    art = _poster(window, rec, 165, 120, _cached_backdrop_url(window, rec))
-    art.setFixedWidth(165); row.addWidget(art)
+    radio.setFixedWidth(28 if compact else 34); row.addWidget(radio)
+    art = _poster(window, rec, 120 if compact else 165,
+                  100 if compact else 120, _cached_backdrop_url(window, rec))
+    art.setFixedWidth(120 if compact else 165); row.addWidget(art)
     details = QVBoxLayout(); details.setSpacing(4)
-    details.addWidget(_label(rec.movie.title, "CardTitle", True))
+    name = _label(rec.movie.title, "CardTitle", True)
+    name.setMinimumWidth(0)
+    name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    details.addWidget(name)
     details.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 3)), "Muted", True))
     details.addWidget(_label(window.human_reason(rec)[:110], "Muted", True))
     details.addStretch(1); row.addLayout(details, 4)
-    row.addWidget(ScoreRing(rec.score.predicted_rating, window.skin, 72))
+    row.addWidget(ScoreRing(rec.score.predicted_rating, window.skin, 58 if compact else 72))
     select = _action(window, "Selectează", lambda _=False, i=index: _select_studio(stack, buttons, i))
     row.addWidget(select)
     buttons.append((box, radio, select))
@@ -1151,17 +1163,64 @@ def _studio_inspector(window, rec):
     return box
 
 
+def _studio_comparison(window, recs):
+    dialog = QDialog(window)
+    dialog.setWindowTitle("Comparație detaliată")
+    dialog.resize(1050, 480)
+    layout = QVBoxLayout(dialog); layout.setContentsMargins(22, 18, 22, 18)
+    layout.addWidget(_label("Compară recomandările de azi", "PageTitle"))
+    table = QTableWidget(len(recs), 6)
+    table.setHorizontalHeaderLabels(("Film", "An", "Genuri", "Rating estimat",
+                                      "Încredere", "Motiv"))
+    table.setEditTriggers(QTableWidget.NoEditTriggers)
+    for row, rec in enumerate(recs):
+        values = (rec.movie.title, str(rec.movie.year or "—"),
+                  ", ".join(rec.movie.genres or []) or "—",
+                  f"{rec.score.predicted_rating:.1f}/10", f"{rec.score.confidence:.0%}",
+                  window.human_reason(rec))
+        for col, value in enumerate(values):
+            table.setItem(row, col, QTableWidgetItem(value))
+    table.horizontalHeader().setStretchLastSection(True)
+    table.resizeColumnsToContents()
+    table.setWordWrap(True)
+    if recs:
+        table.selectRow(0)
+    layout.addWidget(table, 1)
+    action = _action(window, "Vezi detaliile filmului selectat",
+                     lambda: window.open_details(recs[max(0, table.currentRow())]))
+    action.setEnabled(bool(recs))
+    layout.addWidget(action)
+    dialog.exec()
+
+
+def _studio_quick_choice(window, rec):
+    dialog = QDialog(window)
+    dialog.setWindowTitle("Decizie rapidă")
+    layout = QVBoxLayout(dialog); layout.setContentsMargins(24, 22, 24, 22); layout.setSpacing(12)
+    layout.addWidget(_label("Alegerea recomandată pentru azi", "Eyebrow"))
+    layout.addWidget(_label(rec.movie.title, "HeroTitle", True))
+    layout.addWidget(_label(f"Rating personal estimat {rec.score.predicted_rating:.1f}/10", "Muted"))
+    layout.addWidget(_label(window.human_reason(rec), "Muted", True))
+    row = QHBoxLayout()
+    choose = _action(window, "Aleg pentru azi", lambda: (dialog.accept(), window.choose_decision(rec.movie.id)), True)
+    row.addWidget(choose)
+    row.addWidget(_action(window, "Alt film", lambda: (dialog.accept(), window.skip_decision(rec.movie.id))))
+    layout.addLayout(row)
+    dialog.exec()
+
+
 def _decision_studio(window, primary, backups):
     content = window.today_content
     heading = QHBoxLayout()
     heading.addWidget(_label("◎", "ScoreLarge"))
     heading.addWidget(_label("Alegerea serii", "PageTitle")); heading.addStretch(1)
-    for caption, mode in (("✦  Recomandări pentru azi", "decide"),
-                          ("☷  Comparație detaliată", "safe"), ("ϟ  Decizie rapidă", "short")):
-        heading.addWidget(_action(window, caption, lambda _=False, value=mode: window.set_decision_mode(value),
-                                  window.decision_mode == mode))
+    heading.addWidget(_action(window, "✦  Recomandări pentru azi", lambda: window.show_page("today"), True))
+    heading.addWidget(_action(window, "☷  Comparație detaliată",
+                              lambda: _studio_comparison(window, [primary, *backups])))
+    heading.addWidget(_action(window, "ϟ  Decizie rapidă", lambda: _studio_quick_choice(window, primary)))
     head = QWidget(); head.setLayout(heading); content.addWidget(head)
-    row = QHBoxLayout(); row.setSpacing(14)
+    row = QVBoxLayout() if window.width() < 1500 else QHBoxLayout()
+    row.setSpacing(14)
     choices = QVBoxLayout(); choices.setSpacing(8)
     inspector = QStackedWidget(); buttons = []
     for i, rec in enumerate([primary, *backups]):
@@ -1180,7 +1239,8 @@ def _decision_studio(window, primary, backups):
     choices.addWidget(more)
     choices.addStretch(1)
     left = QWidget(); left.setLayout(choices)
-    row.addWidget(left, 6); row.addWidget(inspector, 4)
+    row.addWidget(left, 6 if window.width() >= 1500 else 0)
+    row.addWidget(inspector, 4 if window.width() >= 1500 else 0)
     wrap = QWidget(); wrap.setLayout(row); content.addWidget(wrap)
     _select_studio(inspector, buttons, 0)
     content.addWidget(_week_strip(window, dock=True))
@@ -1191,16 +1251,21 @@ def _editorial_spread(window, primary, backups):
     narrow = window.width() < 1400
     columns = QVBoxLayout() if narrow else QHBoxLayout()
     columns.setSpacing(24)
-    top = QHBoxLayout() if narrow else columns
+    top = QVBoxLayout() if narrow else columns
     top.setSpacing(24)
-    poster = _poster(window, primary, 300 if narrow else 390, 650 if narrow else 870,
+    poster = _poster(window, primary, 300 if narrow else 390, 550 if narrow else 870,
                      fallback_kind="editorial")
-    poster.setMinimumWidth(300)
+    poster.setMinimumWidth(1 if narrow else 300)
     top.addWidget(poster, 39)
     story = QVBoxLayout(); story.setSpacing(13)
     story.addWidget(_label("CÂND TRECUTUL REVINE,\nNICI DRUMUL NU MAI E ACELAȘI.", "Eyebrow", True))
     story.addSpacing(17)
-    story.addWidget(_label(primary.movie.title, "EditorialTitle", True))
+    story_title = _label(primary.movie.title, "EditorialTitle", True)
+    if narrow:
+        story_title.setStyleSheet("font-family:Georgia;font-size:48px;")
+    story_title.setMinimumWidth(0)
+    story_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+    story.addWidget(story_title)
     story.addWidget(_label(" · ".join(window.movie_chips(primary.movie, 4)), "EditorialMeta", True))
     if primary.movie.overview:
         story.addWidget(_label(primary.movie.overview[:560], "EditorialBody", True))
