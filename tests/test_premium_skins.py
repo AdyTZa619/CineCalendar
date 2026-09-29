@@ -12,7 +12,7 @@ from cinecalendar.ui_composition import compose_premium_window
 from cinecalendar.util import AppPaths, json_dumps, utcnow_iso
 
 
-def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypatch):
+def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("CINECALENDAR_V5_ALPHA", "1")
     monkeypatch.setenv("CINECALENDAR_V5_ALPHA_ALLOW_EMPTY", "1")
@@ -51,7 +51,7 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
         window.show()
         expected_menus = {key for key, _ in window.NAV}
         overflow_by_skin = {}
-        for skin in ("cinematic", "editorial", "workbench"):
+        for skin in ("cinematic", "editorial", "poster_wall", "workbench"):
             window.set_skin(skin)
             assert service.db.get_setting("ui_skin") == skin
             assert set(window.nav_buttons) == expected_menus
@@ -62,17 +62,18 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
             page = window.stack.currentWidget()
             app.processEvents()
             assert any("Film verificabil 1" in x.text() for x in page.findChildren(QLabel))
-            assert any("Aleg pentru azi" == x.text() for x in page.findChildren(QPushButton))
+            assert any("Aleg pentru azi" in x.text() for x in page.findChildren(QPushButton))
             assert any("Nu acum / motiv" == x.text() for x in page.findChildren(QPushButton))
-            assert any("Aleg" == x.text() for x in page.findChildren(QPushButton))
+            assert any("Alt film" == x.text() for x in page.findChildren(QPushButton))
             assert all(not button.icon().isNull() for button in window.nav_buttons.values())
-            artwork = (page.findChildren(HeroCanvas) if skin == "cinematic"
+            artwork = (page.findChildren(HeroCanvas) if skin in ("cinematic", "poster_wall")
                        else page.findChildren(PosterCanvas))
             assert artwork
+            assert artwork[0].illustrative and not artwork[0].artwork.isNull()
             test_image = QPixmap(400, 600)
             test_image.fill("#754b37")
             window._apply_poster_pixmap(artwork[0], test_image)
-            assert not artwork[0].artwork.isNull()
+            assert not artwork[0].illustrative and not artwork[0].artwork.isNull()
             assert not artwork[0].grab().isNull()
             overflow_by_skin[skin] = [
                 (scroll.horizontalScrollBar().maximum(), scroll.viewport().width(),
@@ -97,7 +98,7 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
         # Switching from the actual Settings control must rebuild and persist the shell.
         choices = [button for button in window.stack.currentWidget().findChildren(QPushButton)
                    if button.text() == "Folosește skinul"]
-        assert len(choices) == 2
+        assert len(choices) == 3
         choices[0].click()
         assert window.skin == "cinematic" and service.db.get_setting("ui_skin") == "cinematic"
         choices = [button for button in window.stack.currentWidget().findChildren(QPushButton)
@@ -120,7 +121,7 @@ def test_three_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeyp
         inspector = page.findChild(QStackedWidget)
         assert inspector.currentIndex() == 1
         choose = next(b for b in inspector.currentWidget().findChildren(QPushButton)
-                      if b.text() == "Aleg pentru azi")
+                      if "Aleg pentru azi" in b.text())
         choose.click()
         choice = current_today_choice_state(service.db)
         assert choice is not None and choice.movie.id == recs[1].movie.id

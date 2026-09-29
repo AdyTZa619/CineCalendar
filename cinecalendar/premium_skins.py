@@ -1,4 +1,4 @@
-"""Three selectable visual shells for the production Qt interface.
+"""Four selectable visual shells for the production Qt interface.
 
 The skin is presentation state. Recommendation rounds, exposures and user actions
 stay in the existing service and decision methods.
@@ -6,21 +6,24 @@ stay in the existing service and decision methods.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from functools import lru_cache
 import json
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QEasingCurve, QPropertyAnimation, QSize, QPointF, QRectF
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QLinearGradient, QPolygonF, QFont, QRadialGradient
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
     QVBoxLayout, QWidget, QGraphicsOpacityEffect,
 )
 
 
 SKINS = {
-    "cinematic": ("Cinematic", "Film în prim-plan, alternative într-un rând."),
-    "editorial": ("Editorial", "Afiș și explicație, cu alternative alături."),
-    "workbench": ("Workbench", "Rezultate comparabile și detalii la selecție."),
+    "cinematic": ("Cinema Immersive", "Cadru panoramic, navigare sus și selecția săptămânii."),
+    "editorial": ("Cinematheque Editorial", "Afiș mare, poveste tipografică și coloană de sugestii."),
+    "poster_wall": ("Poster Wall", "Perete de afișe, filtre și calendar lateral."),
+    "workbench": ("Decision Studio", "Compară filmele și inspectează motivele dintr-un panou lateral."),
 }
 
 PALETTES = {
@@ -30,10 +33,20 @@ PALETTES = {
     "editorial": dict(bg="#F6F1E8", surface="#FBF8F1", card="#FFFCF6", card2="#EEE6DA",
                      text="#241F1D", muted="#6D625D", border="#D5C8BB",
                      accent="#792B30", on="#FFFFFF", good="#815C35"),
+    "poster_wall": dict(bg="#101418", surface="#15191D", card="#1A2228", card2="#263039",
+                         text="#F4F1EC", muted="#B5BEC2", border="#344047",
+                         accent="#F2A263", on="#171719", good="#F6C577"),
     "workbench": dict(bg="#10191D", surface="#152126", card="#1B292F", card2="#26373D",
                      text="#EDF3F1", muted="#ADBBB9", border="#375057",
                      accent="#E3A16D", on="#201912", good="#88CCBC"),
 }
+
+
+@lru_cache(maxsize=4)
+def _fallback_art(key: str) -> QPixmap:
+    filename = {"cinematic": "immersive_scene.png", "editorial": "editorial_scene.png",
+                "poster_wall": "poster_wall_scene.png", "workbench": "studio_scene.png"}[key]
+    return QPixmap(str(Path(__file__).resolve().parent / "assets" / filename))
 
 
 def normalized_skin(value: object) -> str:
@@ -55,6 +68,13 @@ ICON_NAMES = {
     "history": "history", "settings": "settings", "metadata_doctor": "database",
     "v5_lab": "flask", "updates": "download",
 }
+
+
+def _display_nav(key: str, name: str) -> str:
+    return {"today": "Ce văd acum?", "recommendations": "Recomandări",
+            "romanian": "Recomandări românești", "romanian_list": "Filme RO · Cronologie",
+            "month": "Program calendar", "history": "Istoric",
+            "updates": "Actualizări"}.get(key, name)
 
 
 def _icon(key: str, color: str, size: int = 20) -> QIcon:
@@ -118,9 +138,10 @@ def _icon(key: str, color: str, size: int = 20) -> QIcon:
 
 
 def _nav_button(key: str, name: str, skin: str, handler, *, compact=False) -> QPushButton:
-    button = QPushButton("" if compact else name)
+    button = QPushButton("" if compact else _display_nav(key, name))
     button.setProperty("nav", True)
-    button.setIcon(_icon(key, PALETTES[skin]["accent"], 18 if compact else 17))
+    button.setIcon(_icon(key, "#F9EEE8" if skin == "editorial" else PALETTES[skin]["accent"],
+                         18 if compact else 17))
     button.setIconSize(QSize(19, 19))
     button.setToolTip(name)
     button.clicked.connect(handler)
@@ -133,8 +154,9 @@ class HeroCanvas(QFrame):
     def __init__(self, skin: str, title: str = "", year: int | None = None):
         super().__init__()
         self.skin = skin
-        self.artwork = QPixmap()
-        self.landscape = False
+        self.artwork = _fallback_art(skin)
+        self.illustrative = not self.artwork.isNull()
+        self.landscape = self.illustrative
         self.title = title
         self.year = year
         self.setObjectName("ArtworkHero")
@@ -142,6 +164,7 @@ class HeroCanvas(QFrame):
 
     def set_artwork(self, pixmap: QPixmap):
         self.artwork = pixmap
+        self.illustrative = False
         self.update()
 
     def paintEvent(self, event):
@@ -188,10 +211,15 @@ class HeroCanvas(QFrame):
                        f"{self.year or ''}  ·  CINECALENDAR")
         gradient = QLinearGradient(0, 0, self.width(), 0)
         gradient.setColorAt(0, QColor(8, 9, 11, 252))
-        gradient.setColorAt(.48, QColor(8, 9, 11, 220))
-        gradient.setColorAt(.82, QColor(8, 9, 11, 45))
-        gradient.setColorAt(1, QColor(8, 9, 11, 18))
+        gradient.setColorAt(.40, QColor(8, 9, 11, 125))
+        gradient.setColorAt(.75, QColor(8, 9, 11, 12))
+        gradient.setColorAt(1, QColor(8, 9, 11, 5))
         p.fillRect(self.rect(), gradient)
+        if self.illustrative:
+            p.setPen(QColor(255, 245, 225, 160))
+            p.setFont(QFont("Segoe UI", 8, QFont.DemiBold))
+            p.drawText(self.rect().adjusted(0, 12, -17, 0), Qt.AlignTop | Qt.AlignRight,
+                       "ILUSTRAȚIE")
         p.setPen(QPen(QColor("#5B4D3C"), 1))
         p.drawRect(self.rect().adjusted(0, 0, -1, -1))
         p.end()
@@ -201,9 +229,12 @@ class PosterCanvas(QLabel):
     """Crop loaded artwork to the card at every window size, with a useful empty state."""
 
     def __init__(self, width: int, height: int, skin: str, available: bool,
-                 title: str = "", year: int | None = None):
+                 title: str = "", year: int | None = None, fallback_kind: str | None = None):
         super().__init__()
-        self.artwork = QPixmap()
+        kind = fallback_kind or ("editorial", "poster_wall", "workbench", "cinematic")[
+            sum(ord(char) for char in title) % 4]
+        self.artwork = _fallback_art(kind)
+        self.illustrative = not self.artwork.isNull()
         self.skin = skin
         self.available = available
         self.title = title
@@ -215,6 +246,7 @@ class PosterCanvas(QLabel):
 
     def set_artwork(self, pixmap: QPixmap):
         self.artwork = pixmap
+        self.illustrative = False
         self.update()
 
     def paintEvent(self, event):
@@ -229,6 +261,22 @@ class PosterCanvas(QLabel):
                                          Qt.SmoothTransformation)
             p.drawPixmap((self.width() - scaled.width()) // 2,
                          (self.height() - scaled.height()) // 2, scaled)
+            if self.illustrative:
+                shade = QLinearGradient(0, self.height() * .42, 0, self.height())
+                shade.setColorAt(0, QColor(0, 0, 0, 0))
+                shade.setColorAt(1, QColor(0, 0, 0, 225))
+                p.fillRect(self.rect(), shade)
+                p.setPen(QColor("#FFF7EC"))
+                p.setFont(QFont("Georgia", max(14, min(26, self.width() // 10)), QFont.DemiBold))
+                p.drawText(QRectF(self.width() * .08, self.height() * .46,
+                                  self.width() * .84, self.height() * .42),
+                           Qt.TextWordWrap | Qt.AlignBottom, self.title)
+                p.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
+                p.setPen(QColor("#F4D9B4"))
+                p.drawText(QRectF(self.width() * .08, self.height() * .91,
+                                  self.width() * .84, self.height() * .07),
+                           Qt.AlignLeft | Qt.AlignVCenter,
+                           "ILUSTRAȚIE" if self.width() < 210 else "ILUSTRAȚIE · AFIȘ INDISPONIBIL")
         else:
             w, h = self.width(), self.height()
             light = self.skin == "editorial"
@@ -276,6 +324,32 @@ class PosterCanvas(QLabel):
                        Qt.AlignLeft | Qt.AlignVCenter,
                        str(self.year or "FILM") if w < 150 else
                        f"{self.year or 'FILM'}  ·  {'SE ÎNCARCĂ' if self.available else 'AFIȘ INDISPONIBIL'}")
+        p.end()
+
+
+class ScoreRing(QWidget):
+    """Show the actual estimated rating as an arc, without presenting it as a probability."""
+
+    def __init__(self, rating: float, skin: str, diameter: int = 74):
+        super().__init__()
+        self.rating = max(0.0, min(10.0, float(rating)))
+        self.color = PALETTES[skin]["accent"]
+        self.ink = PALETTES[skin]["text"]
+        self.setFixedSize(diameter, diameter)
+        self.setToolTip(f"Rating personal estimat: {self.rating:.1f} din 10")
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        d = min(self.width(), self.height())
+        radius = QRectF(6, 6, d - 12, d - 12)
+        p.setPen(QPen(QColor(self.ink).darker(250), 6, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(radius, 0, 360 * 16)
+        p.setPen(QPen(QColor(self.color), 6, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(radius, 90 * 16, -int(360 * 16 * self.rating / 10))
+        font = QFont("Segoe UI", 12 if d < 60 else 16, QFont.Bold)
+        p.setFont(font); p.setPen(QColor(self.ink))
+        p.drawText(self.rect(), Qt.AlignCenter, f"{self.rating:.1f}")
         p.end()
 
 
@@ -338,6 +412,16 @@ def _skin_preview(skin: str) -> QFrame:
         copy.addWidget(mini("CITEȘTE    →", 8, True))
         layout.addLayout(copy, 1)
         side = block(47, c['card2']); layout.addWidget(side)
+    elif skin == "poster_wall":
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(7, 7, 7, 7); layout.setSpacing(5)
+        nav = block(40, c['surface']); layout.addWidget(nav)
+        center = QVBoxLayout(); center.setSpacing(4)
+        center.addWidget(block(fill="#51402F"), 1)
+        tiles = QGridLayout(); tiles.setSpacing(3)
+        for i in range(6): tiles.addWidget(block(fill=("#384F53", "#5A4946", "#53605A")[i % 3]), i // 3, i % 3)
+        center.addLayout(tiles, 2); layout.addLayout(center, 1)
+        layout.addWidget(block(35, c['surface']))
     else:
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(7, 7, 7, 7)
@@ -372,6 +456,26 @@ def _status_widgets(window):
     window.progress.setRange(0, 0)
 
 
+def _search_visible_recommendations(window, search):
+    query = search.text().strip().casefold()
+    if not query:
+        window.show_page("recommendations")
+        return
+    today = getattr(window, "today_result", None)
+    current = ([today[0], *today[1]] if today and today[0] else [])
+    seen = set()
+    for rec in [*current, *list(getattr(window, "browse_result", []) or [])]:
+        if rec.movie.id in seen:
+            continue
+        seen.add(rec.movie.id)
+        haystack = " ".join((rec.movie.title, str(rec.movie.year or ""),
+                             " ".join(rec.movie.genres or []), rec.movie.overview or "")).casefold()
+        if query in haystack:
+            window.open_details(rec)
+            return
+    window.set_status("Niciun film din recomandările încărcate nu corespunde căutării.", False)
+
+
 def build_skin_shell(window):
     window.skin = normalized_skin(window.db.get_setting("ui_skin", "cinematic"))
     root = QWidget()
@@ -387,27 +491,30 @@ def build_skin_shell(window):
         top = QFrame()
         top.setObjectName("Topbar")
         tl = QVBoxLayout(top)
-        tl.setContentsMargins(24, 8, 24, 6)
-        tl.setSpacing(4)
+        tl.setContentsMargins(28, 5, 28, 3)
+        tl.setSpacing(1)
         first = QHBoxLayout()
-        first.addWidget(_label("◉  CineCalendar", "Brand"))
-        first.addSpacing(40)
-        first.addWidget(_label("FILME PE GUSTUL TĂU", "NavGroup"))
-        first.addStretch(1)
-        first.addWidget(window.status)
-        first.addWidget(window.progress)
-        first.addWidget(window.undo_feedback_button)
+        first.addWidget(_label("◉ CineCalendar", "Brand"), 0)
+        first.addSpacing(30)
+        for key, name in window.NAV[:7]:
+            button = _nav_button(key, name, window.skin,
+                                 lambda _=False, k=key: window.show_page(k))
+            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            window.nav_buttons[key] = button
+            first.addWidget(button, 1)
         tl.addLayout(first)
-        for chunk in (window.NAV[:7], window.NAV[7:]):
-            row = QHBoxLayout()
-            row.setSpacing(9)
-            for key, name in chunk:
-                button = _nav_button(key, name, window.skin,
-                                     lambda _=False, k=key: window.show_page(k))
-                button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-                window.nav_buttons[key] = button
-                row.addWidget(button, 1)
-            tl.addLayout(row)
+        row = QHBoxLayout()
+        row.addSpacing(282)
+        for key, name in window.NAV[7:]:
+            button = _nav_button(key, name, window.skin,
+                                 lambda _=False, k=key: window.show_page(k))
+            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            window.nav_buttons[key] = button
+            row.addWidget(button, 1)
+        tl.addLayout(row)
+        window.status.hide()
+        window.progress.hide()
+        window.undo_feedback_button.hide()
         outer.addWidget(top)
         outer.addWidget(window.stack, 1)
         return
@@ -417,14 +524,17 @@ def build_skin_shell(window):
     outer.setSpacing(0)
     side = QFrame()
     side.setObjectName("Sidebar")
-    side.setFixedWidth(260 if window.skin == "editorial" else 285)
+    side.setFixedWidth(272 if window.skin == "editorial" else 294 if window.skin == "poster_wall" else 258)
     sl = QVBoxLayout(side)
-    sl.setContentsMargins(15 if window.skin == "editorial" else 22, 25, 15, 15)
+    sl.setContentsMargins(16 if window.skin == "editorial" else 20, 14, 16, 12)
     sl.setSpacing(4)
-    sl.addWidget(_label("◉  CineCalendar", "Brand"))
-    sl.addWidget(_label("cinema pe gustul tău" if window.skin == "workbench"
-                        else "Filme bune. La momentul potrivit.", "Muted"))
-    sl.addSpacing(26)
+    if window.skin == "editorial":
+        sl.addSpacing(38)
+    else:
+        sl.addWidget(_label("◉  CineCalendar", "Brand"))
+        if window.skin == "poster_wall":
+            sl.addWidget(_label("Filmele potrivite, la momentul potrivit.", "Muted"))
+        sl.addSpacing(20)
     nav_scroll = QScrollArea()
     nav_scroll.setObjectName("SidebarNav")
     nav_scroll.setWidgetResizable(True)
@@ -435,10 +545,12 @@ def build_skin_shell(window):
     nl = QVBoxLayout(nav_body)
     nl.setContentsMargins(0, 0, 3, 0)
     nl.setSpacing(2)
-    for index, (key, name) in enumerate(window.NAV):
-        if window.skin in ("editorial", "workbench") and index in (0, 4, 7, 10):
-            nl.addWidget(_label({0: "DESCOPERĂ", 4: "CONTUL MEU", 7: "PLANIFICĂ",
-                                  10: "INSTRUMENTE"}[index], "NavGroup"))
+    for key, name in window.NAV:
+        if key in ("today", "profile", "calendar", "metadata_doctor", "updates"):
+            group = {"today":"DESCOPERĂ", "profile":"CONTUL MEU",
+                     "calendar":"PLANIFICĂ", "metadata_doctor":"INSTRUMENTE" if window.skin != "workbench" else "ÎNTREȚINERE",
+                     "updates":"APLICAȚIE"}[key]
+            nl.addWidget(_label(group, "NavGroup"))
         button = _nav_button(key, name, window.skin,
                              lambda _=False, k=key: window.show_page(k))
         nl.addWidget(button)
@@ -452,7 +564,26 @@ def build_skin_shell(window):
     version = window.windowTitle().removeprefix("CineCalendar ").split(" —", 1)[0]
     sl.addWidget(_label("v" + version if version else "CineCalendar"))
     outer.addWidget(side)
-    outer.addWidget(window.stack, 1)
+    body = QWidget(); body_layout = QVBoxLayout(body)
+    body_layout.setContentsMargins(0, 0, 0, 0); body_layout.setSpacing(0)
+    utility = QFrame(); utility.setObjectName("UtilityBar")
+    ul = QHBoxLayout(utility); ul.setContentsMargins(16, 8, 22, 8); ul.setSpacing(13)
+    if window.skin == "editorial":
+        ul.addWidget(_label("CineCalendar", "UtilityBrand"))
+        ul.addSpacing(12)
+    search = QLineEdit(); search.setPlaceholderText("Caută în recomandările încărcate…")
+    search.setClearButtonEnabled(True)
+    search.returnPressed.connect(lambda: _search_visible_recommendations(window, search))
+    ul.addWidget(search, 4)
+    ul.addStretch(1)
+    sync = _label("●  Profil local", "SyncLabel")
+    ul.addWidget(sync)
+    ul.addWidget(window.status)
+    ul.addWidget(window.progress)
+    ul.addWidget(window.undo_feedback_button)
+    body_layout.addWidget(utility)
+    body_layout.addWidget(window.stack, 1)
+    outer.addWidget(body, 1)
 
 
 def skin_qss(skin: str) -> str:
@@ -468,8 +599,12 @@ def skin_qss(skin: str) -> str:
         QMainWindow, QScrollArea, QScrollArea>QWidget>QWidget {{ background:{c['bg']}; }}
         QLabel {{ background:transparent; }}
         QFrame#Sidebar, QFrame#Topbar, QFrame#IconRail {{ background:{c['surface']}; border-color:{c['border']}; }}
-        QFrame#Sidebar {{ border-right:1px solid {c['border']}; }}
+        QFrame#Sidebar {{ background:{'#4C171C' if editorial else c['surface']}; border-right:1px solid {c['border']}; }}
         QFrame#Topbar {{ border-bottom:1px solid {c['border']}; }}
+        QFrame#UtilityBar {{ background:{c['surface']}; border-bottom:1px solid {c['border']}; }}
+        QLabel#UtilityBrand {{ font-family:Georgia; font-size:29px; font-weight:750; color:{c['accent']}; }}
+        QLabel#SyncLabel {{ color:{c['good']}; font-size:12px; }}
+        QFrame#Sidebar QFrame#PremiumCard {{ background:{c['card2']}; }}
         QFrame#IconRail {{ border-right:1px solid {c['border']}; }}
         QFrame#PageMasthead {{ border:{'0' if editorial else '1px solid ' + c['border']};
             border-bottom:{'2px solid ' + c['accent'] if editorial else '1px solid ' + c['border']};
@@ -501,6 +636,11 @@ def skin_qss(skin: str) -> str:
                              border-radius:6px; font-size:13px; }}
         QLabel#Eyebrow {{ color:{c['accent']}; font-size:11px; font-weight:750; letter-spacing:2px; }}
         QLabel#HeroDescription {{ font-family:{title_font}; font-size:17px; line-height:1.3; }}
+        QLabel#EditorialTitle {{ font-family:Georgia; font-size:67px; font-weight:600; color:{c['text']}; }}
+        QLabel#EditorialBody {{ font-family:Georgia; font-size:17px; color:{c['text']}; }}
+        QLabel#EditorialMeta {{ font-family:Georgia; font-size:20px; color:{c['muted']}; }}
+        QFrame#EditorialSuggestion {{ border-bottom:1px solid {c['border']}; }}
+        QFrame#PosterTileFoot {{ background:{c['surface']}; }}
         QFrame#AlternativeCard {{ background:{c['card']}; border:1px solid {c['border']}; border-radius:8px; }}
         QFrame#AlternativeCard:hover {{ border-color:{c['accent']}; }}
         QFrame#SkeletonBlock {{ background:{c['card2']}; border:0; border-radius:6px; }}
@@ -532,7 +672,20 @@ def skin_qss(skin: str) -> str:
         QPushButton[navActive='true'] {{ text-align:left; background:{c['card2']};
             color:{c['text']}; border-left:3px solid {c['accent']}; font-weight:750; padding:10px 12px; }}
         QFrame#Topbar QPushButton[nav='true'], QFrame#Topbar QPushButton[navActive='true'] {{
-            text-align:center; font-size:12px; padding:5px 3px; }}
+            text-align:center; font-size:13px; padding:9px 3px; border-radius:0; }}
+        QFrame#Topbar QPushButton[navActive='true'] {{ border:0; border-bottom:3px solid {c['accent']}; background:transparent; color:{c['accent']}; }}
+        QFrame#Sidebar QPushButton[nav='true'], QFrame#Sidebar QPushButton[navActive='true'] {{ padding:10px 12px; font-size:14px; color:{'#F9EEE8' if editorial else c['muted']}; }}
+        QFrame#Sidebar QPushButton[navActive='true'] {{ background:{'#783037' if editorial else c['card2']}; color:{'#FFFFFF' if editorial else c['text']}; }}
+        QFrame#Sidebar QLabel#NavGroup {{ letter-spacing:2px; margin-top:21px; margin-bottom:5px; color:{'#E7C9C5' if editorial else c['muted']}; }}
+        QFrame#Sidebar QLabel#Muted {{ color:{'#E7C9C5' if editorial else c['muted']}; }}
+        QFrame#Sidebar QLabel#Brand {{ color:{c['accent']}; }}
+        QFrame#UtilityBar QLineEdit {{ background:{c['card2']}; border-radius:6px; padding:9px 14px; }}
+        QFrame#PosterFeature, QFrame#StudioInspector, QFrame#StudioChoice, QFrame#WeekDock {{ background:{c['card']}; border:1px solid {c['border']}; border-radius:{radius}; }}
+        QFrame#StudioChoice[selected='true'] {{ border:2px solid {c['accent']}; background:{c['card2']}; }}
+        QFrame#StudioChoice QLabel#ScoreLarge {{ color:{c['accent']}; }}
+        QFrame#PosterTile {{ background:{c['surface']}; border:1px solid {c['border']}; border-radius:9px; }}
+        QFrame#PosterTile:hover {{ border-color:{c['accent']}; }}
+        QFrame#PosterWallRail {{ background:{c['surface']}; border-left:1px solid {c['border']}; }}
         QLineEdit, QSpinBox, QComboBox {{ background:{c['card2']}; color:{c['text']};
             border:1px solid {c['border']}; border-radius:{radius}; padding:7px; }}
         QComboBox QAbstractItemView {{ background:{c['surface']}; color:{c['text']};
@@ -562,10 +715,10 @@ def _film_title(rec) -> str:
     return rec.movie.title + (f"  ({rec.movie.year})" if rec.movie.year else "")
 
 
-def _poster(window, rec, width, height, artwork_url=None):
+def _poster(window, rec, width, height, artwork_url=None, fallback_kind=None):
     source = artwork_url or rec.movie.poster_url
     poster = PosterCanvas(width, height, normalized_skin(window.skin), bool(source),
-                          rec.movie.title, rec.movie.year)
+                          rec.movie.title, rec.movie.year, fallback_kind)
     if source:
         window.load_poster_async(poster, source, rec.movie.imdb_id or str(rec.movie.id))
     return poster
@@ -598,19 +751,19 @@ def _film_panel(window, rec, *, cinematic=False):
     skin = normalized_skin(window.skin)
     if cinematic:
         box = HeroCanvas(skin, rec.movie.title, rec.movie.year)
-        box.setMinimumHeight(405)
+        box.setMinimumHeight(500)
         layout = QHBoxLayout(box)
-        layout.setContentsMargins(40, 34, 28, 30)
+        layout.setContentsMargins(46, 38, 28, 38)
         layout.setSpacing(22)
         info = QVBoxLayout()
         info.setSpacing(13)
         info.addStretch(1)
-        info.addWidget(_label("RECOMANDAREA TA PENTRU ASTĂZI", "Eyebrow"))
-        title = _label(_film_title(rec), "HeroTitle", True)
-        title.setStyleSheet("font-family:Georgia;font-size:45px;color:#F8EAD1;")
+        info.addWidget(_label("━  ALEGEREA ZILEI", "Eyebrow"))
+        title = _label(rec.movie.title, "HeroTitle", True)
+        title.setStyleSheet("font-family:Georgia;font-size:68px;color:#FFF9EE;")
         info.addWidget(title)
         info.addWidget(_label("   ·   ".join(window.movie_chips(rec.movie, 4)), "Muted", True))
-        reason = _label(window.human_reason(rec), "HeroDescription", True)
+        reason = _label(rec.movie.overview[:170] if rec.movie.overview else window.human_reason(rec), "HeroDescription", True)
         info.addWidget(reason)
         info.addSpacing(8)
         layout.addLayout(info, 3)
@@ -654,19 +807,22 @@ def _film_panel(window, rec, *, cinematic=False):
     skip = _action(window, "Alt film", lambda _=False, mid=rec.movie.id: window.skip_decision(mid))
     actions = QHBoxLayout() if cinematic else QGridLayout()
     actions.setSpacing(9)
-    for index, button in enumerate((choose, details, feedback, skip)):
+    visible_buttons = (choose, details, skip) if cinematic else (choose, details, feedback, skip)
+    for index, button in enumerate(visible_buttons):
         if cinematic:
             actions.addWidget(button)
         else:
             actions.addWidget(button, index // 2, index % 2)
     info.addLayout(actions)
     if cinematic:
+        feedback.setParent(box)
+        feedback.hide()
         info.addSpacing(13)
         reliability = window.reliability_gate.evaluate(rec)
         info.addWidget(_label(f"{reliability.label}  ·  Estimare personală {rec.score.predicted_rating:.1f}/10", "Muted", True))
         info.addStretch(1)
         backdrop = _cached_backdrop_url(window, rec)
-        box.landscape = bool(backdrop)
+        box.landscape = bool(backdrop) or not (backdrop or rec.movie.poster_url)
         artwork_url = backdrop or rec.movie.poster_url
         if artwork_url:
             window.load_poster_async(box, artwork_url,
@@ -772,6 +928,12 @@ def _quick_controls(window):
     mood.currentIndexChanged.connect(lambda _=0: _set_filter(window, "chooser_mood", mood.currentData()))
     filters.addWidget(mood)
     filters.addStretch(1)
+    selected = getattr(window, "today_result", None)
+    if selected and selected[0]:
+        feedback = QPushButton("Nu acum / motiv")
+        feedback.clicked.connect(lambda _=False, mid=selected[0].movie.id, button=feedback:
+                                 window.contextual_feedback_menu(mid, button))
+        filters.addWidget(feedback)
     layout.addLayout(filters)
     return bar
 
@@ -779,6 +941,309 @@ def _quick_controls(window):
 def _set_filter(window, name, value):
     window.db.set_setting(name, str(value or ""))
     window.show_page("today")
+
+
+def _ro_short_date(day):
+    months = ("ian.", "feb.", "mar.", "apr.", "mai", "iun.", "iul.",
+              "aug.", "sept.", "oct.", "nov.", "dec.")
+    return f"{day.day} {months[day.month - 1]}"
+
+
+def _week_strip(window, *, dock=False):
+    box = QFrame(); box.setObjectName("WeekDock" if dock else "PremiumCard")
+    layout = QHBoxLayout(box) if dock else QVBoxLayout(box)
+    layout.setContentsMargins(16, 12, 16, 12); layout.setSpacing(8)
+    today = date.today(); monday = today - timedelta(days=today.weekday())
+    if dock:
+        lead = QVBoxLayout()
+        lead.addWidget(_label("Săptămâna aceasta", "CardTitle"))
+        lead.addWidget(_label(f"{_ro_short_date(monday)} – "
+                              f"{_ro_short_date(monday + timedelta(days=6))} {today.year}", "Muted"))
+        layout.addLayout(lead)
+    else:
+        layout.addWidget(_label("Săptămâna la film", "CardTitle"))
+    days = QHBoxLayout(); days.setSpacing(5)
+    for i, name in enumerate(("Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du")):
+        current = monday + timedelta(days=i)
+        b = _action(window, f"{name}\n{current.day}", lambda _=False: window.show_page("calendar"),
+                    current == today)
+        b.setMinimumHeight(52 if dock else 48)
+        days.addWidget(b, 1)
+    layout.addLayout(days, 1)
+    layout.addWidget(_action(window, "Deschide calendarul  →", lambda: window.show_page("calendar")))
+    return box
+
+
+def _poster_tile(window, rec, *, height=260, featured=False):
+    box = QFrame(); box.setObjectName("PosterTile")
+    layout = QVBoxLayout(box); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+    image = _poster(window, rec, 155, height)
+    image.setMinimumWidth(1)
+    layout.addWidget(image)
+    foot = QFrame(); foot.setObjectName("PosterTileFoot")
+    fl = QVBoxLayout(foot); fl.setContentsMargins(12, 8, 12, 8); fl.setSpacing(3)
+    fl.addWidget(_label(rec.movie.title, "CardTitle", True))
+    fl.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 3)), "Muted", True))
+    row = QHBoxLayout(); row.addWidget(ScoreRing(rec.score.predicted_rating, window.skin, 42))
+    row.addStretch(1)
+    row.addWidget(_action(window, "Detalii", lambda _=False, r=rec: window.open_details(r)))
+    row.addWidget(_action(window, "Aleg", lambda _=False, mid=rec.movie.id: window.choose_decision(mid)))
+    fl.addLayout(row)
+    layout.addWidget(foot)
+    if featured:
+        box.setProperty("featured", True)
+    return box
+
+
+def _discovery_tile(window, title, subtitle, destination, art):
+    box = QFrame(); box.setObjectName("PosterTile")
+    layout = QVBoxLayout(box); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+    cover = PosterCanvas(155, 195, window.skin, False, title, fallback_kind=art)
+    cover.setMinimumWidth(1); layout.addWidget(cover)
+    foot = QFrame(); foot.setObjectName("PosterTileFoot")
+    details = QVBoxLayout(foot); details.setContentsMargins(12, 8, 12, 8)
+    details.addWidget(_label(subtitle, "Muted", True))
+    details.addWidget(_action(window, "Explorează  →", lambda: window.show_page(destination)))
+    layout.addWidget(foot)
+    return box
+
+
+def _poster_feature(window, rec):
+    box = HeroCanvas("poster_wall", rec.movie.title, rec.movie.year)
+    box.setObjectName("PosterFeature")
+    box.setMinimumHeight(214); box.setMaximumHeight(245)
+    row = QHBoxLayout(box); row.setContentsMargins(30, 18, 28, 18)
+    copy = QVBoxLayout(); copy.setSpacing(4)
+    copy.addWidget(_label("★  ALEGEREA SERII", "Eyebrow"))
+    copy.addWidget(_label(rec.movie.title, "HeroTitle", True))
+    copy.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 3)), "Muted", True))
+    copy.addWidget(_label(window.human_reason(rec), "HeroDescription", True))
+    actions = QHBoxLayout()
+    actions.addWidget(_action(window, "▶  Aleg pentru azi", lambda _=False, mid=rec.movie.id: window.choose_decision(mid), True))
+    actions.addWidget(_action(window, "De ce acesta?", lambda _=False, r=rec: window.open_details(r)))
+    actions.addWidget(_action(window, "Alt film", lambda _=False, mid=rec.movie.id: window.skip_decision(mid)))
+    feedback = QPushButton("Nu acum / motiv")
+    feedback.clicked.connect(lambda _=False, mid=rec.movie.id, button=feedback:
+                             window.contextual_feedback_menu(mid, button))
+    actions.addWidget(feedback)
+    copy.addLayout(actions); row.addLayout(copy, 3); row.addStretch(2)
+    backdrop = _cached_backdrop_url(window, rec)
+    box.landscape = bool(backdrop) or not (backdrop or rec.movie.poster_url)
+    source = backdrop or rec.movie.poster_url
+    if source:
+        window.load_poster_async(box, source, (rec.movie.imdb_id or str(rec.movie.id)) + (":backdrop" if backdrop else ""))
+    return box
+
+
+def _poster_wall(window, primary, backups):
+    content = window.today_content
+    content.addWidget(_poster_feature(window, primary))
+    narrow = window.width() < 1450
+    body = QVBoxLayout() if narrow else QHBoxLayout()
+    body.setSpacing(16)
+    center = QVBoxLayout(); center.setSpacing(10)
+    title = QHBoxLayout()
+    title.addWidget(_label("Descoperă pentru tine", "PageTitle")); title.addStretch(1)
+    title.addWidget(_action(window, "Toate recomandările  →", lambda: window.show_page("recommendations")))
+    center.addLayout(title)
+    filters = QHBoxLayout()
+    for caption, value in (("Toate", "decide"), ("Mai sigur", "safe"),
+                           ("Surprinde-mă", "surprise"), ("Sub 2 ore", "short")):
+        filters.addWidget(_action(window, caption,
+                lambda _=False, mode=value: window.set_decision_mode(mode),
+                value == window.decision_mode))
+    filters.addStretch(1); center.addLayout(filters)
+    window._poster_filter_row = filters
+    extras = [r for r in list(getattr(window, "browse_result", []) or [])
+              if r.movie.id not in {primary.movie.id, *(r.movie.id for r in backups)}]
+    items = [primary, *backups, *extras][:6]
+    grid = QGridLayout(); grid.setSpacing(12)
+    for i, rec in enumerate(items):
+        grid.addWidget(_poster_tile(window, rec, height=195, featured=i == 0), i // 3, i % 3)
+    destinations = (("Mai multe filme", "Toate recomandările din catalog", "recommendations", "cinematic"),
+                    ("Cinema românesc", "Selecția de filme românești", "romanian", "editorial"),
+                    ("Lista mea", "Filmele salvate de tine", "watchlist", "workbench"))
+    for i in range(len(items), 6):
+        title, subtitle, destination, art = destinations[(i - len(items)) % len(destinations)]
+        grid.addWidget(_discovery_tile(window, title, subtitle, destination, art), i // 3, i % 3)
+    center.addLayout(grid); center.addStretch(1)
+    center_wrap = QWidget(); center_wrap.setLayout(center)
+    body.addWidget(center_wrap, 7 if not narrow else 0)
+    rail = QFrame(); rail.setObjectName("PosterWallRail")
+    rl = QVBoxLayout(rail); rl.setContentsMargins(16, 8, 16, 16); rl.setSpacing(16)
+    rl.addWidget(_week_strip(window))
+    rl.addWidget(_calendar_context(window, primary))
+    rl.addWidget(_label("Recomandări românești", "CardTitle"))
+    rl.addWidget(_label("Explorează filmele românești verificate din catalog.", "Muted", True))
+    rl.addWidget(_action(window, "Vezi recomandările românești  →", lambda: window.show_page("romanian")))
+    rl.addStretch(1)
+    body.addWidget(rail, 3 if not narrow else 0)
+    wrap = QWidget(); wrap.setLayout(body); content.addWidget(wrap)
+
+
+def _studio_choice(window, rec, index, stack, buttons):
+    box = QFrame(); box.setObjectName("StudioChoice")
+    row = QHBoxLayout(box); row.setContentsMargins(12, 10, 14, 10); row.setSpacing(12)
+    radio = _action(window, "◉" if index == 0 else "○",
+                    lambda _=False, i=index: _select_studio(stack, buttons, i))
+    radio.setFixedWidth(34); row.addWidget(radio)
+    art = _poster(window, rec, 165, 120, _cached_backdrop_url(window, rec))
+    art.setFixedWidth(165); row.addWidget(art)
+    details = QVBoxLayout(); details.setSpacing(4)
+    details.addWidget(_label(rec.movie.title, "CardTitle", True))
+    details.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 3)), "Muted", True))
+    details.addWidget(_label(window.human_reason(rec)[:110], "Muted", True))
+    details.addStretch(1); row.addLayout(details, 4)
+    row.addWidget(ScoreRing(rec.score.predicted_rating, window.skin, 72))
+    select = _action(window, "Selectează", lambda _=False, i=index: _select_studio(stack, buttons, i))
+    row.addWidget(select)
+    buttons.append((box, radio, select))
+    return box
+
+
+def _select_studio(stack, buttons, index):
+    stack.setCurrentIndex(index)
+    for i, (box, radio, select) in enumerate(buttons):
+        box.setProperty("selected", i == index)
+        radio.setText("◉" if i == index else "○")
+        select.setProperty("accent", i == index)
+        for widget in (box, select):
+            widget.style().unpolish(widget); widget.style().polish(widget)
+
+
+def _studio_inspector(window, rec):
+    box = QFrame(); box.setObjectName("StudioInspector")
+    layout = QVBoxLayout(box); layout.setContentsMargins(16, 16, 16, 16); layout.setSpacing(8)
+    art = _poster(window, rec, 260, 205, _cached_backdrop_url(window, rec))
+    art.setMinimumWidth(1); layout.addWidget(art)
+    headline = QHBoxLayout()
+    headline.addWidget(_label(rec.movie.title, "HeroTitle", True), 1)
+    headline.addWidget(ScoreRing(rec.score.predicted_rating, window.skin, 82))
+    layout.addLayout(headline)
+    layout.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 4)), "Muted", True))
+    layout.addWidget(_label("De ce ți-l recomandăm?", "CardTitle"))
+    layout.addWidget(_label(window.human_reason(rec), "Muted", True))
+    evidence = QHBoxLayout(); evidence.setSpacing(7)
+    for title, value in (("ESTIMARE", f"{rec.score.predicted_rating:.1f}/10"),
+                         ("ÎNCREDERE", f"{rec.score.confidence:.0%}"),
+                         ("CONTEXT", rec.score.calendar_reason or "Fără ajustare")):
+        signal = QFrame(); signal.setObjectName("PremiumCard")
+        column = QVBoxLayout(signal); column.setContentsMargins(9, 7, 9, 7)
+        column.addWidget(_label(title, "Eyebrow"))
+        column.addWidget(_label(value, "Muted", True))
+        evidence.addWidget(signal, 1)
+    layout.addLayout(evidence)
+    if rec.movie.overview:
+        layout.addWidget(_label("Sinopsis", "CardTitle"))
+        layout.addWidget(_label(rec.movie.overview[:360], "Muted", True))
+    else:
+        layout.addWidget(_label("Sinopsisul va apărea după completarea metadatelor.", "Muted", True))
+    layout.addStretch(1)
+    row = QHBoxLayout()
+    row.addWidget(_action(window, "▶  Aleg pentru azi", lambda _=False, mid=rec.movie.id: window.choose_decision(mid), True))
+    row.addWidget(_action(window, "Detalii", lambda _=False, r=rec: window.open_details(r)))
+    layout.addLayout(row)
+    row2 = QHBoxLayout()
+    row2.addWidget(_action(window, "Alt film", lambda _=False, mid=rec.movie.id: window.skip_decision(mid)))
+    feedback = QPushButton("Nu acum / motiv")
+    feedback.clicked.connect(lambda _=False, mid=rec.movie.id, button=feedback: window.contextual_feedback_menu(mid, button))
+    row2.addWidget(feedback); layout.addLayout(row2)
+    return box
+
+
+def _decision_studio(window, primary, backups):
+    content = window.today_content
+    heading = QHBoxLayout()
+    heading.addWidget(_label("◎", "ScoreLarge"))
+    heading.addWidget(_label("Alegerea serii", "PageTitle")); heading.addStretch(1)
+    for caption, mode in (("✦  Recomandări pentru azi", "decide"),
+                          ("☷  Comparație detaliată", "safe"), ("ϟ  Decizie rapidă", "short")):
+        heading.addWidget(_action(window, caption, lambda _=False, value=mode: window.set_decision_mode(value),
+                                  window.decision_mode == mode))
+    head = QWidget(); head.setLayout(heading); content.addWidget(head)
+    row = QHBoxLayout(); row.setSpacing(14)
+    choices = QVBoxLayout(); choices.setSpacing(8)
+    inspector = QStackedWidget(); buttons = []
+    for i, rec in enumerate([primary, *backups]):
+        inspector.addWidget(_studio_inspector(window, rec))
+        choices.addWidget(_studio_choice(window, rec, i, inspector, buttons))
+    more = QFrame(); more.setObjectName("StudioChoice")
+    mr = QHBoxLayout(more); mr.setContentsMargins(16, 10, 16, 10)
+    illustration = PosterCanvas(165, 115, window.skin, False, "Descoperă", fallback_kind="workbench")
+    illustration.setFixedWidth(165); mr.addWidget(illustration)
+    summary = QVBoxLayout()
+    summary.addWidget(_label("Vrei să compari mai multe?", "CardTitle", True))
+    summary.addWidget(_label("Deschide selecția completă de filme potrivite.", "Muted", True))
+    summary.addStretch(1)
+    mr.addLayout(summary, 1)
+    mr.addWidget(_action(window, "Vezi toate  →", lambda: window.show_page("recommendations")))
+    choices.addWidget(more)
+    choices.addStretch(1)
+    left = QWidget(); left.setLayout(choices)
+    row.addWidget(left, 6); row.addWidget(inspector, 4)
+    wrap = QWidget(); wrap.setLayout(row); content.addWidget(wrap)
+    _select_studio(inspector, buttons, 0)
+    content.addWidget(_week_strip(window, dock=True))
+
+
+def _editorial_spread(window, primary, backups):
+    content = window.today_content
+    narrow = window.width() < 1400
+    columns = QVBoxLayout() if narrow else QHBoxLayout()
+    columns.setSpacing(24)
+    top = QHBoxLayout() if narrow else columns
+    top.setSpacing(24)
+    poster = _poster(window, primary, 300 if narrow else 390, 650 if narrow else 870,
+                     fallback_kind="editorial")
+    poster.setMinimumWidth(300)
+    top.addWidget(poster, 39)
+    story = QVBoxLayout(); story.setSpacing(13)
+    story.addWidget(_label("CÂND TRECUTUL REVINE,\nNICI DRUMUL NU MAI E ACELAȘI.", "Eyebrow", True))
+    story.addSpacing(17)
+    story.addWidget(_label(primary.movie.title, "EditorialTitle", True))
+    story.addWidget(_label(" · ".join(window.movie_chips(primary.movie, 4)), "EditorialMeta", True))
+    if primary.movie.overview:
+        story.addWidget(_label(primary.movie.overview[:560], "EditorialBody", True))
+    story.addSpacing(8)
+    story.addWidget(_label("De ce ți-l recomandăm?", "SectionTitle"))
+    story.addWidget(_label(window.human_reason(primary), "EditorialBody", True))
+    if primary.score.calendar_reason:
+        story.addWidget(_label(primary.score.calendar_reason, "Muted", True))
+    story.addStretch(1)
+    story.addWidget(_action(window, "▶  Aleg pentru azi", lambda _=False, mid=primary.movie.id: window.choose_decision(mid), True))
+    controls = QHBoxLayout()
+    controls.addWidget(_action(window, "Alt film", lambda _=False, mid=primary.movie.id: window.skip_decision(mid)))
+    controls.addWidget(_action(window, "Detalii", lambda _=False, r=primary: window.open_details(r)))
+    feedback = QPushButton("Nu acum / motiv")
+    feedback.clicked.connect(lambda _=False, mid=primary.movie.id, b=feedback: window.contextual_feedback_menu(mid, b))
+    controls.addWidget(feedback)
+    story.addLayout(controls)
+    middle = QWidget(); middle.setLayout(story); top.addWidget(middle, 31)
+    side = QVBoxLayout(); side.setSpacing(14)
+    side.addWidget(_label("ALTE SUGESTII PENTRU AZI", "Eyebrow"))
+    for rec in backups[:2]:
+        card = QFrame(); card.setObjectName("EditorialSuggestion")
+        row = QHBoxLayout(card); row.setContentsMargins(0, 0, 0, 10); row.setSpacing(12)
+        art = _poster(window, rec, 120, 212)
+        art.setFixedWidth(120); row.addWidget(art)
+        description = QVBoxLayout()
+        description.addWidget(_label(rec.movie.title, "CardTitle", True))
+        description.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 3)), "Muted", True))
+        description.addWidget(_label(rec.movie.overview[:145] if rec.movie.overview else window.human_reason(rec)[:145], "EditorialBody", True))
+        description.addStretch(1)
+        description.addWidget(_action(window, "Vezi detalii  ›", lambda _=False, r=rec: window.open_details(r)))
+        row.addLayout(description, 1)
+        side.addWidget(card)
+    context = _calendar_context(window, primary)
+    side.addWidget(context)
+    side.addStretch(1)
+    right = QWidget(); right.setLayout(side)
+    if narrow:
+        columns.addLayout(top)
+        columns.addWidget(right)
+    else:
+        columns.addWidget(right, 30)
+    wrap = QWidget(); wrap.setLayout(columns); content.addWidget(wrap)
 
 
 def render_skin_today(window, primary, backups):
@@ -796,70 +1261,34 @@ def render_skin_today(window, primary, backups):
     skin = normalized_skin(getattr(window, "skin", None))
     if skin == "cinematic":
         content.addWidget(_film_panel(window, primary, cinematic=True))
-        if backups:
-            heading = QHBoxLayout()
-            heading.addWidget(_label("Alte recomandări pentru tine", "SectionTitle"))
-            heading.addStretch(1)
-            more = _action(window, "Vezi toate recomandările  →", lambda: window.show_page("recommendations"))
-            heading.addWidget(more)
-            header = QWidget(); header.setLayout(heading); content.addWidget(header)
-            row = QHBoxLayout()
-            row.setSpacing(14)
-            for i, rec in enumerate(backups[:2], 2):
-                row.addWidget(_alternative(window, rec, i), 1)
-            wrap = QWidget()
-            wrap.setLayout(row)
-            content.addWidget(wrap)
-    elif skin == "editorial":
-        narrow = window.width() < 1400
-        row = QVBoxLayout() if narrow else QHBoxLayout()
-        row.setSpacing(18)
-        row.addWidget(_film_panel(window, primary), 0 if narrow else 7)
-        side = QFrame()
-        side.setObjectName("PremiumCard")
-        sl = QVBoxLayout(side)
-        sl.setContentsMargins(15, 18, 15, 16)
-        sl.setSpacing(14)
-        sl.addWidget(_label("ALTERNATIVE PENTRU DISEARĂ", "Eyebrow", True))
-        for i, rec in enumerate(backups[:2], 2):
-            sl.addWidget(_alternative(window, rec, i, variant="editorial"))
-        sl.addWidget(_calendar_context(window, primary))
-        see_all = _action(window, "Toate recomandările  →", lambda: window.show_page("recommendations"))
-        sl.addWidget(see_all)
-        sl.addStretch(1)
-        row.addWidget(side, 0 if narrow else 3)
-        wrap = QWidget()
-        wrap.setLayout(row)
-        content.addWidget(wrap)
-    else:
-        inspector = QStackedWidget()
-        buttons = []
-        for i, rec in enumerate(visible, 1):
-            inspector.addWidget(_film_panel(window, rec))
-        inspector.setMinimumHeight(405)
-        content.addWidget(inspector)
         heading = QHBoxLayout()
-        heading.addWidget(_label("Alternative pentru azi", "SectionTitle"))
+        heading.addWidget(_label("Și alte recomandări pentru această săptămână", "SectionTitle"))
         heading.addStretch(1)
-        heading.addWidget(_action(window, "Vezi toate  →", lambda: window.show_page("recommendations")))
-        head = QWidget(); head.setLayout(heading); content.addWidget(head)
-        row = QHBoxLayout()
-        row.setSpacing(12)
-        for i, rec in enumerate(visible, 1):
-            selector = _alternative(window, rec, i, variant="workbench")
-            pick = _action(window, "Selectează", lambda _=False, index=i-1: _select(inspector, buttons, index))
-            selector.layout().itemAt(1).layout().addWidget(pick)
-            buttons.append(pick)
-            row.addWidget(selector, 1)
-        context = _calendar_context(window, primary)
-        if window.width() >= 1500:
-            row.addWidget(context, 1)
+        monday = date.today() - timedelta(days=date.today().weekday())
+        heading.addWidget(_label(f"{_ro_short_date(monday)} – "
+                                  f"{_ro_short_date(monday + timedelta(days=6))} {date.today().year}", "Muted"))
+        heading.addWidget(_action(window, "‹", lambda: window.show_page("calendar")))
+        heading.addWidget(_action(window, "›", lambda: window.show_page("calendar")))
+        header = QWidget(); header.setLayout(heading); content.addWidget(header)
+        row = QHBoxLayout(); row.setSpacing(12)
+        extras = [r for r in list(getattr(window, "browse_result", []) or [])
+                  if r.movie.id not in {primary.movie.id, *(r.movie.id for r in backups)}]
+        for i, rec in enumerate([primary, *backups, *extras][:4]):
+            row.addWidget(_poster_tile(window, rec, height=255, featured=i == 0), 1)
+        if not extras:
+            more = QFrame(); more.setObjectName("PosterTile")
+            ml = QVBoxLayout(more); ml.setContentsMargins(20, 20, 20, 20)
+            ml.addWidget(_label("Continuă descoperirea", "CardTitle", True)); ml.addStretch(1)
+            ml.addWidget(_label("Selecția completă îți arată mai multe filme din catalog.", "Muted", True))
+            ml.addWidget(_action(window, "Vezi toate  →", lambda: window.show_page("recommendations")))
+            row.addWidget(more, 1)
         wrap = QWidget(); wrap.setLayout(row); content.addWidget(wrap)
-        if window.width() < 1500:
-            content.addWidget(context)
-        inspector.setProperty("revealOnSelect", False)
-        _select(inspector, buttons, 0)
-    content.addWidget(_quick_controls(window))
+    elif skin == "editorial":
+        _editorial_spread(window, primary, backups)
+    elif skin == "poster_wall":
+        _poster_wall(window, primary, backups)
+    else:
+        _decision_studio(window, primary, backups)
     content.addStretch(1)
 
 
@@ -957,8 +1386,9 @@ def install_premium_skins(window_cls) -> None:
         layout.setContentsMargins(20, 18, 20, 18)
         layout.addWidget(_label("Aspectul aplicației", "SectionTitle"))
         layout.addWidget(_label("Alege cum sunt așezate meniurile și recomandările. Schimbarea se aplică imediat și se păstrează după repornire.", "Muted", True))
-        cards = QHBoxLayout()
-        for key, (name, description) in SKINS.items():
+        cards = QGridLayout()
+        cards.setSpacing(12)
+        for index, (key, (name, description)) in enumerate(SKINS.items()):
             item = QFrame()
             item.setObjectName("PremiumCard")
             column = QVBoxLayout(item)
@@ -970,7 +1400,7 @@ def install_premium_skins(window_cls) -> None:
                              key == self.skin)
             column.addStretch(1)
             column.addWidget(button)
-            cards.addWidget(item, 1)
+            cards.addWidget(item, index // 2, index % 2)
         layout.addLayout(cards)
         content.insertWidget(0, panel)
         return page
@@ -978,12 +1408,14 @@ def install_premium_skins(window_cls) -> None:
     def page_shell(self, title, subtitle="", actions=None):
         skin = normalized_skin(getattr(self, "skin", None))
         key = getattr(self, "current_page", "today")
-        compact = key == "today" and skin == "cinematic"
+        compact = key == "today" and skin in ("cinematic", "editorial", "poster_wall", "workbench")
         page = QWidget()
         outer = QVBoxLayout(page)
-        outer.setContentsMargins(24 if skin == "cinematic" else 26,
-                                 12 if compact else 24, 24 if skin == "cinematic" else 26, 18)
-        outer.setSpacing(13 if compact else 18)
+        outer.setContentsMargins(0 if compact else 24 if skin == "cinematic" else 26,
+                                 0 if compact else 24,
+                                 0 if compact else 24 if skin == "cinematic" else 26,
+                                 0 if compact else 18)
+        outer.setSpacing(0 if compact else 18)
         masthead = QFrame()
         masthead.setObjectName("PageMasthead")
         masthead.setProperty("compact", compact)
@@ -1044,8 +1476,11 @@ def install_premium_skins(window_cls) -> None:
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
         content = QVBoxLayout(inner)
-        content.setContentsMargins(0, 2, 6, 10)
-        content.setSpacing(15)
+        content.setContentsMargins(0 if skin == "cinematic" and compact else 14 if compact else 0,
+                                   0 if compact else 2,
+                                   0 if skin == "cinematic" and compact else 14 if compact else 6,
+                                   10)
+        content.setSpacing(12 if compact else 15)
         content.setAlignment(Qt.AlignTop)
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
@@ -1055,6 +1490,7 @@ def install_premium_skins(window_cls) -> None:
         old_width = event.oldSize().width()
         original_resize_event(self, event)
         breakpoint = (1400 if getattr(self, "skin", None) == "editorial" else
+                      1450 if getattr(self, "skin", None) == "poster_wall" else
                       1500 if getattr(self, "skin", None) == "workbench" else None)
         if (breakpoint is not None and old_width > 0
                 and (old_width < breakpoint) != (event.size().width() < breakpoint)
@@ -1065,6 +1501,14 @@ def install_premium_skins(window_cls) -> None:
                               and self.current_page == "today" else None)
 
     def show_page(self, key):
+        utility = self.centralWidget().findChild(QFrame, "UtilityBar")
+        if utility is not None:
+            previous = utility.findChild(QFrame, "TodayGenreChooser")
+            if previous is not None:
+                utility.layout().removeWidget(previous)
+                previous.hide()
+                previous.deleteLater()
+        self._poster_filter_row = None
         original_show_page(self, key)
         page = self.stack.currentWidget()
         if page is None or not self.isVisible():
@@ -1078,10 +1522,36 @@ def install_premium_skins(window_cls) -> None:
                         and masthead is not None and masthead.objectName() == "PageMasthead"):
                     outer.removeWidget(chooser)
                     chooser.setObjectName("TodayGenreChooser")
-                    chooser.setMaximumWidth(480)
-                    masthead._utility_row.insertWidget(1, chooser, 1)
+                    chooser.setMaximumWidth(285)
+                    for label in chooser.findChildren(QLabel):
+                        label.hide()
+                    hero = next(iter(page.findChildren(HeroCanvas)), None)
+                    if hero is not None:
+                        hero.layout().addWidget(chooser, 0, Qt.AlignRight | Qt.AlignTop)
+                        masthead.hide()
+                    else:
+                        masthead._utility_row.insertWidget(1, chooser, 1)
                     chooser.style().unpolish(chooser)
                     chooser.style().polish(chooser)
+        elif key == "today":
+            outer = page.layout()
+            if outer.count() >= 3:
+                chooser = outer.itemAt(1).widget()
+                masthead = outer.itemAt(0).widget()
+                if chooser is not None and chooser.objectName() == "PremiumCard":
+                    outer.removeWidget(chooser)
+                    chooser.setObjectName("TodayGenreChooser")
+                    chooser.setMaximumWidth(275)
+                    for label in chooser.findChildren(QLabel):
+                        label.hide()
+                    if normalized_skin(self.skin) == "poster_wall" and self._poster_filter_row is not None:
+                        self._poster_filter_row.addWidget(chooser)
+                    else:
+                        utility = self.centralWidget().findChild(QFrame, "UtilityBar")
+                        if utility is not None:
+                            utility.layout().insertWidget(2, chooser)
+                    if masthead is not None:
+                        masthead.hide()
         effect = QGraphicsOpacityEffect(page)
         page.setGraphicsEffect(effect)
         animation = QPropertyAnimation(effect, b"opacity", page)

@@ -124,7 +124,7 @@ jobs:
       - name: Build fast portable folder
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit launcher.py
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit --add-data "cinecalendar/assets;cinecalendar/assets" launcher.py
           $exe = 'dist\CineCalendar\CineCalendar.exe'
           if (!(Test-Path $exe)) { throw 'Premium EXE was not created' }
           $b = [IO.File]::ReadAllBytes($exe)
@@ -198,7 +198,7 @@ jobs:
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/v5/core-alpha1')
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar-V5-Alpha --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit launcher_v5_alpha.py
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name CineCalendar-V5-Alpha --manifest CineCalendar.manifest --hidden-import=sqlite3 --collect-all implicit --add-data "cinecalendar/assets;cinecalendar/assets" launcher_v5_alpha.py
           $exe = 'dist\CineCalendar-V5-Alpha\CineCalendar-V5-Alpha.exe'
           if (!(Test-Path $exe)) { throw 'V5 Alpha EXE was not created' }
           $b = [IO.File]::ReadAllBytes($exe)
