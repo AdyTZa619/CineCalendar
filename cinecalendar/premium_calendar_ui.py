@@ -23,6 +23,34 @@ RO_MONTHS = (
 RO_WEEKDAYS = ("LUN", "MAR", "MIE", "JOI", "VIN", "SÂM", "DUM")
 
 
+def calendar_month_event_map(calendar_engine, anchor: date):
+    """Return every event overlapping the month and the events active on each day."""
+    month_start = anchor.replace(day=1)
+    month_end = date(anchor.year, anchor.month, monthrange(anchor.year, anchor.month)[1])
+    month_events = [
+        ev for ev in calendar_engine.events_for_year(anchor.year)
+        if ev.start <= month_end and ev.end >= month_start
+    ]
+    by_day: dict[int, list] = {}
+    for ev in month_events:
+        cursor = max(ev.start, month_start)
+        stop = min(ev.end, month_end)
+        while cursor <= stop:
+            by_day.setdefault(cursor.day, []).append(ev)
+            cursor += timedelta(days=1)
+    for items in by_day.values():
+        items.sort(
+            key=lambda ev: (
+                float(ev.importance),
+                ev.start == ev.end,
+                ev.start,
+                ev.name,
+            ),
+            reverse=True,
+        )
+    return month_events, by_day
+
+
 class CalendarPremiumWindow(PremiumDecisionWindow):
     """Premium UI with a real day-by-day calendar program.
 
@@ -169,12 +197,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
             ],
         )
 
-        month_events = [ev for ev in self.s.calendar.events_for_year(anchor.year) if ev.start.month == anchor.month]
-        starts: dict[int, list] = {}
-        for ev in month_events:
-            starts.setdefault(ev.start.day, []).append(ev)
-        for items in starts.values():
-            items.sort(key=lambda ev: (float(ev.importance), ev.name), reverse=True)
+        month_events, active_by_day = calendar_month_event_map(self.s.calendar, anchor)
 
         stage = QFrame(); stage.setObjectName("CalendarStage")
         stage_layout = QVBoxLayout(stage)
@@ -216,7 +239,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
 
         for day_no in range(1, last_day + 1):
             target = date(anchor.year, anchor.month, day_no)
-            events = starts.get(day_no, [])
+            events = active_by_day.get(day_no, [])
             primary = events[0] if events else None
             button = QPushButton()
             button.setObjectName("CalendarDay")
@@ -249,6 +272,8 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
             if primary is not None:
                 name = primary.name
                 short = name if len(name) <= 31 else name[:30].rstrip() + "…"
+                if primary.start < target <= primary.end:
+                    short = "↳ " + short
                 event_label = QLabel(short); event_label.setObjectName("CalendarDayEvent")
                 event_label.setWordWrap(True)
                 event_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)

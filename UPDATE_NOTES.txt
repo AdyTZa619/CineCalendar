@@ -10,6 +10,7 @@ Calendar:
 - „Calendar” și vechiul „Program calendar” sunt unite într-un singur tab;
 - vedere lunară imersivă și vedere separată „Repere anuale” în aceeași destinație;
 - zilele, reperul selectat, „Azi” și evenimentele sunt evidențiate vizual;
+- perioadele de mai multe zile rămân vizibile în fiecare lună pe care o traversează, nu doar în ziua de început;
 - filmele din Calendar sunt afișate numai când există o legătură calendaristică susținută;
 - cardurile Calendar păstrează explicația într-un singur bloc integrat, fără coloana redundantă „De ce acum”;
 - zilele fără reper concret nu mai dublează pagina Recomandări cu filme generale;

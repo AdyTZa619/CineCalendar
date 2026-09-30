@@ -189,6 +189,23 @@ def test_context_diagnostics_are_in_canonical_ui_composition():
     assert "calendar_movie_card" not in patch
 
 
+def test_month_grid_keeps_multi_day_events_visible_across_month_boundaries():
+    engine = ContextCalendarEngineV35()
+
+    december_events, december_days = premium_calendar_ui_module.calendar_month_event_map(
+        engine, date(2026, 12, 1)
+    )
+    assert any(ev.key == "nativity_fast" for ev in december_events)
+    assert any(ev.key == "nativity_fast" for ev in december_days[1])
+    assert any(ev.key == "nativity_fast" for ev in december_days[24])
+
+    november_events, november_days = premium_calendar_ui_module.calendar_month_event_map(
+        engine, date(2026, 11, 1)
+    )
+    assert any(ev.key == "nativity_fast" for ev in november_events)
+    assert any(ev.key == "nativity_fast" for ev in november_days[16])
+
+
 def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar():
     # ui_composition can wrap individual methods at runtime; inspect the module source for
     # structural widgets and keep method-level checks only for behavior-specific text.
