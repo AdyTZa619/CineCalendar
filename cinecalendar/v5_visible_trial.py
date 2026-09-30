@@ -173,18 +173,19 @@ class AlphaTrialRecommender:
             return ()
 
     def _recent_decision_exclusions(self, when: date) -> set[int]:
-        """Give the next day's decision fresh choices while respecting saved watchlist intent."""
+        """Avoid recent exposures and remember today's explicit skips across restarts."""
         from_date = (when - timedelta(days=7)).isoformat()
         with self.db.connect() as con:
             rows = con.execute(
                 """SELECT DISTINCT h.movie_id
                    FROM recommendation_history h
-                   WHERE h.context_date>=? AND h.context_date<?
-                     AND h.slot IN ('decision','today')
-                     AND NOT EXISTS (
-                         SELECT 1 FROM watchlist w WHERE w.movie_id=h.movie_id
-                     )""",
-                (from_date, when.isoformat()),
+                   WHERE (h.context_date>=? AND h.context_date<?
+                          AND h.slot IN ('decision','today')
+                          AND NOT EXISTS (
+                              SELECT 1 FROM watchlist w WHERE w.movie_id=h.movie_id
+                          ))
+                      OR (h.context_date=? AND h.action='skip_today')""",
+                (from_date, when.isoformat(), when.isoformat()),
             ).fetchall()
         return {int(row[0]) for row in rows}
 

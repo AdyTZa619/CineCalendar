@@ -18,6 +18,7 @@ class FakeEngine:
         self.decision_calls = 0
         self.romanian_calls = 0
         self.decision_exclusions = []
+        self.decision_kwargs = []
 
     def recommend(self, **kwargs):
         self.recommend_calls += 1
@@ -32,6 +33,7 @@ class FakeEngine:
         self.decision_calls += 1
         excluded = set(exclude_ids or set())
         self.decision_exclusions.append(excluded)
+        self.decision_kwargs.append(kwargs)
         recs = [rec for rec in self.recs if rec.movie.id not in excluded][:3]
         return (recs[0] if recs else None, recs[1:3])
 
@@ -321,6 +323,59 @@ def test_next_day_decision_avoids_recent_exposures_on_both_engines(tmp_path):
     assert [r.movie.id for r in [first, *backups]] == [5, 6]
     assert v16.decision_exclusions[-1] == {1, 2, 3, 4}
     assert v5.decision_exclusions[-1] == {1, 2, 3, 4}
+
+
+def test_skipped_movie_stays_excluded_today_after_restart_even_on_watchlist(tmp_path):
+    db = Database(tmp_path / "trial-skipped.db")
+    _eligible(db)
+    when = date(2026, 9, 30)
+    now = utcnow_iso()
+    with db.tx() as con:
+        for mid in range(1, 5):
+            con.execute(
+                """INSERT INTO movies(id,imdb_id,identity_key,title,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (mid, f"tt{mid:07d}", f"test:{mid}", f"Film {mid}", now, now),
+            )
+        con.execute(
+            """INSERT INTO recommendation_history(movie_id,recommended_at,context_date,slot,action)
+               VALUES(?,?,?,?,?)""",
+            (1, now, when.isoformat(), "decision_action", "skip_today"),
+        )
+        con.execute(
+            "INSERT INTO watchlist(movie_id,status,added_at,updated_at) VALUES(1,'want_to_watch',?,?)",
+            (now, now),
+        )
+    engines = lambda: (
+        FakeEngine([_rec(mid, .8) for mid in range(1, 5)]),
+        FakeEngine([_rec(mid, .8) for mid in range(1, 5)]),
+    )
+    v16, v5 = engines()
+    first, backups = AlphaTrialRecommender(db, v16, v5).decision_pick(when=when)
+    assert [r.movie.id for r in [first, *backups]] == [2, 3, 4]
+    assert v16.decision_exclusions == [{1}]
+    assert v5.decision_exclusions == [{1}]
+
+    # A new process has an empty session_skips set, but the persisted action still wins.
+    v16, v5 = engines()
+    first, backups = AlphaTrialRecommender(db, v16, v5).decision_pick(when=when)
+    assert [r.movie.id for r in [first, *backups]] == [2, 3, 4]
+    assert v16.decision_exclusions == [{1}]
+
+    # The skip is only for its calendar day; watchlist intent resumes tomorrow.
+    v16, v5 = engines()
+    first, _ = AlphaTrialRecommender(db, v16, v5).decision_pick(when=when + timedelta(days=1))
+    assert first.movie.id == 1
+
+
+def test_decision_forwards_contextual_session_to_both_engines(tmp_path):
+    db = Database(tmp_path / "trial-context.db")
+    v16, v5 = FakeEngine([_rec(1, .7)]), FakeEngine([_rec(2, .8)])
+    AlphaTrialRecommender(db, v16, v5).decision_pick(
+        when=date(2026, 9, 30), contextual_feedback=()
+    )
+    assert v16.decision_kwargs == [{"contextual_feedback": ()}]
+    assert v5.decision_kwargs == [{"contextual_feedback": ()}]
 
 
 def test_browse_trial_recomputes_both_sides_when_daily_genre_changes(tmp_path):

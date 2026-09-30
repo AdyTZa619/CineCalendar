@@ -66,7 +66,8 @@ def run_visible_decision_replay(
     """Replay the exact Alpha decision path on separate, past-only SQLite copies.
 
     The later ratings are used only for scoring the chosen three, never to build the
-    historical profile. Current UI filters are replayed as configured; historical
+    historical profile. This is the first decision of each historical day, before
+    any same-day feedback. Current UI filters are replayed as configured; historical
     preference/filter settings cannot be reconstructed from the ratings alone.
     """
     source = Path(db_path).expanduser().resolve()
@@ -94,10 +95,10 @@ def run_visible_decision_replay(
             for engine in (v16, v5):
                 _wait_for_als(engine.collaborative, als_timeout)
             trial = AlphaTrialRecommender(temp_db, v16, v5)
-            # This mirrors Home's call, including its prior-week exclusions, runtime,
-            # mood, and any day-specific genre filter. The trial computes both lists.
+            # Replay the Home call at the start of that date. Same-day feedback and
+            # session skips have not happened yet; the trial computes both lists.
             decision_mode = str(temp_db.get_setting("decision_mode", "decide") or "decide")
-            trial.decision_pick(eval_date, set(), decision_mode)
+            trial.decision_pick(eval_date, set(), decision_mode, contextual_feedback=())
             pair = trial._round_cache["decision"]
             with closing(temp_db.connect()) as con:
                 train_count = int(con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0])
@@ -114,7 +115,7 @@ def run_visible_decision_replay(
             folds.append(fold)
     return {
         "version": DECISION_REPLAY_VERSION,
-        "method": "AlphaTrialRecommender.decision_pick / current UI settings",
+        "method": "AlphaTrialRecommender.decision_pick / first decision of day / current UI settings",
         "folds": folds,
         "guard": decision_replay_guard(folds),
     }
