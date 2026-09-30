@@ -1,18 +1,28 @@
-CineCalendar 4.14.1 – Historical Replay reparat
+CineCalendar 4.15.0 – interfață completă și Calendar unificat
 
-Corecție:
-- adaugă `cinecalendar-fullcatalog414-` în lista workspace-urilor temporare administrate;
-- Historical Replay 4.14 poate porni fără eroarea „Unsupported CineCalendar temp prefix”;
-- workspace-ul este eliminat după rulare normală și poate fi recuperat de cleanup după o întrerupere;
-- test dedicat acoperă prefixul nou.
+Interfață:
+- cinci skinuri funcționale pe aceeași bază de funcții: Simple, Cinema Immersive, Cinematheque Editorial, Poster Wall și Decision Studio;
+- toate skinurile păstrează aceleași meniuri și acțiuni esențiale;
+- skinul Simple primește iconițe vectoriale în meniul lateral;
+- schimbarea skinului rămâne persistentă și nu schimbă motorul de recomandare.
 
-Neschimbat:
-- rankingul de producție;
-- formula ALS/conținut;
-- full-catalog-retrieval-v4.14.0;
-- retrieval-shadow-v4.14.0;
-- full-catalog-evaluation-v4.14.0;
-- SQLite schema v12;
-- backup profil v5.
+Calendar:
+- „Calendar” și vechiul „Program calendar” sunt unite într-un singur tab;
+- vedere lunară imersivă și vedere separată „Repere anuale” în aceeași destinație;
+- zilele, reperul selectat, „Azi” și evenimentele sunt evidențiate vizual;
+- filmele din Calendar sunt afișate numai când există o legătură calendaristică susținută;
+- zilele fără reper concret nu mai dublează pagina Recomandări cu filme generale;
+- reguli factuale stricte pentru reperele concrete și repere românești/ortodoxe extinse.
 
-Versiune aplicație: 4.14.1.
+Recomandări și navigare:
+- listele deja calculate sunt reutilizate la simpla navigare;
+- verificarea metadatelor candidaților principali se face înainte de afișarea clasării finale;
+- selecția zilei și galeriile suplimentare rămân separate, astfel încât încărcarea vizuală nu schimbă alegerea deja validată.
+
+Siguranță Stable:
+- Stable rămâne pe motorul de producție V16 și pe gardurile lui validate;
+- V5 Lab și trialul V5 rămân disponibile numai în canalul Alpha;
+- updaterul Stable rămâne separat de canalul Alpha, cu SHA-256, backup, health-check și rollback;
+- buildul Windows verifică pornirea aplicației înainte de publicare.
+
+Versiune aplicație: 4.15.0.

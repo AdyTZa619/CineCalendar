@@ -84,7 +84,7 @@ def test_existing_results_open_immediately_without_new_page_workers(tmp_path, mo
         window.calendar_month_anchor = target.replace(day=1)
         window.calendar_last_result = {"date": target, "phase": "test", "events": [], "sections": []}
         window.calendar_last_signature = (target, window._browse_state_signature())
-        window.show_page("month")
+        window.show_page("calendar")
         assert window.calendar_worker is None
         assert not any("Calculez o singură dată" in x.text() for x in window.findChildren(QLabel))
 

@@ -192,6 +192,7 @@ def test_context_diagnostics_are_in_canonical_ui_composition():
 def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar():
     source = inspect.getsource(premium_calendar_ui_module.CalendarPremiumWindow.page_month)
     spotlight = inspect.getsource(premium_calendar_ui_module.CalendarPremiumWindow._render_calendar_spotlight)
+    movie_card = inspect.getsource(premium_calendar_ui_module.CalendarPremiumWindow.calendar_movie_card)
     qss = inspect.getsource(premium_skins_module.skin_qss)
 
     assert "CalendarStage" in source
@@ -202,10 +203,10 @@ def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar
     assert "regula lui specifică" in spotlight
     assert "CalendarDay[selected='true']" in qss
     assert "CalendarMovieCard" in qss
-    assert "CalendarDateTile" in source
+    assert "CalendarDateTile" in spotlight
     assert "CalendarDayNumber" in source
-    assert "CalendarSpotlightTitle" in source
-    assert "CalendarRelationKind" in source
+    assert "CalendarSpotlightTitle" in spotlight
+    assert "CalendarRelationKind" in movie_card
     assert "month" not in {key for key, _label in CalendarPremiumWindow.NAV}
     assert "calendar" in {key for key, _label in CalendarPremiumWindow.NAV}
     assert "Repere anuale" in source

@@ -277,3 +277,74 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
     finally:
         persisted.close()
         app.processEvents()
+
+
+def test_stable_runtime_keeps_v16_and_full_skin_navigation(tmp_path, monkeypatch):
+    """Promoting the shared UI must not silently promote the Alpha V5 engine."""
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.delenv("CINECALENDAR_V5_ALPHA", raising=False)
+    monkeypatch.delenv("CINECALENDAR_V5_ALPHA_ALLOW_EMPTY", raising=False)
+
+    from cinecalendar.collaborative_als import CollaborativeALSProvider
+    from cinecalendar.quality_manager_v47 import RecommendationQualityManagerV47
+    from cinecalendar.v5_visible_trial import AlphaTrialRecommender
+    from cinecalendar.premium_skins import SKINS
+
+    monkeypatch.setattr(CollaborativeALSProvider, "start_background", lambda self: None)
+    monkeypatch.setattr(RecommendationQualityManagerV47, "start_background", lambda self: None)
+    monkeypatch.setattr(CalendarPremiumWindow, "auto_catalog_if_needed", lambda self: None)
+    monkeypatch.setattr(CalendarPremiumWindow, "sync_imdb_public", lambda self, **kwargs: None)
+    monkeypatch.setattr(CalendarPremiumWindow, "run_metadata_doctor", lambda self, **kwargs: None)
+
+    app = QApplication.instance() or QApplication([])
+    root = tmp_path / "stable-profile"
+    paths = AppPaths(root, root / "data", root / "logs", root / "cache", root / "backups")
+    for path in (paths.data, paths.logs, paths.cache, paths.backups):
+        path.mkdir(parents=True, exist_ok=True)
+
+    service = CineCalendarService(paths)
+    assert service.v5_alpha is False
+    assert not isinstance(service.recommender, AlphaTrialRecommender)
+    assert not hasattr(service, "alpha_v5_recommender")
+    assert not hasattr(service, "alpha_v16_recommender")
+
+    compose_premium_window(CalendarPremiumWindow)
+    window = CalendarPremiumWindow(service)
+    try:
+        stable_menus = {key for key, _label in window.NAV}
+        assert "v5_lab" not in stable_menus
+        assert "calendar" in stable_menus
+        assert "month" not in stable_menus
+
+        for name in (
+            "choose_decision", "skip_decision", "contextual_feedback_menu",
+            "open_details", "_open_calendar_date", "start_update",
+        ):
+            assert callable(getattr(window, name, None)), name
+
+        target = window.calendar_selected
+        for skin in SKINS:
+            window.set_skin(skin)
+            assert set(window.nav_buttons) == stable_menus
+            assert all(not button.icon().isNull() for button in window.nav_buttons.values())
+
+            window.calendar_last_result = {
+                "date": target,
+                "phase": "test",
+                "events": [],
+                "sections": [],
+                "ordinary_day": True,
+                "specific_event_active": False,
+            }
+            window.calendar_last_signature = (target, window._browse_state_signature())
+            window.show_page("calendar")
+            page = window.stack.currentWidget()
+            assert page.findChild(QFrame, "CalendarStage") is not None
+            assert page.findChild(QFrame, "CalendarSpotlight") is not None
+            assert any(button.text() == "Repere anuale"
+                       for button in page.findChildren(QPushButton))
+            assert all(callable(getattr(window, f"page_{key}", None))
+                       for key in stable_menus)
+    finally:
+        window.close()
+        app.processEvents()
