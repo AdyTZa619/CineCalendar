@@ -136,7 +136,7 @@ def ensure_alpha_database(alpha_root: Path) -> dict:
             }
         raise FileNotFoundError(
             "V5 Alpha nu a găsit baza CineCalendar Stable. "
-            "Dezarhivează folderul V5 Alpha în folderul CineCalendar Stable "
+            "Dezarhivează V5 Alpha într-un folder separat și complet, aflat lângă folderul CineCalendar Stable "
             "sau lângă folderul lui, apoi pornește din nou. "
             "Baza Stable nu va fi modificată."
         )

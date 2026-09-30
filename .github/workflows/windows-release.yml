@@ -207,6 +207,8 @@ jobs:
           Copy-Item 'MOVIELENS_MODEL_NOTICE.txt' 'dist\CineCalendar-V5-Alpha\MOVIELENS_MODEL_NOTICE.txt' -Force
           Write-Host "V5 Alpha EXE bytes: $($b.Length)"
           Write-Host "V5 Alpha folder bytes: $((Get-ChildItem 'dist\CineCalendar-V5-Alpha' -Recurse -File | Measure-Object Length -Sum).Sum)"
+          & '.\dist\CineCalendar-V5-Alpha\CineCalendar-V5-Alpha.exe' --runtime-self-check
+          if ($LASTEXITCODE -ne 0) { throw "V5 Alpha packaged NumPy/SciPy/implicit runtime self-check failed with $LASTEXITCODE" }
 
       - name: Smoke launch V5 Alpha
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/v5/core-alpha1')
@@ -235,7 +237,8 @@ jobs:
 
           IMPORTANT:
           - NU înlocui CineCalendar 4.14.1 Stable.
-          - Dezarhivează acest folder fie în folderul Stable, fie lângă folderul Stable.
+          - Dezarhivează V5 Alpha într-un folder NOU și gol, de preferat lângă folderul Stable.
+          - NU combina fișierele V5 Alpha cu folderul _internal al altei versiuni și nu copia doar EXE-ul peste o instalare veche.
           - Pornește CineCalendar-V5-Alpha.exe.
           - La prima pornire, Alpha caută CineCalendarData\data\cinecalendar.db și creează o copie SQLite proprie în CineCalendarV5AlphaData.
           - Baza Stable este deschisă doar pentru snapshot și NU este modificată de Alpha.
