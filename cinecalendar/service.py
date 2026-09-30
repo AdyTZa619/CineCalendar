@@ -59,6 +59,8 @@ class CineCalendarService:
             self.alpha_v5_recommender = build_production_recommender(
                 self.db, V5VisibleTrialEngine20, self.calendar
             )
+            self.alpha_v16_recommender._v5_candidate_frontier_enabled = True
+            self.alpha_v5_recommender._v5_candidate_frontier_enabled = True
             self.recommender = AlphaTrialRecommender(
                 self.db, self.alpha_v16_recommender, self.alpha_v5_recommender
             )

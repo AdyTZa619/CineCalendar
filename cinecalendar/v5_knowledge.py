@@ -304,11 +304,13 @@ class V5KnowledgeBase:
                 queue_metadata_movie(
                     self.db,
                     movie_id,
-                    priority=1450,
+                    # The first six plausible finalists get a small share of background
+                    # capacity even while the rated-profile queue is still catching up.
+                    priority=1900 if rank < 6 else 1450,
                     reason=self.FRONTIER_REASON,
                 )
             )
-            for movie_id in ids
+            for rank, movie_id in enumerate(ids)
         )
 
     def report(self) -> V5KnowledgeReport:

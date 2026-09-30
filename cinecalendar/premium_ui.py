@@ -18,6 +18,7 @@ from .candidate_metadata_v48 import (
     metadata_snapshot,
     missing_metadata_labels,
     prepare_browse_round,
+    prepare_decision_round,
     reset_metadata_cache,
 )
 from .feedback import daily_contextual_feedback
@@ -600,16 +601,17 @@ class PremiumDecisionWindow(DecisionWindow):
         exclude_ids = set(self.session_skips) | contextual_exclusions
         signature = self._today_signature()
         worker = WorkerThread(
-            lambda progress: self.s.recommender.decision_pick(
-                date.today(),
-                exclude_ids,
-                self.decision_mode,
+            lambda progress: prepare_decision_round(
+                self.s.recommender, self.db, when=date.today(),
+                exclude_ids=exclude_ids, mode=self.decision_mode,
                 contextual_feedback=contextual_feedback,
-            ),
-            self,
+                attempted_ids=self.metadata_attempted,
+                token=str(self.db.get_setting("tmdb_token", "") or ""),
+                progress=progress,
+            ), self,
         )
         self.today_worker = worker
-        def success(result):
+        def success(payload):
             self.today_worker = None
             current = self._today_signature()
             if signature != current:
@@ -617,7 +619,13 @@ class PremiumDecisionWindow(DecisionWindow):
                 if self.current_page == "today" and not self._ui_closing:
                     QTimer.singleShot(0, self._load_today_async)
                 return
-            self.set_status("Alegerea este gata.", False)
+            result = payload["decision"]
+            report = payload["report"]
+            self.set_status(
+                "Alegerea este gata; unele date nu au putut fi verificate."
+                if report.get("state") in {"partial", "failed"} else
+                "Alegerea este gata, cu datele verificate înainte de clasare.", False,
+            )
             self.today_result = result
             self.today_cache_signature = signature
             self.today_gallery = []
@@ -626,8 +634,6 @@ class PremiumDecisionWindow(DecisionWindow):
             self.today_gallery_generation += 1
             if self.current_page == "today":
                 self._render_today(*result)
-                recs = ([result[0]] if result[0] else []) + list(result[1] or [])
-                self._ensure_metadata(recs, "today")
         def failure(message):
             self.today_worker = None
             self.set_status("Recomandarea a eșuat.", False)

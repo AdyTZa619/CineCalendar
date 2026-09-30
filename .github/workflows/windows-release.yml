@@ -292,7 +292,7 @@ jobs:
             version = $version
             url = $url
             sha256 = $sha
-            notes = 'Alpha 31: Recomandări verifică metadatele candidaților înainte de afișare și recalculează scorurile dacă apar informații relevante. Sursele lente păstrează clasarea locală ca rezervă. Istoricul de trial înregistrează doar lista finală.'
+            notes = 'Alpha 32: Ce văd acum? verifică metadatele Top 3 înainte de afișare și recalculează alegerea când apar fapte noi. Finaliștii promițători intră în coada de completare pentru zilele viitoare. Calendarul cere legături concrete pentru Înălțarea Sfintei Cruci și Ziua Națională.'
             publishedAt = [DateTime]::UtcNow.ToString('o')
             channel = 'alpha'
           } | ConvertTo-Json -Depth 4

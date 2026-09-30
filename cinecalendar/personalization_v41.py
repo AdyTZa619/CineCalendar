@@ -882,6 +882,16 @@ def personalization_engine_class(base_cls: type) -> type:
                 runtime_max=runtime_max,
                 runtime_min=runtime_min,
             )
+            if getattr(self, "_v5_candidate_frontier_enabled", False):
+                # Only live Alpha decisions seed the persistent background queue. Replays,
+                # evaluations and Stable never acquire network data through this path.
+                try:
+                    from .v5_knowledge import V5KnowledgeBase
+                    V5KnowledgeBase(self.db).queue_frontier(
+                        (rec.movie.id for rec in pool[:24]), limit=24,
+                    )
+                except Exception:
+                    pass  # Queue health must not prevent an otherwise valid decision.
             ranked = self.personalization_v41.apply_contextual_session(pool, context, len(pool))
             if mode != "short":
                 ranked = [

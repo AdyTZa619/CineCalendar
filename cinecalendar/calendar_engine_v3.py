@@ -239,6 +239,17 @@ class ContextCalendarEngineV35(RichCalendarEngine):
         best_proximity = 0.0
 
         for event, proximity in self.relevant_events(when):
+            # These observances describe a particular subject, not every historical film
+            # or every war. A generic tag cannot establish a factual connection.
+            if event.key == "exaltation_cross" and max(
+                sem.get("cross_veneration", 0.0), sem.get("passion_of_christ", 0.0)
+            ) < .35:
+                continue
+            if event.key == "romania_national" and (
+                sem.get("romania", 0.0) < .35
+                or max(sem.get("history", 0.0), sem.get("war", 0.0)) < .35
+            ):
+                continue
             direct = max((sem.get(tag, 0.0) for tag in event.direct_tags), default=0.0)
             historical = max((sem.get(tag, 0.0) for tag in event.historical_tags), default=0.0)
             spiritual = max((sem.get(tag, 0.0) for tag in event.spiritual_tags), default=0.0)

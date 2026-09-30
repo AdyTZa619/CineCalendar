@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from cinecalendar.db import Database
-from cinecalendar.candidate_metadata_v48 import CandidateMetadataPreflight, prepare_browse_round
+from cinecalendar.candidate_metadata_v48 import CandidateMetadataPreflight, prepare_browse_round, prepare_decision_round
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
 from cinecalendar.util import json_dumps, utcnow_iso
 from cinecalendar.v5_rating_snapshot import rating_history_snapshot, report_rating_freshness
@@ -185,6 +185,75 @@ def test_preview_does_not_audit_unshown_candidates_and_publishing_reuses_pair(tm
     assert (v16.recommend_calls, v5.recommend_calls) == (1, 1)
     with db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM v5_trial_audit").fetchone()[0] == 2
+
+
+def test_today_metadata_rerank_audits_only_visible_final_top_three(tmp_path):
+    db = Database(tmp_path / "trial-today-metadata.db")
+    first, second = _rec(1, .75), _rec(2, .72)
+    second.movie.imdb_id = None
+
+    class DynamicEngine(FakeEngine):
+        def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
+            self.decision_calls += 1
+            order = [second, first] if first.movie.genres else [first, second]
+            return order[0], order[1:]
+
+    class Provider:
+        def __init__(self, _db):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.genres = ["History"]
+
+    v16, v5 = DynamicEngine([first, second]), FakeEngine([first, second])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    result = prepare_decision_round(
+        proxy, db, when=date(2026, 9, 30), exclude_ids=set(), mode="decide",
+        contextual_feedback=[], attempted_ids=set(),
+        preflight_factory=lambda source, token: CandidateMetadataPreflight(
+            object(), token, open_factory=Provider,
+        ),
+    )
+    assert result["decision"][0].movie.id == 2
+    assert result["report"]["reranked"] is True
+    assert (v16.decision_calls, v5.decision_calls) == (2, 2)
+    with db.connect() as con:
+        rows = con.execute(
+            "SELECT movie_id,active_rank FROM v5_trial_audit WHERE slot='decision' ORDER BY id"
+        ).fetchall()
+    assert [(row["movie_id"], row["active_rank"]) for row in rows] == [(2, 1), (1, 2)]
+
+
+def test_today_metadata_failure_keeps_frozen_pair_and_audits_fallback(tmp_path):
+    db = Database(tmp_path / "trial-today-fallback.db")
+    first = _rec(1, .75)
+
+    class FailingSecondPass(FakeEngine):
+        def decision_pick(self, *args, **kwargs):
+            self.decision_calls += 1
+            if self.decision_calls == 2:
+                raise RuntimeError("temporary scoring failure")
+            return first, []
+
+    class Provider:
+        def __init__(self, _db):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.genres = ["Drama"]
+
+    proxy = AlphaTrialRecommender(db, FailingSecondPass([first]), FakeEngine([first]))
+    result = prepare_decision_round(
+        proxy, db, when=date(2026, 9, 30), exclude_ids=set(), mode="decide",
+        contextual_feedback=[], attempted_ids=set(),
+        preflight_factory=lambda source, token: CandidateMetadataPreflight(
+            object(), token, open_factory=Provider,
+        ),
+    )
+    assert result["decision"][0].movie.id == 1
+    assert result["report"]["rerank_failed"] is True
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM v5_trial_audit WHERE slot='decision'").fetchone()[0] == 1
 
 
 def test_metadata_rerank_audits_only_the_final_alpha_order(tmp_path):

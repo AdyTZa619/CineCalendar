@@ -405,7 +405,7 @@ class AlphaTrialRecommender:
         )
         return active_recs
 
-    def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
+    def decision_pick(self, when=None, exclude_ids=None, mode="decide", *, preview=False, **kwargs):
         when = when or date.today()
         slot_key = "decision"
         # Apply the same prior-day exclusions to both trial engines. Same-day navigation and
@@ -449,14 +449,35 @@ class AlphaTrialRecommender:
                 "generated_at": generated_at,
             }
         active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
-        self._annotate_and_persist(
-            active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
-            round_id=round_id, generated_at=generated_at,
-        )
+        if not preview:
+            self._annotate_and_persist(
+                active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
+                round_id=round_id, generated_at=generated_at,
+            )
         return (
             active_recs[0] if active_recs else None,
             active_recs[1:3] if len(active_recs) > 1 else [],
         )
+
+    def preview_decision_pick(self, *args, **kwargs):
+        """Freeze the candidate pair without auditing a Top 3 that was never shown."""
+        return self.decision_pick(*args, preview=True, **kwargs)
+
+    def rerank_decision_pick(self, *args, **kwargs):
+        """Publish the fresh pair, or publish the original pair if ranking fails."""
+        original = self._round_cache.get("decision")
+        self.invalidate_round("decision")
+        try:
+            result = self.preview_decision_pick(*args, **kwargs)
+            if original and original.get("v16") and result[0] is None:
+                raise RuntimeError("Recalcularea nu a returnat filme.")
+            return self.decision_pick(*args, **kwargs), True
+        except Exception:
+            self.invalidate_round("decision")
+            if original is None:
+                raise
+            self._round_cache["decision"] = original
+            return self.decision_pick(*args, **kwargs), False
 
     def __getattr__(self, name):
         # All non-ranking APIs (calendar, status, feedback helpers, etc.) follow the currently

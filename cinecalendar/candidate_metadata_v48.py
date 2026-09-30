@@ -480,3 +480,71 @@ def prepare_browse_round(
     final = final[:PREFLIGHT_VISIBLE_SIZE]
     report["after"] = coverage_report(final)
     return {"recommendations": final, "report": report}
+
+
+def prepare_decision_round(
+    recommender,
+    db,
+    *,
+    when,
+    exclude_ids: set[int],
+    mode: str,
+    contextual_feedback,
+    attempted_ids: set[int],
+    token: str = "",
+    progress: Callable[[str], None] | None = None,
+    preflight_factory: Callable | None = None,
+    budget_seconds: float = 6.0,
+) -> dict:
+    """Check the decisive Top 3 before showing it; publish one audited Alpha round."""
+    args = (when, exclude_ids, mode)
+    kwargs = {"contextual_feedback": contextual_feedback}
+    preview = getattr(recommender, "preview_decision_pick", None)
+    initial = (preview if callable(preview) else recommender.decision_pick)(*args, **kwargs)
+    recs = ([initial[0]] if initial[0] else []) + list(initial[1] or [])
+    before = coverage_report(recs)
+    factory = preflight_factory or CandidateMetadataPreflight
+    try:
+        report = factory(db, token).run(
+            recs, attempted_ids=attempted_ids, limit=3,
+            budget_seconds=budget_seconds, progress=progress,
+        )
+    except Exception as exc:
+        report = {"state": "failed", "attempted": 0, "ranking_change": False,
+                  "error": str(exc), "timed_out": False}
+    report["before"] = before
+    report["reranked"] = False
+    report["io_limit"] = 3
+    report["pool_size"] = len(recs)
+    final = initial
+    if report.get("ranking_change"):
+        rerank = getattr(recommender, "rerank_decision_pick", None)
+        try:
+            if callable(rerank):
+                final, changed = rerank(*args, **kwargs)
+                report["reranked"] = bool(changed)
+                if not changed:
+                    report["rerank_failed"] = True
+                    report["state"] = "partial"
+            else:
+                invalidate = getattr(recommender, "invalidate_round", None)
+                if callable(invalidate):
+                    invalidate("decision")
+                final = recommender.decision_pick(*args, **kwargs)
+                if recs and final[0] is None:
+                    raise RuntimeError("Recalcularea nu a returnat filme.")
+                report["reranked"] = True
+        except Exception as exc:
+            report["rerank_failed"] = True
+            report["state"] = "partial"
+            report["error"] = str(exc)
+    elif callable(preview):
+        try:
+            final = recommender.decision_pick(*args, **kwargs)
+        except Exception as exc:
+            report["state"] = "partial"
+            report["error"] = str(exc)
+    report["after"] = coverage_report(
+        ([final[0]] if final[0] else []) + list(final[1] or [])
+    )
+    return {"decision": final, "report": report}

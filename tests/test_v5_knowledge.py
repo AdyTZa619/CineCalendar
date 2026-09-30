@@ -1,6 +1,8 @@
 from cinecalendar.db import Database
 from cinecalendar.util import identity_key, json_dumps, utcnow_iso
 from cinecalendar.v5_knowledge import V5KnowledgeBase
+from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
+from cinecalendar.personalization_v41 import personalization_engine_class
 
 
 def _rated(db, idx: int, rating: int, *, overview="", countries=()):
@@ -87,7 +89,65 @@ def test_v5_frontier_uses_separate_reason(tmp_path):
     with db.connect() as con:
         row=con.execute("SELECT reason,priority FROM metadata_jobs WHERE movie_id=?",(movie_id,)).fetchone()
     assert row["reason"] == "v5_candidate_frontier"
-    assert int(row["priority"]) == 1450
+    assert int(row["priority"]) == 1900
+
+
+def test_only_live_alpha_decision_seeds_bounded_future_finalists(tmp_path):
+    db = Database(tmp_path / "frontier-decision.db")
+    now = utcnow_iso()
+    with db.tx() as con:
+        for mid in range(1, 31):
+            con.execute(
+                "INSERT INTO movies(id,imdb_id,identity_key,title,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (mid, f"tt{mid:07d}", f"candidate:{mid}", f"Candidate {mid}", now, now),
+            )
+    candidates = [
+        Recommendation(Movie(id=mid, imdb_id=f"tt{mid:07d}", title=f"Candidate {mid}"),
+                       ScoreBreakdown(final=1 - mid / 100))
+        for mid in range(1, 31)
+    ]
+
+    class Base:
+        def __init__(self, db):
+            self.db = db
+
+        def recommend(self, **kwargs):
+            return candidates[:kwargs["count"]]
+
+        def _quality_gate(self, recs, count):
+            return recs[:count]
+
+    class Brain:
+        def choose_runtime_bounds(self):
+            return None, None
+
+        def resolve_contextual_session(self, _feedback):
+            return []
+
+        def contextual_runtime_max(self, _context):
+            return None
+
+        def enhance_and_diversify(self, recs, *_args, **_kwargs):
+            return recs
+
+        def apply_contextual_session(self, recs, _context, count):
+            return recs[:count]
+
+    engine = personalization_engine_class(Base)(db)
+    engine.personalization_v41 = Brain()
+    engine.decision_pick()
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM metadata_jobs").fetchone()[0] == 0
+
+    engine._v5_candidate_frontier_enabled = True
+    primary, backups = engine.decision_pick()
+    assert [primary.movie.id, *(rec.movie.id for rec in backups)] == [1, 2, 3]
+    with db.connect() as con:
+        rows = con.execute("SELECT movie_id,priority,reason FROM metadata_jobs ORDER BY movie_id").fetchall()
+    assert len(rows) == 24
+    assert all(row["reason"] == "v5_candidate_frontier" for row in rows)
+    assert [row["priority"] for row in rows[:6]] == [1900] * 6
+    assert [row["priority"] for row in rows[6:]] == [1450] * 18
 
 
 def test_v5_knowledge_prioritizes_undercovered_negative_boundary(tmp_path):

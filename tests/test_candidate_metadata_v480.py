@@ -7,6 +7,7 @@ from cinecalendar.candidate_metadata_v48 import (
     CandidateMetadataPreflight,
     coverage_report,
     prepare_browse_round,
+    prepare_decision_round,
     ranking_completeness,
     reset_metadata_cache,
 )
@@ -344,8 +345,12 @@ def test_recommendations_ui_exposes_coverage_and_final_rerank():
     assert "prepare_browse_round(" in source
     assert "scorurile au fost recalculate înainte de afișarea listei" in source
     assert 'elif state == "partial":' in source
-    success = source.split("def success(payload):", 1)[1].split("def failure(message):", 1)[0]
+    success = source.split("def _load_browse_async(self):", 1)[1].split("def failure(message):", 1)[0]
     assert "_render_browse(self.browse_result)" in success
+    today = source.split("def _load_today_async(self):", 1)[1].split("def _load_today_gallery_async(self):", 1)[0]
+    assert "prepare_decision_round(" in today
+    assert "_render_today(*result)" in today
+    assert "self._ensure_metadata(recs, \"today\")" not in today
     assert 'choose=QPushButton("Aleg filmul")' in source
     assert "ResponsiveRecommendationGrid" in source
     assert "reason.setMaximumHeight(58)" not in source
@@ -418,3 +423,36 @@ def test_browse_round_keeps_local_ranking_when_second_pass_fails():
     assert result["recommendations"] == [first]
     assert result["report"]["rerank_failed"] is True
     assert result["report"]["state"] == "partial"
+
+
+def test_today_checks_only_top_three_then_reranks_before_publish():
+    first, second = _rec(1), _rec(2)
+    second.movie.imdb_id = None
+
+    class Provider:
+        def __init__(self, _db):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.genres = ["History"]
+
+    class Engine:
+        calls = 0
+
+        def decision_pick(self, *args, **kwargs):
+            self.calls += 1
+            order = [second, first] if first.movie.genres else [first, second]
+            return order[0], order[1:]
+
+    engine = Engine()
+    result = prepare_decision_round(
+        engine, object(), when=date(2026, 9, 30), exclude_ids=set(),
+        mode="decide", contextual_feedback=[], attempted_ids=set(),
+        preflight_factory=lambda db, token: CandidateMetadataPreflight(
+            db, token, open_factory=Provider,
+        ),
+    )
+    assert engine.calls == 2
+    assert result["decision"][0].movie.id == 2
+    assert result["report"]["reranked"] is True
+    assert result["report"]["io_limit"] == 3

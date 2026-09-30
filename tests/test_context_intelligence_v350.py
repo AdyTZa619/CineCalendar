@@ -110,6 +110,30 @@ def test_atmosphere_is_capped_and_cannot_impersonate_direct_event_match():
         assert score <= .34
 
 
+def test_specific_feasts_do_not_claim_generic_history_or_foreign_war():
+    engine = ContextCalendarEngineV35()
+    generic_history = Movie(title="History of Aviation", overview="History of flight and aircraft.", genres=["Documentary"])
+    foreign_war = Movie(title="War in the Pacific", overview="World War II in the Pacific.", genres=["War"])
+    cross = Movie(title="The Holy Cross", overview="Veneration of the Holy Cross.", genres=["Documentary"])
+    romanian_history = Movie(title="The Great Union of 1918", overview="Romanian national unification in 1918.", genres=["History"])
+
+    assert engine.calendar_relevance(generic_history, date(2026, 9, 14))[0] == 0
+    assert engine.calendar_relevance(foreign_war, date(2026, 9, 14))[0] == 0
+    assert "Sfintei Cruci" in engine.calendar_relevance(cross, date(2026, 9, 14))[2]
+    assert engine.calendar_relevance(foreign_war, date(2026, 12, 1))[0] == 0
+    assert engine.calendar_relevance(generic_history, date(2026, 12, 1))[0] == 0
+    assert "Ziua Națională" in engine.calendar_relevance(romanian_history, date(2026, 12, 1))[2]
+
+
+def test_lent_keeps_a_spiritual_match_without_attaching_unrelated_history():
+    engine = ContextCalendarEngineV35()
+    middle = orthodox_easter(2026) - timedelta(days=25)
+    spiritual = Movie(title="Monastic Life", overview="A documentary on Christian prayer and monastic life.")
+    unrelated = Movie(title="Aviation History", overview="The history of aircraft.")
+    assert "Postul Mare" in engine.calendar_relevance(spiritual, middle)[2]
+    assert engine.calendar_relevance(unrelated, middle)[0] == 0
+
+
 def _rec(predicted: float, confidence: float) -> Recommendation:
     return Recommendation(
         Movie(id=1, title="Context test", genres=["Drama"]),
