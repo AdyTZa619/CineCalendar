@@ -626,6 +626,59 @@ def build_skin_shell(window):
     outer.addWidget(body, 1)
 
 
+
+def _simple_calendar_qss() -> str:
+    """Calendar-only supplement for the classic Simple skin.
+
+    Simple intentionally keeps the original shell/theme.  The immersive calendar therefore
+    needs its own narrowly-scoped rules instead of inheriting the full alternate-skin QSS.
+    """
+    c = PALETTES["simple"]
+    radius = "13px"
+    return f"""
+        QFrame#CalendarStage {{
+            background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {c['card']},stop:.70 {c['surface']},stop:1 {c['card2']});
+            border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QFrame#CalendarProgram, QFrame#CalendarMovieCard {{
+            background:{c['card']}; border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QFrame#CalendarSpotlight {{
+            background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {c['card2']},stop:.52 {c['card']},stop:1 {c['surface']});
+            border:1px solid {c['border']}; border-left:4px solid {c['accent']}; border-radius:{radius};
+        }}
+        QFrame#CalendarDateTile {{
+            min-width:96px; max-width:112px; background:{c['surface']}; border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QLabel#CalendarDateNumber {{ color:{c['text']}; font-size:40px; font-weight:900; }}
+        QLabel#CalendarDateMonth {{ color:{c['accent']}; font-size:11px; font-weight:900; letter-spacing:1.4px; }}
+        QLabel#CalendarDateYear {{ color:{c['muted']}; font-size:11px; font-weight:700; }}
+        QLabel#CalendarSpotlightTitle {{ color:{c['text']}; font-size:26px; font-weight:850; }}
+        QLabel#CalendarProgramTitle {{ color:{c['text']}; font-size:12px; font-weight:900; letter-spacing:1.8px; padding-top:4px; }}
+        QLabel#CalendarWeekday {{ color:{c['muted']}; font-size:10px; font-weight:850; letter-spacing:1.2px; padding:5px; }}
+        QFrame#CalendarDayBlank {{
+            background:rgba(255,255,255,.018); border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QPushButton#CalendarDay {{
+            min-height:86px; padding:0; background:{c['surface']};
+            color:{c['text']}; border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QPushButton#CalendarDay:hover {{ background:{c['card2']}; border-color:{c['accent']}; }}
+        QPushButton#CalendarDay[weekend='true'] {{ background:{c['card']}; }}
+        QPushButton#CalendarDay[hasEvent='true'] {{ background:{c['card2']}; border-color:{c['accent']}; }}
+        QPushButton#CalendarDay[today='true'] {{ border:2px solid {c['good']}; }}
+        QPushButton#CalendarDay[selected='true'] {{ background:{c['card2']}; border:2px solid {c['accent']}; }}
+        QLabel#CalendarDayNumber {{ color:{c['text']}; font-size:17px; font-weight:900; }}
+        QLabel#CalendarTodayTag {{ color:{c['good']}; font-size:9px; font-weight:900; letter-spacing:1px; }}
+        QLabel#CalendarEventDot {{ color:{c['accent']}; font-size:11px; }}
+        QLabel#CalendarDayEvent {{ color:{c['muted']}; font-size:11px; font-weight:700; }}
+        QLabel#CalendarDayCount {{ color:{c['accent']}; font-size:10px; font-weight:800; }}
+        QFrame#CalendarMovieCard:hover {{ border-color:{c['accent']}; }}
+        QLabel#CalendarRelationKind {{ color:{c['accent']}; font-size:10px; font-weight:900; letter-spacing:1.2px; }}
+        QLabel#CalendarRelationText {{ color:{c['text']}; font-size:13px; font-weight:600; }}
+    """
+
+
 def skin_qss(skin: str) -> str:
     c = PALETTES[skin]
     editorial = skin == "editorial"
@@ -1605,6 +1658,9 @@ def install_premium_skins(window_cls) -> None:
         if self.skin == "simple":
             self.theme = self.db.get_setting("theme", "dark")
             original_apply_theme(self)
+            app = QApplication.instance()
+            if app is not None:
+                app.setStyleSheet(app.styleSheet() + "\n" + _simple_calendar_qss())
             return
         self.theme = "light" if self.skin == "editorial" else "dark"
         app = QApplication.instance()

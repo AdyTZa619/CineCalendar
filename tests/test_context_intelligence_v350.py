@@ -198,7 +198,7 @@ def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar
     assert "CalendarDay" in source
     assert "RO_WEEKDAYS" in inspect.getsource(premium_calendar_ui_module)
     assert "CalendarSpotlight" in source
-    assert "Filmele zilei" in source
+    assert "FILMELE ZILEI" in source
     assert "regula lui specifică" in spotlight
     assert "CalendarDay[selected='true']" in qss
     assert "CalendarMovieCard" in qss
@@ -210,3 +210,6 @@ def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar
     assert "calendar" in {key for key, _label in CalendarPremiumWindow.NAV}
     assert "Repere anuale" in source
     assert "nu dublează" in source
+    simple_qss = inspect.getsource(premium_skins_module._simple_calendar_qss)
+    assert "CalendarStage" in simple_qss
+    assert "CalendarDateTile" in simple_qss

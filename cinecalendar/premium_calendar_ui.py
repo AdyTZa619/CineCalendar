@@ -434,7 +434,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         detail.setObjectName("Muted"); detail.setWordWrap(True); layout.addWidget(detail)
 
     def _load_calendar_day_async(self, target: date):
-        if self._ui_closing or self.current_page != "calendar" or target != self.calendar_selected:
+        if self._ui_closing or self.current_page not in {"calendar", "month"} or target != self.calendar_selected:
             return
         if self._calendar_cached(target):
             self._render_calendar_program(self.calendar_last_result)
@@ -477,14 +477,14 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
                 self.calendar_last_result = result
                 self.calendar_last_signature = signature
             self.set_status("Programul zilei este gata.", False)
-            if self.current_page == "calendar" and self.calendar_selected == result.get("date") and self._calendar_cached(target):
+            if self.current_page in {"calendar", "month"} and self.calendar_selected == result.get("date") and self._calendar_cached(target):
                 self._render_calendar_program(result)
             pending = self.calendar_pending
             self.calendar_pending = None
             if pending is not None and pending != result.get("date"):
                 self._render_calendar_loading(pending)
                 QTimer.singleShot(0, lambda d=pending: self._load_calendar_day_async(d))
-            elif self.current_page == "calendar" and self.calendar_selected == target and not self._calendar_cached(target):
+            elif self.current_page in {"calendar", "month"} and self.calendar_selected == target and not self._calendar_cached(target):
                 QTimer.singleShot(0, lambda d=target: self._load_calendar_day_async(d))
 
         def failure(message):
@@ -495,7 +495,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
                 QTimer.singleShot(0, lambda d=pending: self._load_calendar_day_async(d))
                 return
             self.set_status("Programul calendaristic a eșuat.", False)
-            if self.current_page == "calendar" and self.calendar_focus_layout is not None:
+            if self.current_page in {"calendar", "month"} and self.calendar_focus_layout is not None:
                 self._clear_layout(self.calendar_focus_layout)
                 x = QLabel("Nu am putut calcula recomandările: " + message)
                 x.setWordWrap(True); self.calendar_focus_layout.addWidget(x)

@@ -57,6 +57,13 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         window.resize(1280, 720)
         window.show()
         expected_menus = {key for key, _ in window.NAV}
+        assert "calendar" in expected_menus
+        assert "month" not in expected_menus
+        required_actions = (
+            "choose_decision", "skip_decision", "contextual_feedback_menu",
+            "open_details", "_open_calendar_date", "start_update",
+        )
+        assert all(callable(getattr(window, name, None)) for name in required_actions)
         overflow_by_skin = {}
         for skin in ("cinematic", "editorial", "poster_wall", "workbench"):
             window.set_skin(skin)
@@ -75,6 +82,31 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
             assert any("Nu acum / motiv" == x.text() for x in page.findChildren(QPushButton))
             assert any("Alt film" == x.text() for x in page.findChildren(QPushButton))
             assert all(not button.icon().isNull() for button in window.nav_buttons.values())
+
+            # Calendar is one shared functional destination in every skin, not a second
+            # skin-specific implementation.  Keep it cached here so the parity test does not
+            # start recommendation workers while cycling the presentation shells.
+            target = window.calendar_selected
+            window.calendar_last_result = {
+                "date": target, "phase": "test", "events": [], "sections": [],
+                "ordinary_day": True, "specific_event_active": False,
+            }
+            window.calendar_last_signature = (target, window._browse_state_signature())
+            window.show_page("calendar")
+            calendar_page = window.stack.currentWidget()
+            assert calendar_page.findChild(QFrame, "CalendarStage") is not None
+            assert calendar_page.findChild(QFrame, "CalendarSpotlight") is not None
+            assert any(button.text() == "Repere anuale"
+                       for button in calendar_page.findChildren(QPushButton))
+            assert "CalendarDateTile" in QApplication.instance().styleSheet()
+
+            window.today_result = (recs[0], recs[1:3])
+            window.today_cache_signature = window._today_signature()
+            window.today_gallery = recs[3:]
+            window.today_gallery_signature = window._today_signature()
+            window.show_page("today")
+            page = window.stack.currentWidget()
+            app.processEvents()
             artwork = (page.findChildren(HeroCanvas) if skin == "cinematic"
                        else page.findChildren(PosterCanvas))
             assert artwork
