@@ -47,6 +47,11 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
             ))
 
     compose_premium_window(CalendarPremiumWindow)
+    # Scheduled catalog/sync maintenance is independent of the skin and can mutate
+    # the recommendation signature while this UI test cycles through 70 pages.
+    monkeypatch.setattr(CalendarPremiumWindow, "auto_catalog_if_needed", lambda self: None)
+    monkeypatch.setattr(CalendarPremiumWindow, "sync_imdb_public", lambda self, **kwargs: None)
+    monkeypatch.setattr(CalendarPremiumWindow, "run_metadata_doctor", lambda self, **kwargs: None)
     window = CalendarPremiumWindow(service)
     try:
         window.resize(1280, 720)
@@ -168,11 +173,13 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         assert inspector.count() == 4
         assert inspector.currentIndex() == 1
         decision_before_switch = window.today_result
+        window.today_cache_signature = window._today_signature()
         window.set_skin("simple")
         window.show_page("today")
         simple_page = window.stack.currentWidget()
         assert window.today_result is decision_before_switch
-        assert any("Film verificabil 1" in label.text() for label in simple_page.findChildren(QLabel))
+        labels = [label.text() for label in simple_page.findChildren(QLabel)]
+        assert any("Film verificabil 1" in value for value in labels), labels[:25]
         assert any("DESCHIDE ÎN STREMIO" == button.text()
                    for button in simple_page.findChildren(QPushButton))
         assert not simple_page.findChildren(HeroCanvas)
