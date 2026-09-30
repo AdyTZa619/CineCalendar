@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 import uuid
 
 from .util import utcnow_iso
@@ -8,7 +8,7 @@ from .v5_rating_snapshot import report_rating_freshness
 from .v5_shadow_ranker import V5ShadowRankedEngine20
 
 
-V5_VISIBLE_TRIAL_VERSION = "v5-visible-trial-alpha3"
+V5_VISIBLE_TRIAL_VERSION = "v5-visible-trial-alpha4"
 MODE_V16 = "v16"
 MODE_V5_20 = "v5_20"
 
@@ -170,6 +170,22 @@ class AlphaTrialRecommender:
             )
         except Exception:
             return ()
+
+    def _recent_decision_exclusions(self, when: date) -> set[int]:
+        """Give the next day's decision fresh choices while respecting saved watchlist intent."""
+        from_date = (when - timedelta(days=7)).isoformat()
+        with self.db.connect() as con:
+            rows = con.execute(
+                """SELECT DISTINCT h.movie_id
+                   FROM recommendation_history h
+                   WHERE h.context_date>=? AND h.context_date<?
+                     AND h.slot IN ('decision','today')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM watchlist w WHERE w.movie_id=h.movie_id
+                     )""",
+                (from_date, when.isoformat()),
+            ).fetchall()
+        return {int(row[0]) for row in rows}
 
     def _request_key(
         self, *, when, count: int, exclude_ids, slot: str, candidate_limit: int,
@@ -382,9 +398,14 @@ class AlphaTrialRecommender:
     def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
         when = when or date.today()
         slot_key = "decision"
+        # Apply the same prior-day exclusions to both trial engines. Same-day navigation and
+        # explicit recalculation still use the frozen comparison pair.
+        recent_exclusions = self._recent_decision_exclusions(when)
+        effective_exclusions = set(exclude_ids or set()) | recent_exclusions
         request_key = (
             when.isoformat(),
             tuple(sorted(int(x) for x in (exclude_ids or set()))),
+            tuple(sorted(recent_exclusions)),
             str(mode or ""),
             tuple(sorted((str(key), repr(value)) for key, value in kwargs.items())),
             str(self.db.get_setting("chooser_runtime_bucket", "all") or "all"),
@@ -401,10 +422,10 @@ class AlphaTrialRecommender:
             generated_at = str(cached.get("generated_at") or utcnow_iso())
         else:
             v16_primary, v16_backups = self.v16.decision_pick(
-                when, exclude_ids, mode, **kwargs
+                when, effective_exclusions, mode, **kwargs
             )
             v5_primary, v5_backups = self.v5.decision_pick(
-                when, exclude_ids, mode, **kwargs
+                when, effective_exclusions, mode, **kwargs
             )
             v16_recs = ([v16_primary] if v16_primary else []) + list(v16_backups or [])
             v5_recs = ([v5_primary] if v5_primary else []) + list(v5_backups or [])

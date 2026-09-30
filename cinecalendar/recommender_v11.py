@@ -110,6 +110,16 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
         bayes = (rating * votes + prior_mean * prior_votes) / (votes + prior_votes)
         return bayes >= 6.75
 
+    @staticmethod
+    def _cold_start_eligible(movie) -> bool:
+        """Avoid trusting a tiny public vote sample when the personal ALS model is still loading."""
+        votes = max(0, int(movie.num_votes or 0))
+        if votes >= 2500:
+            return True
+        # The IMDb bootstrap fills director and genre-derived semantic tags even for entries
+        # with no synopsis. Those fields alone cannot validate a 9.9/10 from 100 voters.
+        return votes >= 250 and len((movie.overview or "").strip()) >= 40
+
     def _select_candidates(self, candidates: list[Recommendation], count: int, mode: str) -> list[Recommendation]:
         """Apply MMR diversity only to user-visible result sets.
 
@@ -192,6 +202,8 @@ class FastRecommendationEngineV11(FastRecommendationEngineV10):
                 continue
             movie = row_to_movie(row)
             if not self._catalog_quality_is_trustworthy(movie):
+                continue
+            if not collaborative_active and not self._cold_start_eligible(movie):
                 continue
             if runtime_max is not None and movie.runtime_min is not None and movie.runtime_min > runtime_max:
                 continue

@@ -88,6 +88,8 @@ class FastRecommendationEngineV16(FastRecommendationEngineV15):
             return True, "modelul personal are încredere mare într-o estimare sub 5.8/10"
         if votes >= 5000 and public > 0 and public <= 5.2:
             return True, "ratingul public este foarte slab pe un eșantion mare"
+        if votes < 2500 and len((movie.overview or "").strip()) < 40:
+            return True, "prea puține voturi și fără o descriere pentru o alegere sigură"
         return False, ""
 
     def _als_scores(self, recs: list[Recommendation]) -> dict[str, float]:

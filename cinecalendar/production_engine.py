@@ -12,7 +12,7 @@ from .learning_insight_v43 import LEARNING_INSIGHT_VERSION, learning_insight_eng
 
 # Ranking identity changes only when recommendation ordering changes.  Operational/UI releases must
 # not invalidate a multi-gigabyte personal backtest by themselves.
-RANKING_STACK_VERSION = "production-stack-v4.6.0-personal-hybrid"
+RANKING_STACK_VERSION = "production-stack-v4.6.1-decision-trust"
 PRODUCTION_STACK_VERSION = "production-stack-v4.14.0-full-catalog-evaluation"
 
 

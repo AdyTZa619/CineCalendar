@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from cinecalendar.db import Database
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
@@ -17,6 +17,7 @@ class FakeEngine:
         self.recommend_calls = 0
         self.decision_calls = 0
         self.romanian_calls = 0
+        self.decision_exclusions = []
 
     def recommend(self, **kwargs):
         self.recommend_calls += 1
@@ -29,7 +30,9 @@ class FakeEngine:
 
     def decision_pick(self, when=None, exclude_ids=None, mode="decide", **kwargs):
         self.decision_calls += 1
-        recs = list(self.recs[:3])
+        excluded = set(exclude_ids or set())
+        self.decision_exclusions.append(excluded)
+        recs = [rec for rec in self.recs if rec.movie.id not in excluded][:3]
         return (recs[0] if recs else None, recs[1:3])
 
 
@@ -249,6 +252,58 @@ def test_decision_trial_refreshes_both_engines_when_chooser_changes(tmp_path):
     db.set_setting("chooser_runtime_bucket", "90")
     proxy.decision_pick(when=when)
     assert (v16.decision_calls, v5.decision_calls) == (4, 4)
+
+
+def test_next_day_decision_avoids_recent_exposures_on_both_engines(tmp_path):
+    db = Database(tmp_path / "trial-recency.db")
+    _eligible(db)
+    when = date(2026, 9, 30)
+    now = utcnow_iso()
+    with db.tx() as con:
+        for mid in range(1, 7):
+            con.execute(
+                """INSERT INTO movies(id,imdb_id,identity_key,title,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (mid, f"tt{mid:07d}", f"test:{mid}", f"Film {mid}", now, now),
+            )
+        for mid, day in (
+            (1, when - timedelta(days=1)),
+            (2, when - timedelta(days=7)),
+            (3, when - timedelta(days=8)),
+            (4, when),
+            (5, when - timedelta(days=1)),
+        ):
+            con.execute(
+                """INSERT INTO recommendation_history(
+                    movie_id,recommended_at,context_date,slot
+                   ) VALUES(?,?,?,'decision')""",
+                (mid, now, day.isoformat()),
+            )
+        con.execute(
+            "INSERT INTO watchlist(movie_id,status,added_at,updated_at) VALUES(5,'want_to_watch',?,?)",
+            (now, now),
+        )
+
+    v16 = FakeEngine([_rec(mid, 0.8) for mid in range(1, 7)])
+    v5 = FakeEngine([_rec(mid, 0.8) for mid in range(1, 7)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    first, backups = proxy.decision_pick(when=when, exclude_ids={3})
+    assert [r.movie.id for r in [first, *backups]] == [4, 5, 6]
+    assert v16.decision_exclusions == [{1, 2, 3}]
+    assert v5.decision_exclusions == [{1, 2, 3}]
+
+    # A newly imported prior-day exposure must refresh the trial pair.
+    with db.tx() as con:
+        con.execute(
+            """INSERT INTO recommendation_history(
+                movie_id,recommended_at,context_date,slot
+               ) VALUES(?,?,?,'decision')""",
+            (4, now, (when - timedelta(days=1)).isoformat()),
+        )
+    first, backups = proxy.decision_pick(when=when, exclude_ids={3})
+    assert [r.movie.id for r in [first, *backups]] == [5, 6]
+    assert v16.decision_exclusions[-1] == {1, 2, 3, 4}
+    assert v5.decision_exclusions[-1] == {1, 2, 3, 4}
 
 
 def test_browse_trial_recomputes_both_sides_when_daily_genre_changes(tmp_path):

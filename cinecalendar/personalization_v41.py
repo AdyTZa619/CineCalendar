@@ -11,7 +11,7 @@ from .recommendation import row_to_movie
 from .util import clamp, cosine_sparse, json_loads
 from .watch_success import feedback_feature_vector
 
-PERSONALIZATION_V41_VERSION = "personalization-v4.5.1-daily-context"
+PERSONALIZATION_V41_VERSION = "personalization-v4.5.2-decision-trust"
 QUALITY_SETTING = "personalization_v41_quality"
 CONTEXTUAL_SESSION_KINDS = {"not_now", "too_long", "mood_mismatch", "too_similar"}
 
@@ -866,20 +866,31 @@ def personalization_engine_class(base_cls: type) -> type:
             if contextual_max is not None:
                 runtime_max = min(runtime_max, contextual_max) if runtime_max is not None else contextual_max
                 runtime_min = None
-            if runtime_max is None and runtime_min is None and not context:
-                return super().decision_pick(when, exclude_ids, mode)
+            # A normal film decision should not promote a seven-minute short solely because
+            # the user selected an upper runtime bound (e.g. at most 90 minutes).
+            if mode != "short":
+                runtime_min = max(45, int(runtime_min or 0))
             pool = self.recommend(
                 when=when,
-                count=max(8, int(getattr(self, "DECISION_CACHE_SIZE", 12) or 12)),
+                count=max(36, int(getattr(self, "DECISION_CACHE_SIZE", 12) or 12)),
                 exclude_ids=exclude_ids,
                 record=False,
                 slot="decision-v41",
-                candidate_limit=int(getattr(self, "EXPLORE_POOL", 45000) or 45000),
+                candidate_limit=int(getattr(self, "NORMAL_POOL", 1800) if mode != "surprise"
+                                    else getattr(self, "EXPLORE_POOL", 3000)),
                 mode=mode,
                 runtime_max=runtime_max,
                 runtime_min=runtime_min,
             )
-            selected = self.personalization_v41.apply_contextual_session(pool, context, 3)
+            ranked = self.personalization_v41.apply_contextual_session(pool, context, len(pool))
+            if mode != "short":
+                ranked = [
+                    rec for rec in ranked
+                    if str(rec.movie.title_type or "").casefold() not in {"short", "video"}
+                ]
+            # The large pool bypasses V16's Top-3 gate during retrieval. Apply it now,
+            # after session feedback, to the actual three films shown on screen.
+            selected = self._quality_gate(ranked, 3)
             return (selected[0] if selected else None, selected[1:3])
 
         def personalization_status(self) -> dict:
