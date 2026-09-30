@@ -178,7 +178,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
 
         stage = QFrame(); stage.setObjectName("CalendarStage")
         stage_layout = QVBoxLayout(stage)
-        stage_layout.setContentsMargins(20,18,20,20); stage_layout.setSpacing(12)
+        stage_layout.setContentsMargins(24,22,24,24); stage_layout.setSpacing(16)
 
         month_head = QHBoxLayout()
         month_copy = QVBoxLayout(); month_copy.setSpacing(2)
@@ -190,7 +190,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         count_label.setObjectName("Muted"); month_head.addWidget(count_label, 0, Qt.AlignBottom)
         stage_layout.addLayout(month_head)
 
-        weekday_grid = QGridLayout(); weekday_grid.setHorizontalSpacing(8)
+        weekday_grid = QGridLayout(); weekday_grid.setHorizontalSpacing(10)
         for col, name in enumerate(RO_WEEKDAYS):
             label = QLabel(name); label.setObjectName("CalendarWeekday")
             label.setAlignment(Qt.AlignCenter)
@@ -198,7 +198,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         stage_layout.addLayout(weekday_grid)
 
         days_grid = QGridLayout()
-        days_grid.setHorizontalSpacing(8); days_grid.setVerticalSpacing(8)
+        days_grid.setHorizontalSpacing(10); days_grid.setVerticalSpacing(10)
         first_col = anchor.weekday()
         last_day = monthrange(anchor.year, anchor.month)[1]
         total_slots = first_col + last_day
@@ -211,29 +211,59 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         self.calendar_day_buttons = {}
         today = date.today()
         for slot in range(first_col):
-            blank = QFrame(); blank.setObjectName("CalendarDayBlank"); blank.setMinimumHeight(82)
+            blank = QFrame(); blank.setObjectName("CalendarDayBlank"); blank.setMinimumHeight(96)
             days_grid.addWidget(blank, 0, slot)
 
         for day_no in range(1, last_day + 1):
             target = date(anchor.year, anchor.month, day_no)
             events = starts.get(day_no, [])
             primary = events[0] if events else None
-            if primary is not None:
-                name = primary.name
-                short = name if len(name) <= 28 else name[:27].rstrip() + "…"
-                extra = f"  +{len(events)-1}" if len(events) > 1 else ""
-                text = f"{day_no}\n{short}{extra}"
-            else:
-                text = f"{day_no}\n "
-
-            button = QPushButton(text)
+            button = QPushButton()
             button.setObjectName("CalendarDay")
             button.setProperty("hasEvent", bool(events))
             button.setProperty("major", any(float(ev.importance) >= .80 for ev in events))
             button.setProperty("selected", target == self.calendar_selected)
             button.setProperty("today", target == today)
-            button.setMinimumHeight(82)
+            button.setProperty("weekend", target.weekday() >= 5)
+            button.setMinimumHeight(96)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+            cell = QVBoxLayout(button)
+            cell.setContentsMargins(12,10,12,10); cell.setSpacing(4)
+            top_line = QHBoxLayout(); top_line.setSpacing(5)
+            number = QLabel(str(day_no)); number.setObjectName("CalendarDayNumber")
+            number.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            top_line.addWidget(number)
+            if target == today:
+                today_tag = QLabel("AZI"); today_tag.setObjectName("CalendarTodayTag")
+                today_tag.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                top_line.addWidget(today_tag)
+            top_line.addStretch(1)
+            if events:
+                dot = QLabel("●"); dot.setObjectName("CalendarEventDot")
+                dot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                top_line.addWidget(dot)
+            cell.addLayout(top_line)
+            cell.addStretch(1)
+
+            if primary is not None:
+                name = primary.name
+                short = name if len(name) <= 31 else name[:30].rstrip() + "…"
+                event_label = QLabel(short); event_label.setObjectName("CalendarDayEvent")
+                event_label.setWordWrap(True)
+                event_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                cell.addWidget(event_label)
+                if len(events) > 1:
+                    extra_count = len(events) - 1
+                    extra = QLabel(f"+{extra_count} reper" + ("e" if extra_count != 1 else ""))
+                    extra.setObjectName("CalendarDayCount")
+                    extra.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                    cell.addWidget(extra)
+            else:
+                quiet = QLabel(" "); quiet.setObjectName("CalendarDayEvent")
+                quiet.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                cell.addWidget(quiet)
+
             if events:
                 button.setToolTip("\n".join(ev.name for ev in events))
             else:
@@ -249,7 +279,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         for offset in range(trailing):
             absolute = total_slots + offset
             row, col = divmod(absolute, 7)
-            blank = QFrame(); blank.setObjectName("CalendarDayBlank"); blank.setMinimumHeight(82)
+            blank = QFrame(); blank.setObjectName("CalendarDayBlank"); blank.setMinimumHeight(96)
             days_grid.addWidget(blank, row, col)
 
         stage_layout.addLayout(days_grid)
@@ -257,12 +287,15 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
 
         spotlight = QFrame(); spotlight.setObjectName("CalendarSpotlight")
         self.calendar_spotlight_layout = QVBoxLayout(spotlight)
-        self.calendar_spotlight_layout.setContentsMargins(24,22,24,22)
-        self.calendar_spotlight_layout.setSpacing(10)
+        self.calendar_spotlight_layout.setContentsMargins(26,24,26,24)
+        self.calendar_spotlight_layout.setSpacing(14)
         content.addWidget(spotlight)
 
-        program_title = QLabel("Filmele zilei")
-        program_title.setObjectName("SectionTitle"); content.addWidget(program_title)
+        program_head = QHBoxLayout()
+        program_title = QLabel("FILMELE ZILEI")
+        program_title.setObjectName("CalendarProgramTitle"); program_head.addWidget(program_title)
+        program_head.addStretch(1)
+        content.addLayout(program_head)
         program = QFrame(); program.setObjectName("CalendarProgram")
         self.calendar_focus_layout = QVBoxLayout(program)
         self.calendar_focus_layout.setContentsMargins(18,18,18,18)
@@ -316,16 +349,25 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         primary = max(candidates, key=lambda item: float(item[0].importance) * float(item[1]), default=None)
         phase = (result or {}).get("phase") or self.s.calendar.season_phase(target)[0]
 
-        top = QHBoxLayout(); top.setSpacing(18)
-        copy = QVBoxLayout(); copy.setSpacing(5)
+        top = QHBoxLayout(); top.setSpacing(22)
+
+        date_tile = QFrame(); date_tile.setObjectName("CalendarDateTile")
+        date_box = QVBoxLayout(date_tile); date_box.setContentsMargins(18,14,18,14); date_box.setSpacing(0)
+        day_big = QLabel(str(target.day)); day_big.setObjectName("CalendarDateNumber"); day_big.setAlignment(Qt.AlignCenter)
+        date_box.addWidget(day_big)
+        month_small = QLabel(RO_MONTHS[target.month].upper()); month_small.setObjectName("CalendarDateMonth"); month_small.setAlignment(Qt.AlignCenter)
+        date_box.addWidget(month_small)
+        year_small = QLabel(str(target.year)); year_small.setObjectName("CalendarDateYear"); year_small.setAlignment(Qt.AlignCenter)
+        date_box.addWidget(year_small)
+        top.addWidget(date_tile, 0, Qt.AlignTop)
+
+        copy = QVBoxLayout(); copy.setSpacing(6)
         eyebrow = "REPER ACTIV AZI" if exact else ("ÎN JURUL UNUI REPER" if nearby else "ZI FĂRĂ REPER MAJOR")
         k = QLabel(eyebrow); k.setObjectName("Kicker"); copy.addWidget(k)
-        dt = QLabel(f"{target.day} {RO_MONTHS[target.month]} {target.year}")
-        dt.setObjectName("HeroTitle"); dt.setWordWrap(True); copy.addWidget(dt)
 
         if primary is not None:
             event, proximity = primary
-            title = QLabel(event.name); title.setObjectName("CardTitle"); title.setWordWrap(True); copy.addWidget(title)
+            title = QLabel(event.name); title.setObjectName("CalendarSpotlightTitle"); title.setWordWrap(True); copy.addWidget(title)
             if exact:
                 explanation = (
                     "Pentru acest reper, filmele factuale trebuie să treacă regula lui specifică. "
@@ -346,7 +388,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
                 pills.addWidget(self.pill(f"+{len(exact)-1} repere azi"))
             pills.addStretch(1); copy.addLayout(pills)
         else:
-            title = QLabel(phase); title.setObjectName("CardTitle"); copy.addWidget(title)
+            title = QLabel(phase); title.setObjectName("CalendarSpotlightTitle"); copy.addWidget(title)
             detail = QLabel(
                 "Nu există un reper calendaristic concret pentru această dată. Calendarul nu dublează "
                 "pagina Recomandări cu filme generale; aici rămâne doar contextul perioadei."
@@ -509,8 +551,8 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
     def calendar_movie_card(self, rec: Recommendation):
         m, s = rec.movie, rec.score
         card = QFrame(); card.setObjectName("CalendarMovieCard"); card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        main = QHBoxLayout(card); main.setContentsMargins(15,15,15,15); main.setSpacing(13)
-        poster = self.poster_label(92,138); main.addWidget(poster, 0, Qt.AlignTop)
+        main = QHBoxLayout(card); main.setContentsMargins(16,16,16,16); main.setSpacing(16)
+        poster = self.poster_label(112,168); main.addWidget(poster, 0, Qt.AlignTop)
         if m.poster_url:
             self.load_poster_async(poster, m.poster_url, m.imdb_id or str(m.id))
         l = QVBoxLayout(); l.setSpacing(5)
@@ -518,12 +560,14 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         score = QLabel(f"{s.predicted_rating:.1f}/10 pentru tine • {round(s.confidence*100)}% încredere")
         score.setObjectName("Score"); l.addWidget(score)
         meta = QLabel(" • ".join(self.movie_chips(m, 5))); meta.setObjectName("Muted"); meta.setWordWrap(True); l.addWidget(meta)
-        relation = QLabel(f"Legătura: {s.calendar_kind} • {s.calendar_reason}")
-        relation.setObjectName("BodyStrong"); relation.setWordWrap(True); l.addWidget(relation)
+        relation_head = QLabel(str(s.calendar_kind or "legătură verificată").upper())
+        relation_head.setObjectName("CalendarRelationKind"); l.addWidget(relation_head)
+        relation = QLabel(s.calendar_reason)
+        relation.setObjectName("CalendarRelationText"); relation.setWordWrap(True); l.addWidget(relation)
         row = QHBoxLayout()
         details = QPushButton("Detalii"); details.clicked.connect(lambda _, r=rec: self.open_details(r)); row.addWidget(details)
         watch = QPushButton("Watchlist"); watch.clicked.connect(lambda _, mid=m.id: self.feedback(mid, "want_to_watch")); row.addWidget(watch)
-        no = QPushButton("Ascunde doar filmul"); no.clicked.connect(lambda _, mid=m.id: self.feedback(mid, "not_interested")); row.addWidget(no)
+        no = QPushButton("Ascunde"); no.clicked.connect(lambda _, mid=m.id: self.feedback(mid, "not_interested")); row.addWidget(no)
         row.addStretch(1); l.addLayout(row)
         main.addLayout(l, 1)
         return card

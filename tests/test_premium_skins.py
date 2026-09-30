@@ -212,6 +212,7 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         assert reopened.theme == service.db.get_setting("theme", "dark")
         assert service.db.get_setting("ui_skin") == "simple"
         assert set(reopened.nav_buttons) == expected_menus
+        assert all(not button.icon().isNull() for button in reopened.nav_buttons.values())
         assert reopened.centralWidget().findChild(QFrame, "UtilityBar") is None
         reopened.show_page("today")
         simple_page = reopened.stack.currentWidget()

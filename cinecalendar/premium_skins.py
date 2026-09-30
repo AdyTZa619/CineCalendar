@@ -725,24 +725,50 @@ def skin_qss(skin: str) -> str:
         QFrame#Sidebar QLabel#Brand {{ color:{c['accent']}; }}
         QFrame#UtilityBar QLineEdit {{ background:{c['card2']}; border-radius:6px; padding:9px 14px; }}
         QFrame#PosterFeature, QFrame#StudioInspector, QFrame#StudioChoice, QFrame#WeekDock {{ background:{c['card']}; border:1px solid {c['border']}; border-radius:{radius}; }}
-        QFrame#CalendarStage, QFrame#CalendarProgram, QFrame#CalendarSpotlight, QFrame#CalendarMovieCard {{
+        QFrame#CalendarStage {{
+            background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {c['card']},stop:.70 {c['surface']},stop:1 {c['card2']});
+            border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QFrame#CalendarProgram, QFrame#CalendarMovieCard {{
             background:{c['card']}; border:1px solid {c['border']}; border-radius:{radius};
         }}
         QFrame#CalendarSpotlight {{
-            background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {c['card2']},stop:.62 {c['card']},stop:1 {c['surface']});
+            background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {c['card2']},stop:.52 {c['card']},stop:1 {c['surface']});
+            border:1px solid {c['border']}; border-left:4px solid {c['accent']}; border-radius:{radius};
         }}
-        QLabel#CalendarWeekday {{ color:{c['muted']}; font-size:10px; font-weight:800; letter-spacing:1px; padding:4px; }}
-        QFrame#CalendarDayBlank {{ background:{c['surface']}; border:1px solid {c['border']}; border-radius:{radius}; }}
+        QFrame#CalendarDateTile {{
+            min-width:96px; max-width:112px; background:{c['surface']}; border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QLabel#CalendarDateNumber {{ color:{c['text']}; font-size:40px; font-weight:900; }}
+        QLabel#CalendarDateMonth {{ color:{c['accent']}; font-size:11px; font-weight:900; letter-spacing:1.4px; }}
+        QLabel#CalendarDateYear {{ color:{c['muted']}; font-size:11px; font-weight:700; }}
+        QLabel#CalendarSpotlightTitle {{ color:{c['text']}; font-family:{title_font}; font-size:26px; font-weight:850; }}
+        QLabel#CalendarProgramTitle {{ color:{c['text']}; font-size:12px; font-weight:900; letter-spacing:1.8px; padding-top:4px; }}
+        QLabel#CalendarWeekday {{ color:{c['muted']}; font-size:10px; font-weight:850; letter-spacing:1.2px; padding:5px; }}
+        QFrame#CalendarDayBlank {{
+            background:rgba(255,255,255,.018); border:1px solid {c['border']}; border-radius:{radius};
+        }}
         QPushButton#CalendarDay {{
-            min-height:70px; text-align:left; padding:10px; background:{c['surface']};
-            color:{c['text']}; border:1px solid {c['border']}; border-radius:{radius}; font-weight:700;
+            min-height:86px; padding:0; background:{c['surface']};
+            color:{c['text']}; border:1px solid {c['border']}; border-radius:{radius};
         }}
         QPushButton#CalendarDay:hover {{ background:{c['card2']}; border-color:{c['accent']}; }}
+        QPushButton#CalendarDay[weekend='true'] {{ background:{c['card']}; }}
         QPushButton#CalendarDay[hasEvent='true'] {{ background:{c['card2']}; border-color:{c['accent']}; }}
-        QPushButton#CalendarDay[major='true'] {{ font-weight:800; }}
         QPushButton#CalendarDay[today='true'] {{ border:2px solid {c['good']}; }}
-        QPushButton#CalendarDay[selected='true'] {{ background:{c['accent']}; color:{c['on']}; border:2px solid {c['accent']}; }}
+        QPushButton#CalendarDay[selected='true'] {{
+            background:{c['card2']}; border:2px solid {c['accent']};
+        }}
+        QLabel#CalendarDayNumber {{ color:{c['text']}; font-size:17px; font-weight:900; }}
+        QLabel#CalendarTodayTag {{ color:{c['good']}; font-size:9px; font-weight:900; letter-spacing:1px; }}
+        QLabel#CalendarEventDot {{ color:{c['accent']}; font-size:11px; }}
+        QLabel#CalendarDayEvent {{ color:{c['muted']}; font-size:11px; font-weight:700; }}
+        QLabel#CalendarDayCount {{ color:{c['accent']}; font-size:10px; font-weight:800; }}
+        QPushButton#CalendarDay[selected='true'] QLabel#CalendarDayNumber,
+        QPushButton#CalendarDay[selected='true'] QLabel#CalendarDayEvent {{ color:{c['text']}; }}
         QFrame#CalendarMovieCard:hover {{ border-color:{c['accent']}; }}
+        QLabel#CalendarRelationKind {{ color:{c['accent']}; font-size:10px; font-weight:900; letter-spacing:1.2px; }}
+        QLabel#CalendarRelationText {{ color:{c['text']}; font-size:13px; font-weight:600; }}
         QFrame#StudioChoice[selected='true'] {{ border:2px solid {c['accent']}; background:{c['card2']}; }}
         QFrame#StudioChoice QLabel#ScoreLarge {{ color:{c['accent']}; }}
         QFrame#PosterTile {{ background:{c['surface']}; border:1px solid {c['border']}; border-radius:9px; }}
@@ -1566,6 +1592,11 @@ def install_premium_skins(window_cls) -> None:
         self.skin = normalized_skin(self.db.get_setting("ui_skin", "cinematic"))
         if self.skin == "simple":
             original_build_shell(self)
+            icon_color = PALETTES["simple"]["accent"]
+            for key, button in self.nav_buttons.items():
+                button.setIcon(_icon(key, icon_color, 17))
+                button.setIconSize(QSize(19, 19))
+                button.setToolTip(_display_nav(key, dict(self.NAV).get(key, key)))
         else:
             build_skin_shell(self)
 
