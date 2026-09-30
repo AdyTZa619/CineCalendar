@@ -13,12 +13,11 @@ from PySide6.QtWidgets import (
 
 from . import __version__ as APP_VERSION
 from .candidate_metadata_v48 import (
-    CandidateMetadataPreflight,
     MAX_PREFLIGHT_TITLES,
-    PREFLIGHT_POOL_SIZE,
     coverage_report,
     metadata_snapshot,
     missing_metadata_labels,
+    prepare_browse_round,
     reset_metadata_cache,
 )
 from .feedback import daily_contextual_feedback
@@ -912,7 +911,7 @@ class PremiumDecisionWindow(DecisionWindow):
             self.browse_cache_signature = None
             self.recommendation_metadata_report = {"state": "idle"}
 
-        content.addWidget(self.loading_panel("Construiesc selecția…","Caut printre filme nevăzute și evit titlurile deja evaluate, respinse sau repetate prea des."))
+        content.addWidget(self.loading_panel("Construiesc selecția…","Verific datele candidaților principali înainte de clasare. Sursele lente au o limită de timp; apoi vezi alegerea disponibilă."))
         content.addStretch(1)
         QTimer.singleShot(0,self._load_browse_async)
         return page
@@ -928,29 +927,31 @@ class PremiumDecisionWindow(DecisionWindow):
         self.browse_generation += 1
         generation_signature = self._browse_state_signature()
         self.set_status("Calculez recomandările…",True)
-        worker=WorkerThread(lambda progress:self.s.recommender.recommend(date.today(),PREFLIGHT_POOL_SIZE,exclude_ids=set(self.session_skips),record=False,slot="browse",candidate_limit=45000,mode="decide"),self)
+        worker=WorkerThread(lambda progress:prepare_browse_round(
+            self.s.recommender, self.db, when=date.today(),
+            exclude_ids=set(self.session_skips), attempted_ids=self.metadata_attempted,
+            token=str(self.db.get_setting("tmdb_token", "") or ""), progress=progress,
+        ),self)
         self.browse_worker=worker
-        def success(recs):
+        def success(payload):
             self.browse_worker=None
             if generation_signature != self._browse_state_signature():
                 self.set_status("Datele s-au schimbat; actualizez recomandările.", False)
                 if self.current_page == "recommendations" and not self._ui_closing:
                     QTimer.singleShot(0, self._load_browse_async)
                 return
-            self.browse_result=list(recs)
+            self.browse_result=list(payload.get("recommendations") or [])
             self.browse_cache_signature=generation_signature
-            self.set_status("Recomandările sunt gata.",False)
-            coverage=coverage_report(self.browse_result[:12])
-            self.recommendation_metadata_report={
-                "state":"checking", "before":coverage, "after":coverage,
-                "attempted":0, "changed_titles":0, "ranking_fields_added":{},
-                "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
-                "pool_size":len(self.browse_result),
-            }
+            self.recommendation_metadata_report=dict(payload.get("report") or {})
+            report=self.recommendation_metadata_report
+            self.set_status(
+                "Recomandările sunt gata; verificarea surselor a fost parțială."
+                if report.get("state") in {"partial", "failed"} else
+                "Recomandările sunt gata, cu datele verificate înainte de clasare.",
+                False,
+            )
             if self.current_page=="recommendations":
-                # Show the locally ranked list immediately; metadata enrichment continues separately.
-                self._render_browse(self.browse_result[:12])
-                self._ensure_metadata(self.browse_result,"recommendations")
+                self._render_browse(self.browse_result)
         def failure(message):
             self.browse_worker=None
             self.browse_cache_signature=None
@@ -1120,6 +1121,9 @@ class PremiumDecisionWindow(DecisionWindow):
             title="Verific metadatele înainte de clasarea finală"
             pool=int(report.get("pool_size",total) or total)
             detail=f"Completez cu prioritate cele 12 filme vizibile, apoi folosesc eventualele verificări rămase pentru finaliștii apropiați dintre {pool} de candidați."
+        elif bool(report.get("rerank_failed")):
+            title="Clasarea locală a fost păstrată"
+            detail="Datele noi nu au putut fi aplicate printr-o recalculare completă. Poți încerca din nou; lista afișată folosește scorurile locale anterioare."
         elif state == "failed":
             title="Clasarea sigură a fost păstrată"
             failed=int(report.get("failed",0) or 0); attempted=int(report.get("attempted",0) or 0)
@@ -1131,15 +1135,14 @@ class PremiumDecisionWindow(DecisionWindow):
         elif state == "partial":
             title="Date completate parțial; clasarea rămâne protejată"
             failed=int(report.get("failed",0) or 0); attempted=int(report.get("attempted",0) or 0)
-            detail=f"Sursele publice nu au răspuns pentru {failed}/{attempted} titluri verificate. Au fost folosite numai datele factuale confirmate."
-        elif bool(report.get("rerank_deferred")):
-            title="Date noi pregătite pentru următoarea recalculare"
-            fields=sum(len(value) for value in (report.get("ranking_fields_added") or {}).values())
-            detail=f"Au fost adăugate {fields} câmpuri factuale în fundal. Lista curentă nu se reordonează singură; «Recalculează» le aplică."
+            detail=(
+                f"Sursele publice nu au răspuns pentru {failed}/{attempted} titluri verificate. "
+                + ("Datele confirmate au fost aplicate înainte de afișare." if report.get("reranked") else "Clasarea locală a rămas disponibilă.")
+            )
         elif bool(report.get("reranked")):
             title="Clasare recalculată după completarea datelor"
-            fields=sum(len(value) for value in (report.get("ranking_fields_added") or {}).values())
-            detail=f"Au fost adăugate {fields} câmpuri factuale care influențează gustul; ordinea finală a fost calculată o singură dată din nou."
+            changed=len(report.get("ranking_changed_ids") or report.get("ranking_fields_added") or {})
+            detail=f"Datele factuale ale {changed} filme au fost completate; scorurile au fost recalculate înainte de afișarea listei."
         elif int(report.get("changed_titles",0) or 0) > 0:
             title="Detalii completate; ordinea a rămas neschimbată"
             detail="S-au completat numai elemente vizuale sau informative, fără un motiv factual de reclasare."
@@ -1203,16 +1206,13 @@ class PremiumDecisionWindow(DecisionWindow):
         self.metadata_attempted.difference_update(ids)
         reset_metadata_cache(self.db,ids)
         coverage=coverage_report(list(self.browse_result or [])[:12])
-        self.recommendation_metadata_report={
-            "state":"checking", "before":coverage, "after":coverage,
-            "attempted":0, "changed_titles":0, "ranking_fields_added":{},
-            "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
-            "pool_size":len(self.browse_result), "retrying":True,
-        }
+        self.recommendation_metadata_report={"state":"checking", "before":coverage, "after":coverage}
         self.set_status(f"Reverific {len(ids)} filme cu date lipsă…",True)
-        if self.current_page=="recommendations":
-            self._render_browse(self.browse_result)
-        self._ensure_recommendation_metadata(list(self.browse_result))
+        invalidate=getattr(self.s.recommender,"invalidate_round",None)
+        if callable(invalidate): invalidate("browse")
+        self.browse_result=[]
+        self.browse_cache_signature=None
+        self.show_page("recommendations")
 
     def compact_recommendation_card(self,rec:Recommendation,index:int):
         m,s=rec.movie,rec.score
@@ -1288,9 +1288,6 @@ class PremiumDecisionWindow(DecisionWindow):
 
     # ---------- metadata enrichment ----------
     def _ensure_metadata(self,recs:Iterable[Recommendation],page_key:str):
-        if page_key == "recommendations":
-            self._ensure_recommendation_metadata(list(recs))
-            return
         if self.metadata_worker and self.metadata_worker.isRunning(): return
         targets=[]
         token=str(self.db.get_setting("tmdb_token","") or "").strip()
@@ -1330,74 +1327,6 @@ class PremiumDecisionWindow(DecisionWindow):
                 elif page_key=="recommendations":self._render_browse(self.browse_result)
         def fail(_):
             self.metadata_worker=None; self.set_status("Recomandările sunt gata; unele descrieri nu au putut fi completate.",False)
-        worker.success.connect(done); worker.failure.connect(fail); worker.start()
-
-    def _ensure_recommendation_metadata(self,recs:list[Recommendation]):
-        if self.metadata_worker and self.metadata_worker.isRunning(): return
-        generation=int(self.browse_generation)
-        token=str(self.db.get_setting("tmdb_token","") or "").strip()
-
-        def fn(progress):
-            preflight=CandidateMetadataPreflight(self.db,token)
-            report=preflight.run(
-                recs,
-                attempted_ids=self.metadata_attempted,
-                limit=MAX_PREFLIGHT_TITLES,
-                progress=progress,
-            )
-            report["pool_before"]=dict(report.get("before") or {})
-            report["before"]=coverage_report(recs[:12])
-            final=list(recs[:12])
-            report["reranked"]=False
-            report["rerank_deferred"]=bool(report.get("ranking_change"))
-            report["after"]=coverage_report(final)
-            return {"report":report,"recommendations":final}
-
-        worker=WorkerThread(fn,self); self.metadata_worker=worker
-        worker.message.connect(lambda message:self.set_status(message,True))
-
-        def done(payload):
-            self.metadata_worker=None
-            if generation != int(self.browse_generation):
-                if self.current_page=="recommendations" and self.browse_result:
-                    self._ensure_recommendation_metadata(list(self.browse_result))
-                return
-            self.recommendation_metadata_report=dict(payload.get("report") or {})
-            self.browse_result=list(payload.get("recommendations") or recs)
-            changed=int(self.recommendation_metadata_report.get("changed_titles",0) or 0)
-            state=str(self.recommendation_metadata_report.get("state") or "completed")
-            failed=int(self.recommendation_metadata_report.get("failed",0) or 0)
-            if state == "failed":
-                message="Recomandările sunt gata; sursele de metadate nu au răspuns."
-            elif state == "partial":
-                message=f"Recomandările sunt gata; {failed} titluri nu au putut fi verificate."
-            elif self.recommendation_metadata_report.get("rerank_deferred"):
-                message="Recomandările sunt gata; metadatele noi vor intra la următoarea recalculare."
-            elif changed:
-                message="Recomandările sunt gata; detaliile au fost completate în fundal."
-            else:
-                message="Recomandările sunt gata; ordinea curentă rămâne stabilă."
-            self.set_status(message,False)
-            if self.current_page=="recommendations":
-                self._render_browse(self.browse_result)
-
-        def fail(message):
-            self.metadata_worker=None
-            if generation != int(self.browse_generation):
-                if self.current_page=="recommendations" and self.browse_result:
-                    self._ensure_recommendation_metadata(list(self.browse_result))
-                return
-            coverage=coverage_report(recs)
-            self.recommendation_metadata_report={
-                "state":"failed", "before":coverage, "after":coverage,
-                "attempted":0, "changed_titles":0, "ranking_fields_added":{},
-                "ranking_change":False, "reranked":False, "io_limit":MAX_PREFLIGHT_TITLES,
-                "error":str(message),
-            }
-            self.set_status("Recomandările sunt gata; sursa de metadate nu a răspuns.",False)
-            if self.current_page=="recommendations":
-                self._render_browse(self.browse_result)
-
         worker.success.connect(done); worker.failure.connect(fail); worker.start()
 
     def open_details(self,rec:Recommendation):

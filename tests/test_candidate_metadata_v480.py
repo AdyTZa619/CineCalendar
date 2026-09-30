@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from cinecalendar.candidate_metadata_v48 import (
     CandidateMetadataPreflight,
     coverage_report,
+    prepare_browse_round,
     ranking_completeness,
     reset_metadata_cache,
 )
@@ -192,6 +194,27 @@ def test_visual_only_metadata_never_requests_a_rerank():
     assert report["ranking_change"] is False
 
 
+def test_new_keywords_request_rerank_even_when_synopsis_already_exists():
+    rec = _rec(
+        1, genres=["Drama"], directors=["Director"], countries=["Romania"],
+        overview="Existing synopsis", runtime_min=95,
+    )
+
+    class KeywordsProvider:
+        def __init__(self, _db):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.keywords = ["history"]
+
+    report = CandidateMetadataPreflight(
+        object(), open_factory=KeywordsProvider,
+    ).run([rec])
+    assert report["ranking_fields_added"] == {}
+    assert report["ranking_changed_ids"] == [1]
+    assert report["ranking_change"] is True
+
+
 def test_wikimedia_fallback_still_runs_when_tmdb_fails():
     rec = _rec(1)
     report = CandidateMetadataPreflight(
@@ -289,22 +312,84 @@ def test_explicit_retry_clears_only_selected_movie_provider_cache(tmp_path):
     assert all("tt9000002" in row["cache_key"] or "/movie/802?" in row["cache_key"] for row in remaining)
 
 
-def test_recommendations_ui_exposes_coverage_without_blocking_or_silent_rerank():
+def test_recommendations_ui_exposes_coverage_and_final_rerank():
     source = (Path(__file__).parents[1] / "cinecalendar" / "premium_ui.py").read_text(encoding="utf-8")
     assert "DATELE RECOMANDĂRILOR" in source
     assert "verificări per listă" in source
-    assert 'report["rerank_deferred"]=bool(report.get("ranking_change"))' in source
-    assert 'report["reranked"]=False' in source
-    assert "metadatele noi vor intra la următoarea recalculare" in source
+    assert "prepare_browse_round(" in source
+    assert "scorurile au fost recalculate înainte de afișarea listei" in source
     assert 'elif state == "partial":' in source
-    success = source.split("def success(recs):", 1)[1].split("def failure(message):", 1)[0]
-    assert "_ensure_metadata" in success
-    assert "_render_browse(self.browse_result[:12])" in success
-    assert success.index("_render_browse(self.browse_result[:12])") < success.index("_ensure_metadata")
-    assert "PREFLIGHT_POOL_SIZE" in source
+    success = source.split("def success(payload):", 1)[1].split("def failure(message):", 1)[0]
+    assert "_render_browse(self.browse_result)" in success
     assert 'choose=QPushButton("Aleg filmul")' in source
     assert "ResponsiveRecommendationGrid" in source
     assert "reason.setMaximumHeight(58)" not in source
     assert 'QPushButton(f"Reîncearcă doar lipsurile ({len(retryable)})")' in source
     assert "reset_metadata_cache(self.db,ids)" in source
     assert 'QLabel("Date: "+str(result.get("reason")' in source
+
+
+def test_browse_round_recalculates_before_publish_when_metadata_changes():
+    first = _rec(1)
+    second = _rec(2)
+    second.movie.imdb_id = None
+
+    class Provider:
+        def __init__(self, _db):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.genres = ["History"]
+
+    class Recommender:
+        def __init__(self):
+            self.calls = 0
+
+        def recommend(self, **_kwargs):
+            self.calls += 1
+            return [second, first] if first.movie.genres else [first, second]
+
+    engine = Recommender()
+    result = prepare_browse_round(
+        engine, object(), when=date(2026, 9, 30),
+        exclude_ids=set(), attempted_ids=set(),
+        preflight_factory=lambda db, token: CandidateMetadataPreflight(
+            db, token, open_factory=Provider,
+        ),
+    )
+    assert engine.calls == 2
+    assert [rec.movie.id for rec in result["recommendations"]] == [2, 1]
+    assert result["report"]["reranked"] is True
+    assert result["report"]["rerank_deferred"] is False
+    assert result["report"]["before"]["missing"]["genres"] == 2
+
+
+def test_browse_round_keeps_local_ranking_when_second_pass_fails():
+    first = _rec(1)
+
+    class Provider:
+        def __init__(self, _db):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.genres = ["Drama"]
+
+    class Recommender:
+        calls = 0
+
+        def recommend(self, **_kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                raise RuntimeError("second pass failed")
+            return [first]
+
+    result = prepare_browse_round(
+        Recommender(), object(), when=date(2026, 9, 30),
+        exclude_ids=set(), attempted_ids=set(),
+        preflight_factory=lambda db, token: CandidateMetadataPreflight(
+            db, token, open_factory=Provider,
+        ),
+    )
+    assert result["recommendations"] == [first]
+    assert result["report"]["rerank_failed"] is True
+    assert result["report"]["state"] == "partial"

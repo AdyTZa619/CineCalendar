@@ -91,6 +91,18 @@ def ranking_fields_added(before: dict[str, bool], after: dict[str, bool]) -> lis
     return [field for field in _RANKING_FIELDS if not before[field] and after[field]]
 
 
+def ranking_fingerprint(movie: Movie) -> tuple:
+    """Actual taste inputs, so a new keyword is noticed even if a synopsis already exists."""
+    return (
+        tuple(movie.genres or ()),
+        tuple(movie.directors or ()),
+        tuple(movie.countries or ()),
+        str(movie.overview or ""),
+        tuple(movie.keywords or ()),
+        movie.runtime_min,
+    )
+
+
 def missing_metadata_labels(movie: Movie) -> list[str]:
     snapshot = metadata_snapshot(movie)
     return [_FIELD_LABELS[field] for field in (*_RANKING_FIELDS, "poster") if not snapshot[field]]
@@ -190,8 +202,8 @@ class CandidateMetadataPreflight:
         progress: Callable[[str], None] | None = None,
     ) -> dict:
         recs = list(recommendations)
-        # Persist the whole probable pool before the bounded foreground check. Titles that do
-        # not fit in this 20-second pass remain available to Metadata Doctor in the background.
+        # Persist the whole probable pool before the bounded check. Titles that do not fit
+        # in this pass remain available to Metadata Doctor in the background.
         if hasattr(self.db, "connect"):
             queue_recommendation_metadata(self.db, recs, visible=PREFLIGHT_VISIBLE_SIZE)
         before_coverage = coverage_report(recs)
@@ -246,6 +258,7 @@ class CandidateMetadataPreflight:
 
         tmdb, open_provider = self._providers()
         ranking_added: dict[int, list[str]] = {}
+        ranking_changed: list[int] = []
         visual_added = 0
         changed_titles = 0
         failed = 0
@@ -264,6 +277,7 @@ class CandidateMetadataPreflight:
             movie = rec.movie
             attempted_ids.add(int(movie.id))
             before = metadata_snapshot(movie)
+            before_ranking = ranking_fingerprint(movie)
             before_content = (movie.overview, movie.poster_url, movie.runtime_min)
             # With no usable provider this title was attempted but could not be checked.
             # A missing optional TMDb token alone is not an error because Wikimedia is the
@@ -309,6 +323,8 @@ class CandidateMetadataPreflight:
             added = ranking_fields_added(before, after)
             if added:
                 ranking_added[int(movie.id)] = added
+            if ranking_fingerprint(movie) != before_ranking:
+                ranking_changed.append(int(movie.id))
             if not before["poster"] and after["poster"]:
                 visual_added += 1
             if before != after or before_content != after_content:
@@ -379,7 +395,8 @@ class CandidateMetadataPreflight:
             "changed_titles": changed_titles,
             "failed": failed,
             "ranking_fields_added": ranking_added,
-            "ranking_change": bool(ranking_added),
+            "ranking_changed_ids": ranking_changed,
+            "ranking_change": bool(ranking_changed),
             "visual_added": visual_added,
             "providers": sorted(providers_used),
             "timed_out": timed_out,
@@ -391,3 +408,75 @@ class CandidateMetadataPreflight:
             "after": coverage_report(recs),
             "io_limit": MAX_PREFLIGHT_TITLES,
         }
+
+
+def prepare_browse_round(
+    recommender,
+    db,
+    *,
+    when,
+    exclude_ids: set[int],
+    attempted_ids: set[int],
+    token: str = "",
+    progress: Callable[[str], None] | None = None,
+    preflight_factory: Callable | None = None,
+    budget_seconds: float = 8.0,
+) -> dict:
+    """Publish one ranked list after a bounded fact check, with a local fallback.
+
+    Alpha keeps the comparison pair frozen during the first pass but does not audit an
+    invisible list. Only a factual scoring change invalidates that pair for one final run.
+    """
+    kwargs = dict(
+        when=when, count=PREFLIGHT_POOL_SIZE, exclude_ids=exclude_ids,
+        record=False, slot="browse", candidate_limit=45000, mode="decide",
+    )
+    preview = getattr(recommender, "preview_recommend", None)
+    initial = list((preview if callable(preview) else recommender.recommend)(**kwargs))
+    before = coverage_report(initial[:PREFLIGHT_VISIBLE_SIZE])
+    factory = preflight_factory or CandidateMetadataPreflight
+    try:
+        report = factory(db, token).run(
+            initial, attempted_ids=attempted_ids, limit=MAX_PREFLIGHT_TITLES,
+            budget_seconds=budget_seconds, progress=progress,
+        )
+    except Exception as exc:
+        report = {
+            "state": "failed", "attempted": 0, "changed_titles": 0,
+            "failed": 0, "ranking_fields_added": {}, "ranking_change": False,
+            "timed_out": False, "error": str(exc),
+        }
+    report["pool_before"] = dict(report.get("before") or {})
+    report["before"] = before
+    report["reranked"] = False
+    report["rerank_deferred"] = False
+    report["io_limit"] = MAX_PREFLIGHT_TITLES
+    report["pool_size"] = len(initial)
+
+    final = initial
+    if report.get("ranking_change"):
+        invalidate = getattr(recommender, "invalidate_round", None)
+        if callable(invalidate):
+            invalidate("browse")
+        try:
+            recalculated = list(recommender.recommend(**kwargs))
+            if initial and not recalculated:
+                raise RuntimeError("Recalcularea nu a returnat filme.")
+            final = recalculated
+            report["reranked"] = True
+        except Exception as exc:
+            # Keep the original, locally ranked list if the second pass fails.
+            report["rerank_failed"] = True
+            report["error"] = str(exc)
+            report["state"] = "partial"
+    elif callable(preview):
+        # Reuses the frozen pair; this is the only audit row for an unchanged Alpha round.
+        try:
+            final = list(recommender.recommend(**kwargs))
+        except Exception as exc:
+            report["state"] = "partial"
+            report["error"] = str(exc)
+
+    final = final[:PREFLIGHT_VISIBLE_SIZE]
+    report["after"] = coverage_report(final)
+    return {"recommendations": final, "report": report}

@@ -313,6 +313,7 @@ class AlphaTrialRecommender:
     def recommend(
         self, when=None, count=3, exclude_ids=None, record=False, slot="today",
         candidate_limit=100000, mode="decide", runtime_max=None, runtime_min=None,
+        preview=False,
     ):
         when = when or date.today()
         kwargs = dict(
@@ -352,15 +353,22 @@ class AlphaTrialRecommender:
                 "generated_at": generated_at,
             }
         active_recs = v5_recs if self.mode == MODE_V5_20 else v16_recs
-        self._annotate_and_persist(
-            active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
-            round_id=round_id, generated_at=generated_at,
-        )
-        if record and active_recs:
+        # The metadata preflight needs a candidate pool, but only the final, visible round
+        # belongs in the trial audit. Keep the pair frozen for the publishing call.
+        if not preview:
+            self._annotate_and_persist(
+                active_recs, v16_recs, v5_recs, when=when, slot=slot_key,
+                round_id=round_id, generated_at=generated_at,
+            )
+        if record and active_recs and not preview:
             recorder = getattr(self.active, "_record_selected", None)
             if callable(recorder):
                 recorder(active_recs, when, slot, len(active_recs))
         return active_recs
+
+    def preview_recommend(self, **kwargs):
+        """Compute a frozen candidate pair without recording an unshown Alpha round."""
+        return self.recommend(**kwargs, preview=True)
 
     def recommend_romanian(self, when=None, count=9):
         """Run the Romanian lane as the same frozen V16/V5 comparison used elsewhere."""

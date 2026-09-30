@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from cinecalendar.db import Database
+from cinecalendar.candidate_metadata_v48 import CandidateMetadataPreflight, prepare_browse_round
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
 from cinecalendar.util import json_dumps, utcnow_iso
 from cinecalendar.v5_rating_snapshot import rating_history_snapshot, report_rating_freshness
@@ -167,6 +168,60 @@ def test_model_switch_reuses_the_exact_same_frozen_pair(tmp_path):
             "SELECT round_id FROM v5_trial_audit ORDER BY id DESC LIMIT 1"
         ).fetchone()["round_id"]
     assert second_round == first_round
+
+
+def test_preview_does_not_audit_unshown_candidates_and_publishing_reuses_pair(tmp_path):
+    db = Database(tmp_path / "trial-preview.db")
+    v16 = FakeEngine([_rec(1, .75), _rec(2, .72)])
+    v5 = FakeEngine([_rec(2, .81), _rec(1, .74)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    kwargs = dict(when=date(2026, 9, 30), count=2, slot="browse", candidate_limit=45000)
+
+    proxy.preview_recommend(**kwargs)
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM v5_trial_audit").fetchone()[0] == 0
+
+    proxy.recommend(**kwargs)
+    assert (v16.recommend_calls, v5.recommend_calls) == (1, 1)
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM v5_trial_audit").fetchone()[0] == 2
+
+
+def test_metadata_rerank_audits_only_the_final_alpha_order(tmp_path):
+    db = Database(tmp_path / "trial-metadata.db")
+    first = _rec(1, .75)
+    second = _rec(2, .72)
+    second.movie.imdb_id = None
+
+    class DynamicEngine(FakeEngine):
+        def recommend(self, **kwargs):
+            self.recommend_calls += 1
+            return [second, first] if first.movie.genres else [first, second]
+
+    class Provider:
+        def __init__(self, _db):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.genres = ["History"]
+
+    v16, v5 = DynamicEngine([first, second]), FakeEngine([first, second])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    result = prepare_browse_round(
+        proxy, db, when=date(2026, 9, 30), exclude_ids=set(), attempted_ids=set(),
+        preflight_factory=lambda source, token: CandidateMetadataPreflight(
+            object(), token, open_factory=Provider,
+        ),
+    )
+
+    assert [rec.movie.id for rec in result["recommendations"]] == [2, 1]
+    assert result["report"]["reranked"] is True
+    assert (v16.recommend_calls, v5.recommend_calls) == (2, 2)
+    with db.connect() as con:
+        rows = con.execute(
+            "SELECT movie_id,active_rank FROM v5_trial_audit WHERE slot='browse' ORDER BY id"
+        ).fetchall()
+    assert [(row["movie_id"], row["active_rank"]) for row in rows] == [(2, 1), (1, 2)]
 
 
 def test_explicit_invalidation_forces_a_fresh_pair(tmp_path):

@@ -165,7 +165,7 @@ jobs:
           Home folosește o poartă finală de încredere care cere mai multe semnale independente înainte de Top 3.
           După minimum 170 de ratinguri, raportul ALS/conținut poate fi calibrat local pe istoricul tău; 70/30 rămâne activ dacă nicio alternativă nu câștigă stabil.
           Recalibrarea nu este repornită de feedback contextual și așteaptă un lot relevant de ratinguri noi; formula activă este verificată pe rezultate reale și poate reveni automat la baseline dacă două semnale independente regresează.
-          În Recomandări, până la 6 ținte cu impact sunt alese dintre 36 de finaliști; preflight-ul are buget total de timp, cache și fallback Wikimedia, iar TMDb selectează postere w500 română/engleză.
+          În Recomandări, până la 12 titluri sunt verificate dintre 36 de finaliști înainte de clasarea afișată; verificarea are buget de timp, cache și fallback Wikimedia, iar TMDb selectează postere w500 română/engleză.
           Home arată un singur scor final și separă potrivirea de ușurința de pornire. TMDb preferă descrierea în română, arată sursa în Detalii, iar tokenul validat este activ imediat fără restart.
           După „L-am văzut”, CineCalendar așteaptă nota reală din profilul IMDb, o verifică automat și confirmă importul fără să ceară aceeași notă în aplicație.
           Lista finală de 12 este afișată o singură dată, permite alegerea directă și păstrează formula ALS/conținut completă în telemetrie. Protecția live se actualizează după alegeri, vizionări și ratinguri.
@@ -292,7 +292,7 @@ jobs:
             version = $version
             url = $url
             sha256 = $sha
-            notes = 'V5 Alpha: canal automat separat. Datele Alpha și Stable rămân separate.'
+            notes = 'Alpha 31: Recomandări verifică metadatele candidaților înainte de afișare și recalculează scorurile dacă apar informații relevante. Sursele lente păstrează clasarea locală ca rezervă. Istoricul de trial înregistrează doar lista finală.'
             publishedAt = [DateTime]::UtcNow.ToString('o')
             channel = 'alpha'
           } | ConvertTo-Json -Depth 4

@@ -9,23 +9,18 @@ def _premium_source() -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_recommendations_render_before_metadata_preflight():
+def test_recommendations_render_only_after_bounded_preflight():
     source = _premium_source()
     start = source.index("def _load_browse_async")
     end = source.index("def _render_browse", start)
     block = source[start:end]
 
-    assert block.index("self._render_browse(self.browse_result[:12])") < block.index(
-        'self._ensure_metadata(self.browse_result,"recommendations")'
-    )
+    assert "prepare_browse_round(" in block
+    assert block.index("prepare_browse_round(") < block.index("self._render_browse(self.browse_result)")
 
 
-def test_metadata_does_not_silently_rerank_visible_list():
+def test_metadata_report_explains_final_rerank_and_fallback():
     source = _premium_source()
-    start = source.index("def _ensure_recommendation_metadata")
-    end = source.index("def open_details", start)
-    block = source[start:end]
-
-    assert 'report["rerank_deferred"]=bool(report.get("ranking_change"))' in block
-    assert 'final=list(recs[:12])' in block
-    assert 'final=list(self.s.recommender.recommend(' not in block
+    assert "Clasare recalculată după completarea datelor" in source
+    assert "Clasarea locală a fost păstrată" in source
+    assert "metadatele noi vor intra la următoarea recalculare" not in source
