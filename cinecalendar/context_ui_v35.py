@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
-
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
 
-UI_CONTEXT_VERSION = "context-ui-v3.5.1"
+UI_CONTEXT_VERSION = "context-ui-v3.5.2"
 
 
 def install_context_ui_v35(window_cls) -> None:
@@ -55,27 +53,8 @@ def install_context_ui_v35(window_cls) -> None:
 
     window_cls.page_shell = page_shell
 
-    original_calendar_card = getattr(window_cls, "calendar_movie_card", None)
-    if callable(original_calendar_card):
-        def calendar_movie_card(self, rec):
-            card = original_calendar_card(self, rec)
-            try:
-                target = getattr(self, "calendar_selected", None) or date.today()
-                why = self.s.calendar.why_now(rec.movie, target)
-                reason = str(why.get("reason") or "").strip()
-                phase = str(why.get("phase") or "").strip()
-                if reason:
-                    text = "De ce acum: " + reason
-                    if phase:
-                        text += " • " + phase
-                    label = QLabel(text)
-                    label.setObjectName("Muted")
-                    label.setWordWrap(True)
-                    card.layout().addWidget(label)
-            except Exception:
-                pass
-            return card
-
-        window_cls.calendar_movie_card = calendar_movie_card
+    # CalendarPremiumWindow already renders the verified event relation inside each movie card.
+    # Do not append a second root-layout "De ce acum" label here: on the horizontal card it
+    # becomes a detached right-hand column and duplicates the same evidence.
 
     window_cls._cinecalendar_context_v35_installed = True

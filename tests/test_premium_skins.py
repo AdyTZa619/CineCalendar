@@ -100,6 +100,17 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
                        for button in calendar_page.findChildren(QPushButton))
             assert "CalendarDateTile" in QApplication.instance().styleSheet()
 
+            # One integrated calendar-relation block only. The removed legacy context patch
+            # must not append a detached "De ce acum" column to the root card layout.
+            recs[0].score.calendar_kind = "istorică"
+            recs[0].score.calendar_reason = "Legătură verificată pentru test."
+            calendar_card = window.calendar_movie_card(recs[0])
+            assert len(calendar_card.findChildren(QLabel, "CalendarRelationKind")) == 1
+            assert any(label.text() == "Legătură verificată pentru test."
+                       for label in calendar_card.findChildren(QLabel, "CalendarRelationText"))
+            assert not any(label.text().startswith("De ce acum:")
+                           for label in calendar_card.findChildren(QLabel))
+
             window.today_result = (recs[0], recs[1:3])
             window.today_cache_signature = window._today_signature()
             window.today_gallery = recs[3:]
@@ -345,6 +356,13 @@ def test_stable_runtime_keeps_v16_and_full_skin_navigation(tmp_path, monkeypatch
                        for button in page.findChildren(QPushButton))
             assert all(callable(getattr(window, f"page_{key}", None))
                        for key in stable_menus)
+            # Stable must be able to construct every destination under every skin, not merely
+            # expose a button for it.
+            for key in stable_menus:
+                if key == "calendar":
+                    continue
+                window.show_page(key)
+                assert window.stack.currentWidget() is not None
     finally:
         window.close()
         app.processEvents()

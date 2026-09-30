@@ -186,7 +186,7 @@ def test_context_diagnostics_are_in_canonical_ui_composition():
     patch = inspect.getsource(install_context_ui_v35)
     assert "install_context_ui_v35(window_cls)" in composition
     assert "Motor recomandări • diagnostic" in patch
-    assert "De ce acum:" in patch
+    assert "calendar_movie_card" not in patch
 
 
 def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar():
