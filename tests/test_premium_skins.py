@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea, QStackedWidget, QTableWidget
+from PySide6.QtCore import QTimer, QEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLabel, QPushButton, QScrollArea, QStackedWidget, QTableWidget
 from PySide6.QtGui import QPixmap
 
 from cinecalendar.models import Movie, Recommendation, ScoreBreakdown
@@ -26,7 +27,7 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
     stamp = utcnow_iso()
     recs = []
     with service.db.tx() as con:
-        for n in range(3):
+        for n in range(6):
             cursor = con.execute(
                 """INSERT INTO movies(imdb_id,identity_key,title,original_title,year,title_type,
                    genres_json,directors_json,countries_json,keywords_json,semantic_json,
@@ -57,8 +58,10 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
             assert service.db.get_setting("ui_skin") == skin
             assert set(window.nav_buttons) == expected_menus
             assert all(button.text() for button in window.nav_buttons.values())
-            window.today_result = (recs[0], recs[1:])
+            window.today_result = (recs[0], recs[1:3])
             window.today_cache_signature = window._today_signature()
+            window.today_gallery = recs[3:]
+            window.today_gallery_signature = window._today_signature()
             window.show_page("today")
             page = window.stack.currentWidget()
             app.processEvents()
@@ -67,10 +70,13 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
             assert any("Nu acum / motiv" == x.text() for x in page.findChildren(QPushButton))
             assert any("Alt film" == x.text() for x in page.findChildren(QPushButton))
             assert all(not button.icon().isNull() for button in window.nav_buttons.values())
-            artwork = (page.findChildren(HeroCanvas) if skin in ("cinematic", "poster_wall")
+            artwork = (page.findChildren(HeroCanvas) if skin == "cinematic"
                        else page.findChildren(PosterCanvas))
             assert artwork
             assert artwork[0].illustrative and not artwork[0].artwork.isNull()
+            if skin == "poster_wall":
+                assert sum(x.objectName() == "PosterTile" for x in page.findChildren(QFrame)) == 6
+                assert any("Film verificabil 6" == x.text() for x in page.findChildren(QLabel))
             test_image = QPixmap(400, 600)
             test_image.fill("#754b37")
             window._apply_poster_pixmap(artwork[0], test_image)
@@ -106,18 +112,21 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
                    if button.text() == "Folosește skinul"]
         choices[-1].click()
         assert window.skin == "workbench" and service.db.get_setting("ui_skin") == "workbench"
-        window.today_result = (recs[0], recs[1:])
+        window.today_result = (recs[0], recs[1:3])
         window.today_cache_signature = window._today_signature()
+        window.today_gallery = recs[3:]
+        window.today_gallery_signature = window._today_signature()
         window.show_page("today")
         window.resize(1440, 900)
         app.processEvents()
         window.resize(1280, 720)
         app.processEvents()
+        app.sendPostedEvents(None, QEvent.DeferredDelete)
         page = window.stack.currentWidget()
         assert all(scroll.horizontalScrollBar().maximum() == 0
                    for scroll in page.findChildren(QScrollArea))
         selectors = [b for b in page.findChildren(QPushButton) if b.text() == "Selectează"]
-        assert len(selectors) == 3
+        assert len(selectors) == 4
         selectors[1].click()
         inspector = page.findChild(QStackedWidget)
         assert inspector.currentIndex() == 1
@@ -131,7 +140,26 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         compare = next(b for b in page.findChildren(QPushButton) if "Comparație detaliată" in b.text())
         QTimer.singleShot(0, close_comparison)
         compare.click()
-        assert viewed == [3]
+        assert viewed == [4]
+        # The initial decision is visible while real gallery films arrive later.
+        monkeypatch.setattr(service.recommender, "recommend", lambda *args, **kwargs: recs)
+        window.today_gallery = []
+        window.today_gallery_signature = None
+        window.today_gallery_failed = False
+        window._render_today(*window.today_result)
+        assert window.today_result[0].movie.id == recs[0].movie.id
+        assert any("Încarc încă un film" in x.text()
+                   for x in window.stack.currentWidget().findChildren(QLabel))
+        QTest.qWait(300)
+        app.processEvents()
+        assert [r.movie.id for r in window.today_gallery] == [r.movie.id for r in recs[3:]]
+        assert window.today_gallery_signature == window._today_signature()
+        inspector = window.stack.currentWidget().findChild(QStackedWidget)
+        assert inspector.count() == 4
+        assert inspector.currentIndex() == 1
+        selectors = [b for b in window.stack.currentWidget().findChildren(QPushButton)
+                     if b.text() == "Selectează"]
+        selectors[1].click()
         choose = next(b for b in inspector.currentWidget().findChildren(QPushButton)
                       if "Aleg pentru azi" in b.text())
         choose.click()

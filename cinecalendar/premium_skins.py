@@ -240,6 +240,7 @@ class PosterCanvas(QLabel):
         self.title = title
         self.year = year
         self.setObjectName("FilmPoster")
+        self.overlay_caption = False
         self.setFixedHeight(height)
         self.setMinimumWidth(width)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -266,17 +267,19 @@ class PosterCanvas(QLabel):
                 shade.setColorAt(0, QColor(0, 0, 0, 0))
                 shade.setColorAt(1, QColor(0, 0, 0, 225))
                 p.fillRect(self.rect(), shade)
-                p.setPen(QColor("#FFF7EC"))
-                p.setFont(QFont("Georgia", max(14, min(26, self.width() // 10)), QFont.DemiBold))
-                p.drawText(QRectF(self.width() * .08, self.height() * .46,
-                                  self.width() * .84, self.height() * .42),
-                           Qt.TextWordWrap | Qt.AlignBottom, self.title)
+                if not self.overlay_caption:
+                    p.setPen(QColor("#FFF7EC"))
+                    p.setFont(QFont("Georgia", max(14, min(26, self.width() // 10)), QFont.DemiBold))
+                    p.drawText(QRectF(self.width() * .08, self.height() * .46,
+                                      self.width() * .84, self.height() * .42),
+                               Qt.TextWordWrap | Qt.AlignBottom, self.title)
                 p.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
                 p.setPen(QColor("#F4D9B4"))
-                p.drawText(QRectF(self.width() * .08, self.height() * .91,
-                                  self.width() * .84, self.height() * .07),
-                           Qt.AlignLeft | Qt.AlignVCenter,
-                           "ILUSTRAȚIE" if self.width() < 210 else "ILUSTRAȚIE · AFIȘ INDISPONIBIL")
+                if not self.overlay_caption:
+                    p.drawText(QRectF(self.width() * .08, self.height() * .91,
+                                      self.width() * .84, self.height() * .07),
+                               Qt.AlignLeft | Qt.AlignVCenter,
+                               "ILUSTRAȚIE" if self.width() < 210 else "ILUSTRAȚIE · AFIȘ INDISPONIBIL")
         else:
             w, h = self.width(), self.height()
             light = self.skin == "editorial"
@@ -318,12 +321,14 @@ class PosterCanvas(QLabel):
                 p.setFont(font)
                 if p.boundingRect(title_area, Qt.TextWordWrap, self.title).height() <= title_area.height():
                     break
-            p.drawText(title_area, Qt.TextWordWrap | Qt.AlignVCenter, self.title)
+            if not self.overlay_caption:
+                p.drawText(title_area, Qt.TextWordWrap | Qt.AlignVCenter, self.title)
             p.setFont(QFont("Segoe UI", max(9, min(12, w // 20)), QFont.DemiBold))
-            p.drawText(QRectF(w * .09, h * .88, w * .82, h * .08),
-                       Qt.AlignLeft | Qt.AlignVCenter,
-                       str(self.year or "FILM") if w < 150 else
-                       f"{self.year or 'FILM'}  ·  {'SE ÎNCARCĂ' if self.available else 'AFIȘ INDISPONIBIL'}")
+            if not self.overlay_caption:
+                p.drawText(QRectF(w * .09, h * .88, w * .82, h * .08),
+                           Qt.AlignLeft | Qt.AlignVCenter,
+                           str(self.year or "FILM") if w < 150 else
+                           f"{self.year or 'FILM'}  ·  {'SE ÎNCARCĂ' if self.available else 'AFIȘ INDISPONIBIL'}")
         p.end()
 
 
@@ -644,7 +649,10 @@ def skin_qss(skin: str) -> str:
         QLabel#EditorialBody {{ font-family:Georgia; font-size:17px; color:{c['text']}; }}
         QLabel#EditorialMeta {{ font-family:Georgia; font-size:20px; color:{c['muted']}; }}
         QFrame#EditorialSuggestion {{ border-bottom:1px solid {c['border']}; }}
-        QFrame#PosterTileFoot {{ background:{c['surface']}; }}
+        QFrame#PosterTileFoot {{ background:qlineargradient(x1:0,y1:0,x2:0,y2:1,
+            stop:0 rgba(9,13,16,185),stop:1 rgba(9,13,16,245)); border:0; border-radius:6px; }}
+        QFrame#PosterTileFoot QLabel#CardTitle {{ color:#FFF9F0; font-family:Georgia; }}
+        QFrame#PosterTileFoot QLabel#Muted {{ color:#DFD9CE; }}
         QFrame#AlternativeCard {{ background:{c['card']}; border:1px solid {c['border']}; border-radius:8px; }}
         QFrame#AlternativeCard:hover {{ border-color:{c['accent']}; }}
         QFrame#SkeletonBlock {{ background:{c['card2']}; border:0; border-radius:6px; }}
@@ -895,8 +903,8 @@ def _calendar_context(window, rec):
                             "Consultă programul și contextul zilei pentru alegerea ta.",
                             "Muted", True))
     layout.addStretch(1)
-    layout.addWidget(_action(window, "Deschide calendarul  →",
-                             lambda: window.show_page("calendar")))
+    layout.addWidget(_action(window, "Deschide programul zilei  →",
+                             lambda: window._open_calendar_date(today)))
     return box
 
 
@@ -972,12 +980,14 @@ def _week_strip(window, *, dock=False):
     days = QHBoxLayout(); days.setSpacing(5)
     for i, name in enumerate(("Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du")):
         current = monday + timedelta(days=i)
-        b = _action(window, f"{name}\n{current.day}", lambda _=False: window.show_page("calendar"),
+        b = _action(window, f"{name}\n{current.day}",
+                    lambda _=False, target=current: window._open_calendar_date(target),
                     current == today)
         b.setMinimumHeight(52 if dock else 48)
         days.addWidget(b, 1)
     layout.addLayout(days, 1)
-    layout.addWidget(_action(window, "Deschide calendarul  →", lambda: window.show_page("calendar")))
+    layout.addWidget(_action(window, "Deschide programul  →",
+                             lambda: window._open_calendar_date(today)))
     return box
 
 
@@ -986,9 +996,13 @@ def _poster_tile(window, rec, *, height=260, featured=False):
     layout = QVBoxLayout(box); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
     image = _poster(window, rec, 155, height)
     image.setMinimumWidth(1)
-    layout.addWidget(image)
+    image.overlay_caption = True
+    image.update()
+    overlay = QVBoxLayout(image)
+    overlay.setContentsMargins(7, 6, 7, 6)
+    overlay.addStretch(1)
     foot = QFrame(); foot.setObjectName("PosterTileFoot")
-    fl = QVBoxLayout(foot); fl.setContentsMargins(12, 8, 12, 8); fl.setSpacing(3)
+    fl = QVBoxLayout(foot); fl.setContentsMargins(8, 10, 8, 6); fl.setSpacing(3)
     fl.addWidget(_label(rec.movie.title, "CardTitle", True))
     fl.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 3)), "Muted", True))
     row = QHBoxLayout(); row.addWidget(ScoreRing(rec.score.predicted_rating, window.skin, 42))
@@ -996,30 +1010,52 @@ def _poster_tile(window, rec, *, height=260, featured=False):
     row.addWidget(_action(window, "Detalii", lambda _=False, r=rec: window.open_details(r)))
     row.addWidget(_action(window, "Aleg", lambda _=False, mid=rec.movie.id: window.choose_decision(mid)))
     fl.addLayout(row)
-    layout.addWidget(foot)
+    overlay.addWidget(foot)
+    layout.addWidget(image)
     if featured:
         box.setProperty("featured", True)
     return box
 
 
-def _discovery_tile(window, title, subtitle, destination, art):
+def _gallery_recs(window, primary, backups):
+    if (getattr(window, "today_gallery_signature", None) != window._today_signature()
+            and not getattr(window, "today_gallery_failed", False)):
+        QTimer.singleShot(0, window._load_today_gallery_async)
+    used = set()
+    result = []
+    for rec in [primary, *backups, *(getattr(window, "today_gallery", []) or [])]:
+        if rec is not None and rec.movie.id not in used:
+            used.add(rec.movie.id)
+            result.append(rec)
+    return result
+
+
+def _gallery_pending(window):
+    return (getattr(window, "today_gallery_signature", None) != window._today_signature()
+            and not getattr(window, "today_gallery_failed", False))
+
+
+def _gallery_skeleton(height=195):
     box = QFrame(); box.setObjectName("PosterTile")
-    layout = QVBoxLayout(box); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-    cover = PosterCanvas(155, 195, window.skin, False, title, fallback_kind=art)
-    cover.setMinimumWidth(1); layout.addWidget(cover)
-    foot = QFrame(); foot.setObjectName("PosterTileFoot")
-    details = QVBoxLayout(foot); details.setContentsMargins(12, 8, 12, 8)
-    details.addWidget(_label(subtitle, "Muted", True))
-    details.addWidget(_action(window, "Explorează  →", lambda: window.show_page(destination)))
-    layout.addWidget(foot)
+    layout = QVBoxLayout(box); layout.setContentsMargins(0, 0, 0, 0)
+    art = QFrame(); art.setObjectName("SkeletonBlock")
+    art.setMinimumHeight(height)
+    layout.addWidget(art)
+    footer = _label("Încarc următorul film…", "Muted")
+    footer.setContentsMargins(12, 12, 12, 12)
+    layout.addWidget(footer)
     return box
 
 
 def _poster_feature(window, rec):
-    box = HeroCanvas("poster_wall", rec.movie.title, rec.movie.year)
-    box.setObjectName("PosterFeature")
+    box = QFrame(); box.setObjectName("PosterFeature")
     box.setMinimumHeight(214); box.setMaximumHeight(245)
-    row = QHBoxLayout(box); row.setContentsMargins(30, 18, 28, 18)
+    row = QHBoxLayout(box); row.setContentsMargins(0, 0, 18, 0); row.setSpacing(20)
+    artwork = _poster(window, rec, 380, 225, _cached_backdrop_url(window, rec))
+    artwork.overlay_caption = True
+    artwork.update()
+    artwork.setMinimumWidth(1); artwork.setFixedHeight(225)
+    row.addWidget(artwork, 5)
     copy = QVBoxLayout(); copy.setSpacing(4)
     copy.addWidget(_label("★  ALEGEREA SERII", "Eyebrow"))
     copy.addWidget(_label(rec.movie.title, "HeroTitle", True))
@@ -1033,12 +1069,7 @@ def _poster_feature(window, rec):
     feedback.clicked.connect(lambda _=False, mid=rec.movie.id, button=feedback:
                              window.contextual_feedback_menu(mid, button))
     actions.addWidget(feedback)
-    copy.addLayout(actions); row.addLayout(copy, 3); row.addStretch(2)
-    backdrop = _cached_backdrop_url(window, rec)
-    box.landscape = bool(backdrop) or not (backdrop or rec.movie.poster_url)
-    source = backdrop or rec.movie.poster_url
-    if source:
-        window.load_poster_async(box, source, (rec.movie.imdb_id or str(rec.movie.id)) + (":backdrop" if backdrop else ""))
+    copy.addLayout(actions); row.addLayout(copy, 8)
     return box
 
 
@@ -1067,20 +1098,17 @@ def _poster_wall(window, primary, backups):
         filters.addLayout(mode_row)
     center.addLayout(filters)
     window._poster_filter_row = filters
-    extras = [r for r in list(getattr(window, "browse_result", []) or [])
-              if r.movie.id not in {primary.movie.id, *(r.movie.id for r in backups)}]
-    items = [primary, *backups, *extras][:6]
+    items = _gallery_recs(window, primary, backups)[:6]
     grid = QGridLayout(); grid.setSpacing(12)
     dense_fonts = window.fontMetrics().horizontalAdvance("Surprinde-mă") > 120
     columns = 1 if narrow and dense_fonts else 2 if narrow else 3
     for i, rec in enumerate(items):
-        grid.addWidget(_poster_tile(window, rec, height=195, featured=i == 0), i // columns, i % columns)
-    destinations = (("Mai multe filme", "Toate recomandările din catalog", "recommendations", "cinematic"),
-                    ("Cinema românesc", "Selecția de filme românești", "romanian", "editorial"),
-                    ("Lista mea", "Filmele salvate de tine", "watchlist", "workbench"))
-    for i in range(len(items), 6):
-        title, subtitle, destination, art = destinations[(i - len(items)) % len(destinations)]
-        grid.addWidget(_discovery_tile(window, title, subtitle, destination, art), i // columns, i % columns)
+        grid.addWidget(_poster_tile(window, rec, height=260, featured=i == 0), i // columns, i % columns)
+    if _gallery_pending(window):
+        for i in range(len(items), 6):
+            grid.addWidget(_gallery_skeleton(260), i // columns, i % columns)
+    elif len(items) < 6:
+        center.addWidget(_label("Catalogul are momentan mai puține filme eligibile pentru filtrele alese.", "Muted", True))
     center.addLayout(grid); center.addStretch(1)
     center_wrap = QWidget(); center_wrap.setLayout(center)
     body.addWidget(center_wrap, 7 if not narrow else 0)
@@ -1089,7 +1117,20 @@ def _poster_wall(window, primary, backups):
     rl.addWidget(_week_strip(window))
     rl.addWidget(_calendar_context(window, primary))
     rl.addWidget(_label("Recomandări românești", "CardTitle"))
-    rl.addWidget(_label("Explorează filmele românești verificate din catalog.", "Muted", True))
+    romanian = list(getattr(window, "romanian_result", None) or [])[:3]
+    for rec in romanian:
+        teaser = QFrame(); teaser.setObjectName("EditorialSuggestion")
+        tr = QHBoxLayout(teaser); tr.setContentsMargins(0, 3, 0, 3)
+        art = _poster(window, rec, 90, 70, _cached_backdrop_url(window, rec))
+        art.setFixedWidth(90); tr.addWidget(art)
+        details = QVBoxLayout()
+        details.addWidget(_label(rec.movie.title, "CardTitle", True))
+        details.addWidget(_label(" · ".join(window.movie_chips(rec.movie, 2)), "Muted", True))
+        tr.addLayout(details, 1)
+        tr.addWidget(_action(window, "›", lambda _=False, r=rec: window.open_details(r)))
+        rl.addWidget(teaser)
+    if not romanian:
+        rl.addWidget(_label("Deschide selecția românească pentru filme verificate din catalog.", "Muted", True))
     rl.addWidget(_action(window, "Vezi recomandările românești  →", lambda: window.show_page("romanian")))
     rl.addStretch(1)
     body.addWidget(rail, 3 if not narrow else 0)
@@ -1109,6 +1150,8 @@ def _studio_choice(window, rec, index, stack, buttons):
     radio.setFixedWidth(28 if compact else 34); row.addWidget(radio)
     art = _poster(window, rec, 120 if compact else 165,
                   100 if compact else 120, _cached_backdrop_url(window, rec))
+    art.overlay_caption = True
+    art.update()
     art.setFixedWidth(120 if compact else 165); row.addWidget(art)
     details = QVBoxLayout(); details.setSpacing(4)
     name = _label(rec.movie.title, "CardTitle", True)
@@ -1138,6 +1181,9 @@ def _studio_choice(window, rec, index, stack, buttons):
 
 def _select_studio(stack, buttons, index):
     stack.setCurrentIndex(index)
+    movie_ids = stack.property("movieIds") or []
+    if 0 <= index < len(movie_ids):
+        stack.window().studio_selected_movie_id = movie_ids[index]
     for i, (box, radio, select) in enumerate(buttons):
         box.setProperty("selected", i == index)
         radio.setText("◉" if i == index else "○")
@@ -1150,6 +1196,8 @@ def _studio_inspector(window, rec):
     box = QFrame(); box.setObjectName("StudioInspector")
     layout = QVBoxLayout(box); layout.setContentsMargins(16, 16, 16, 16); layout.setSpacing(8)
     art = _poster(window, rec, 260, 205, _cached_backdrop_url(window, rec))
+    art.overlay_caption = True
+    art.update()
     art.setMinimumWidth(1); layout.addWidget(art)
     headline = QHBoxLayout()
     headline.addWidget(_label(rec.movie.title, "HeroTitle", True), 1)
@@ -1234,6 +1282,7 @@ def _studio_quick_choice(window, rec):
 
 def _decision_studio(window, primary, backups):
     content = window.today_content
+    choices_for_today = _gallery_recs(window, primary, backups)[:4]
     compact = window.width() < 1500
     heading = QVBoxLayout() if compact else QHBoxLayout()
     heading.addWidget(_label("Alegerea serii", "PageTitle"))
@@ -1242,7 +1291,7 @@ def _decision_studio(window, primary, backups):
     tabs = QHBoxLayout() if compact else heading
     tabs.addWidget(_action(window, "✦  Recomandări pentru azi", lambda: window.show_page("today"), True))
     tabs.addWidget(_action(window, "☷  Comparație detaliată",
-                           lambda: _studio_comparison(window, [primary, *backups])))
+                           lambda: _studio_comparison(window, choices_for_today)))
     tabs.addWidget(_action(window, "ϟ  Decizie rapidă", lambda: _studio_quick_choice(window, primary)))
     if compact:
         heading.addLayout(tabs)
@@ -1251,29 +1300,27 @@ def _decision_studio(window, primary, backups):
     row.setSpacing(14)
     choices = QVBoxLayout(); choices.setSpacing(8)
     inspector = QStackedWidget(); buttons = []
-    for i, rec in enumerate([primary, *backups]):
+    inspector.setProperty("movieIds", [rec.movie.id for rec in choices_for_today])
+    for i, rec in enumerate(choices_for_today):
         inspector.addWidget(_studio_inspector(window, rec))
         choices.addWidget(_studio_choice(window, rec, i, inspector, buttons))
-    more = QFrame(); more.setObjectName("StudioChoice")
-    mr = QVBoxLayout(more) if window.width() < 1500 else QHBoxLayout(more)
-    mr.setContentsMargins(16, 10, 16, 10)
-    illustration = PosterCanvas(165, 115, window.skin, False, "Descoperă", fallback_kind="workbench")
-    illustration.setFixedWidth(165)
-    if window.width() >= 1500:
-        mr.addWidget(illustration)
-    summary = QVBoxLayout()
-    summary.addWidget(_label("Vrei să compari mai multe?", "CardTitle", True))
-    summary.addWidget(_label("Deschide selecția completă de filme potrivite.", "Muted", True))
-    summary.addStretch(1)
-    mr.addLayout(summary, 1)
-    mr.addWidget(_action(window, "Vezi toate  →", lambda: window.show_page("recommendations")))
-    choices.addWidget(more)
+    if _gallery_pending(window) and len(choices_for_today) < 4:
+        placeholder = QFrame(); placeholder.setObjectName("StudioChoice")
+        pl = QHBoxLayout(placeholder)
+        image = QFrame(); image.setObjectName("SkeletonBlock")
+        image.setFixedSize(165, 100)
+        pl.addWidget(image)
+        pl.addWidget(_label("Încarc încă un film pentru comparație…", "Muted"), 1)
+        choices.addWidget(placeholder)
     choices.addStretch(1)
     left = QWidget(); left.setLayout(choices)
     row.addWidget(left, 6 if window.width() >= 1500 else 0)
     row.addWidget(inspector, 4 if window.width() >= 1500 else 0)
     wrap = QWidget(); wrap.setLayout(row); content.addWidget(wrap)
-    _select_studio(inspector, buttons, 0)
+    selected_id = getattr(window, "studio_selected_movie_id", None)
+    selected_index = next((i for i, rec in enumerate(choices_for_today)
+                           if rec.movie.id == selected_id), 0)
+    _select_studio(inspector, buttons, selected_index)
     content.addWidget(_week_strip(window, dock=True))
 
 
@@ -1289,7 +1336,7 @@ def _editorial_spread(window, primary, backups):
     poster.setMinimumWidth(1 if narrow else 300)
     top.addWidget(poster, 39)
     story = QVBoxLayout(); story.setSpacing(13)
-    story.addWidget(_label("CÂND TRECUTUL REVINE,\nNICI DRUMUL NU MAI E ACELAȘI.", "Eyebrow", True))
+    story.addWidget(_label("SELECȚIA PERSONALĂ  /  FILMUL SERII", "Eyebrow", True))
     story.addSpacing(17)
     story_title = _label(primary.movie.title, "EditorialTitle", True)
     if narrow:
@@ -1365,27 +1412,22 @@ def render_skin_today(window, primary, backups):
         date_controls = QHBoxLayout() if window.width() < 1500 else heading
         date_controls.addWidget(_label(f"{_ro_short_date(monday)} – "
                                        f"{_ro_short_date(monday + timedelta(days=6))} {date.today().year}", "Muted"))
-        date_controls.addWidget(_action(window, "‹", lambda: window.show_page("calendar")))
-        date_controls.addWidget(_action(window, "›", lambda: window.show_page("calendar")))
+        date_controls.addWidget(_action(window, "‹", lambda: window._open_calendar_date(monday - timedelta(days=7))))
+        date_controls.addWidget(_action(window, "›", lambda: window._open_calendar_date(monday + timedelta(days=7))))
         if window.width() < 1500:
             heading.addLayout(date_controls)
         header = QWidget(); header.setLayout(heading); content.addWidget(header)
         row = QGridLayout() if window.width() < 1500 else QHBoxLayout()
         row.setSpacing(12)
-        extras = [r for r in list(getattr(window, "browse_result", []) or [])
-                  if r.movie.id not in {primary.movie.id, *(r.movie.id for r in backups)}]
-        for i, rec in enumerate([primary, *backups, *extras][:4]):
+        gallery = _gallery_recs(window, primary, backups)[:4]
+        for i, rec in enumerate(gallery):
             tile = _poster_tile(window, rec, height=255, featured=i == 0)
             if window.width() < 1500:
                 row.addWidget(tile, i // 2, i % 2)
             else:
                 row.addWidget(tile, 1)
-        if not extras:
-            more = QFrame(); more.setObjectName("PosterTile")
-            ml = QVBoxLayout(more); ml.setContentsMargins(20, 20, 20, 20)
-            ml.addWidget(_label("Continuă descoperirea", "CardTitle", True)); ml.addStretch(1)
-            ml.addWidget(_label("Selecția completă îți arată mai multe filme din catalog.", "Muted", True))
-            ml.addWidget(_action(window, "Vezi toate  →", lambda: window.show_page("recommendations")))
+        if _gallery_pending(window) and len(gallery) < 4:
+            more = _gallery_skeleton(255)
             if window.width() < 1500:
                 row.addWidget(more, 1, 1)
             else:

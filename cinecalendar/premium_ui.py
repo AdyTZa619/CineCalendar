@@ -256,6 +256,11 @@ class PremiumDecisionWindow(DecisionWindow):
         self.browse_content = None
         self.today_result: tuple[Recommendation | None, list[Recommendation]] | None = None
         self.today_cache_signature = None
+        self.today_gallery: list[Recommendation] = []
+        self.today_gallery_signature = None
+        self.today_gallery_worker: WorkerThread | None = None
+        self.today_gallery_failed = False
+        self.today_gallery_generation = 0
         self.browse_result: list[Recommendation] = []
         self.browse_generation = 0
         # Navigation must never create a fresh recommendation exposure by itself.
@@ -554,6 +559,10 @@ class PremiumDecisionWindow(DecisionWindow):
             invalidate("decision")
         self.today_result = None
         self.today_cache_signature = None
+        self.today_gallery = []
+        self.today_gallery_signature = None
+        self.today_gallery_failed = False
+        self.today_gallery_generation += 1
         self.show_page("today")
 
     def page_today(self):
@@ -612,6 +621,10 @@ class PremiumDecisionWindow(DecisionWindow):
             self.set_status("Alegerea este gata.", False)
             self.today_result = result
             self.today_cache_signature = signature
+            self.today_gallery = []
+            self.today_gallery_signature = None
+            self.today_gallery_failed = False
+            self.today_gallery_generation += 1
             if self.current_page == "today":
                 self._render_today(*result)
                 recs = ([result[0]] if result[0] else []) + list(result[1] or [])
@@ -623,6 +636,53 @@ class PremiumDecisionWindow(DecisionWindow):
                 self._clear_layout(self.today_content)
                 x = QLabel("Nu am putut calcula recomandarea: " + message); x.setWordWrap(True); self.today_content.addWidget(x)
         worker.success.connect(success); worker.failure.connect(failure); worker.start()
+
+    def _load_today_gallery_async(self):
+        """Fill visual gallery slots after the decisive Top-3 is already visible."""
+        if (self._ui_closing or self.current_page != "today" or not self.today_result
+                or self.today_gallery_failed or self.today_gallery_signature == self._today_signature()
+                or (self.today_gallery_worker and self.today_gallery_worker.isRunning())):
+            return
+        signature = self._today_signature()
+        generation = self.today_gallery_generation
+        primary, backups = self.today_result
+        if primary is None:
+            return
+        exclude = set(self.session_skips)
+        exclude.update(movie_id for _kind, movie_id in self.active_contextual_feedback())
+        # Gallery films use the same active trial engine and user filters, but never
+        # replace the validated decision choice or create recommendation exposures.
+        runtime_max = runtime_min = None
+        brain = getattr(getattr(self.s.recommender, "active", None), "personalization_v41", None)
+        if brain is not None:
+            runtime_max, runtime_min = brain.choose_runtime_bounds()
+        worker = WorkerThread(
+            lambda progress: self.s.recommender.recommend(
+                date.today(), 9, exclude_ids=exclude, record=False,
+                slot="today-gallery", candidate_limit=45000, mode=self.decision_mode,
+                runtime_max=runtime_max, runtime_min=runtime_min,
+            ), self,
+        )
+        self.today_gallery_worker = worker
+        def gallery_ready(recs):
+            self.today_gallery_worker = None
+            if generation != self.today_gallery_generation or signature != self._today_signature():
+                if self.current_page == "today" and self.today_result:
+                    self._render_today(*self.today_result)
+                return
+            used = {primary.movie.id, *(rec.movie.id for rec in backups)}
+            self.today_gallery = [rec for rec in recs if rec.movie.id not in used][:6]
+            self.today_gallery_signature = signature
+            if self.current_page == "today" and self.today_result:
+                self._render_today(*self.today_result)
+        def failure(message):
+            self.today_gallery_worker = None
+            if generation == self.today_gallery_generation and signature == self._today_signature():
+                self.today_gallery_failed = True
+                if self.current_page == "today" and self.today_result:
+                    self._render_today(*self.today_result)
+                self.set_status("Selecția principală este gata; galeria suplimentară nu s-a încărcat.", False)
+        worker.success.connect(gallery_ready); worker.failure.connect(failure); worker.start()
 
     def _render_today(self, primary: Recommendation | None, backups: list[Recommendation]):
         if self.today_content is None:
