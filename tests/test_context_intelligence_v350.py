@@ -229,7 +229,8 @@ def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar
     assert "month" not in {key for key, _label in premium_calendar_ui_module.CalendarPremiumWindow.NAV}
     assert "calendar" in {key for key, _label in premium_calendar_ui_module.CalendarPremiumWindow.NAV}
     assert "Repere anuale" in source
-    assert "nu dublează" in source
+    assert "ordinary_day" in module_source
+    assert "Deschide Recomandări" in module_source
     simple_qss = inspect.getsource(premium_skins_module._simple_calendar_qss)
     assert "CalendarStage" in simple_qss
     assert "CalendarDateTile" in simple_qss
