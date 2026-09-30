@@ -202,3 +202,7 @@ def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar
     assert "regula lui specifică" in spotlight
     assert "CalendarDay[selected='true']" in qss
     assert "CalendarMovieCard" in qss
+    assert "month" not in {key for key, _label in CalendarPremiumWindow.NAV}
+    assert "calendar" in {key for key, _label in CalendarPremiumWindow.NAV}
+    assert "Repere anuale" in source
+    assert "nu dublează" in source

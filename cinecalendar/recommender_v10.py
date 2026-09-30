@@ -305,7 +305,12 @@ class FastRecommendationEngineV10(FastRecommendationEngineV9):
             if ev.category != "sezon" and float(ev.importance) * float(proximity) >= .28
         ]
         if not concrete:
-            # Ordinary days can keep v8's honest seasonal/personal fallback.
+            # Calendar is now intentionally event-specific. General seasonal/personal picks
+            # belong to the Recommendations destination; duplicating them here made the two
+            # pages look and behave the same.
+            result["sections"] = []
+            result["specific_event_active"] = False
+            result["ordinary_day"] = True
             return result
 
         # A concrete feast/commemoration is active: never lead with generic late-summer,

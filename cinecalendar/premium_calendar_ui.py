@@ -26,6 +26,14 @@ RO_WEEKDAYS = ("LUN", "MAR", "MIE", "JOI", "VIN", "SÂM", "DUM")
 class CalendarPremiumWindow(PremiumDecisionWindow):
     """Premium UI with a real day-by-day calendar program.
 
+    Calendar and the old separate "Program calendar" destination are intentionally merged:
+    one navigation entry owns both the immersive month and the annual reference view.
+    """
+
+    NAV = [(key, label) for key, label in PremiumDecisionWindow.NAV if key != "month"]
+
+    """Premium UI with a real day-by-day calendar program.
+
     The page is intentionally instant: month context is rendered immediately and only the
     selected day's movie program is calculated in a worker. Reopening a day uses the engine
     cache instead of recalculating multiple month intervals.
@@ -41,6 +49,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         self.calendar_pending: date | None = None
         self.calendar_last_result: dict | None = None
         self.calendar_last_signature = None
+        self.calendar_view_mode = "month"
         super().__init__(service)
 
     # ---------- calendar navigation ----------
@@ -53,29 +62,37 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
             m -= 12; y += 1
         self.calendar_month_anchor = date(y, m, 1)
         self.calendar_selected = self.calendar_month_anchor
-        self.show_page("month")
+        self.calendar_view_mode = "month"
+        self.show_page("calendar")
 
     def _go_today(self):
         self.calendar_month_anchor = date.today().replace(day=1)
         self.calendar_selected = date.today()
-        self.show_page("month")
+        self.calendar_view_mode = "month"
+        self.show_page("calendar")
 
     def _open_calendar_date(self, target: date):
         self.calendar_month_anchor = target.replace(day=1)
         self.calendar_selected = target
-        self.show_page("month")
+        self.calendar_view_mode = "month"
+        self.show_page("calendar")
+
+    def _set_calendar_view(self, mode: str):
+        self.calendar_view_mode = "year" if str(mode) == "year" else "month"
+        self.show_page("calendar")
 
     # ---------- complete calendar reference ----------
-    def page_calendar(self):
+    def _page_calendar_year(self):
         today = date.today()
         year = self.calendar_month_anchor.year if self.calendar_month_anchor else today.year
         page, content = self.page_shell(
-            f"Calendar {year}",
-            "Repere ortodoxe, perioade de post, tradiții românești, date istorice, civice și sezoniere. Fiecare reper poate deschide recomandările lui de filme.",
+            f"Calendar — Repere {year}",
+            "Vedere anuală a reperelor. Alege un reper și revii direct în luna lui, unde apar numai filmele cu legătură susținută de acel context.",
             [
-                ("Anul anterior", lambda: self._change_calendar_year(-1), False),
-                ("Anul următor", lambda: self._change_calendar_year(1), False),
-                ("Azi", self._go_today, True),
+                ("‹ Anul anterior", lambda: self._change_calendar_year(-1), False),
+                ("Lună", lambda: self._set_calendar_view("month"), True),
+                ("Anul următor ›", lambda: self._change_calendar_year(1), False),
+                ("Azi", self._go_today, False),
             ],
         )
 
@@ -88,7 +105,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         il = QVBoxLayout(intro); il.setContentsMargins(22,20,22,20); il.setSpacing(8)
         h = QLabel(f"{len(events)} repere majore indexate pentru {year}")
         h.setObjectName("SectionTitle"); il.addWidget(h)
-        x = QLabel("Nu este o listă de câteva sărbători puse manual în UI: CalendarEngine furnizează perioade active și influențe înainte/după reper, iar Program calendar folosește aceste relații în scorul filmelor.")
+        x = QLabel("CalendarEngine furnizează perioade active și ferestre de influență. Alegerea unui reper deschide aceeași pagină Calendar în luna lui; nu mai există un al doilea tab cu aceeași funcție.")
         x.setObjectName("Muted"); x.setWordWrap(True); il.addWidget(x)
         content.addWidget(intro)
 
@@ -127,7 +144,13 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
 
     def _change_calendar_year(self, delta: int):
         self.calendar_month_anchor = date(self.calendar_month_anchor.year + int(delta), self.calendar_month_anchor.month, 1)
+        self.calendar_view_mode = "year"
         self.show_page("calendar")
+
+    def page_calendar(self):
+        if self.calendar_view_mode == "year":
+            return self._page_calendar_year()
+        return self.page_month()
 
     # ---------- fast month / selected day program ----------
     def page_month(self):
@@ -136,12 +159,13 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
             self.calendar_selected = anchor
 
         page, content = self.page_shell(
-            f"Program calendar — {RO_MONTHS[anchor.month]} {anchor.year}",
-            "Alege o zi ca pe o scenă: vezi reperul real al datei, apoi numai filmele care trec legătura calendaristică verificată. Zilele fără reper concret rămân sezoniere, fără etichete inventate.",
+            f"Calendar — {RO_MONTHS[anchor.month]} {anchor.year}",
+            "Alege o zi. Dacă există un reper real, vezi numai filmele legate de el; zilele obișnuite nu repetă recomandările generale din alt tab.",
             [
                 ("‹ Luna anterioară", lambda: self._shift_month(-1), False),
                 ("Azi", self._go_today, True),
                 ("Luna următoare ›", lambda: self._shift_month(1), False),
+                ("Repere anuale", lambda: self._set_calendar_view("year"), False),
             ],
         )
 
@@ -294,7 +318,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
 
         top = QHBoxLayout(); top.setSpacing(18)
         copy = QVBoxLayout(); copy.setSpacing(5)
-        eyebrow = "REPER ACTIV AZI" if exact else ("ÎN JURUL UNUI REPER" if nearby else "ATMOSFERA ZILEI")
+        eyebrow = "REPER ACTIV AZI" if exact else ("ÎN JURUL UNUI REPER" if nearby else "ZI FĂRĂ REPER MAJOR")
         k = QLabel(eyebrow); k.setObjectName("Kicker"); copy.addWidget(k)
         dt = QLabel(f"{target.day} {RO_MONTHS[target.month]} {target.year}")
         dt.setObjectName("HeroTitle"); dt.setWordWrap(True); copy.addWidget(dt)
@@ -324,8 +348,8 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         else:
             title = QLabel(phase); title.setObjectName("CardTitle"); copy.addWidget(title)
             detail = QLabel(
-                "Zi fără reper nominal major. Filmele pot fi potrivite sezonier sau personal, "
-                "dar nu vor fi prezentate ca fiind despre o sărbătoare inexistentă."
+                "Nu există un reper calendaristic concret pentru această dată. Calendarul nu dublează "
+                "pagina Recomandări cu filme generale; aici rămâne doar contextul perioadei."
             )
             detail.setObjectName("Muted"); detail.setWordWrap(True); copy.addWidget(detail)
 
@@ -345,8 +369,10 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
                 status = "0 potriviri reale în catalogul nevăzut — nu completez ziua cu filme fără legătură."
             elif bool(result.get("specific_event_active")):
                 status = f"{len(unique)} filme eligibile au trecut legătura cu reperul acestei zile."
+            elif bool(result.get("ordinary_day")):
+                status = "Nicio listă de filme aici: ziua nu are un reper concret, iar recomandările generale rămân în tabul Recomandări."
             else:
-                status = f"{len(unique)} opțiuni eligibile pentru profilul și perioada ta."
+                status = f"{len(unique)} opțiuni legate de contextul calendaristic."
             label = QLabel(status); label.setObjectName("BodyStrong"); label.setWordWrap(True); layout.addWidget(label)
         elif loading:
             label = QLabel("Verific filmele eligibile și păstrez numai legăturile pe care motorul le poate susține.")
@@ -366,17 +392,40 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         detail.setObjectName("Muted"); detail.setWordWrap(True); layout.addWidget(detail)
 
     def _load_calendar_day_async(self, target: date):
-        if self._ui_closing or self.current_page != "month" or target != self.calendar_selected:
+        if self._ui_closing or self.current_page != "calendar" or target != self.calendar_selected:
             return
         if self._calendar_cached(target):
             self._render_calendar_program(self.calendar_last_result)
             return
+
+        signature = (target, self._browse_state_signature())
+        events = list(self.s.calendar.relevant_events(target))
+        concrete = [
+            (ev, proximity) for ev, proximity in events
+            if ev.category != "sezon" and float(ev.importance) * float(proximity) >= .28
+        ]
+        if not concrete:
+            result = {
+                "date": target,
+                "phase": self.s.calendar.season_phase(target)[0],
+                "events": events,
+                "sections": [],
+                "specific_event_active": False,
+                "ordinary_day": True,
+                "pre_rank_count": 0,
+                "full_score_count": 0,
+            }
+            self.calendar_last_result = result
+            self.calendar_last_signature = signature
+            self.set_status("Zi fără reper calendaristic major.", False)
+            self._render_calendar_program(result)
+            return
+
         if self.calendar_worker and self.calendar_worker.isRunning():
             self.calendar_pending = target
             return
         self.calendar_pending = None
-        signature = (target, self._browse_state_signature())
-        self.set_status(f"Calculez programul pentru {target:%d.%m}…", True)
+        self.set_status(f"Calculez filmele legate de reperul din {target:%d.%m}…", True)
         worker = WorkerThread(lambda progress: self.s.recommender.calendar_day_program(target, 6), self)
         self.calendar_worker = worker
 
@@ -386,14 +435,14 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
                 self.calendar_last_result = result
                 self.calendar_last_signature = signature
             self.set_status("Programul zilei este gata.", False)
-            if self.current_page == "month" and self.calendar_selected == result.get("date") and self._calendar_cached(target):
+            if self.current_page == "calendar" and self.calendar_selected == result.get("date") and self._calendar_cached(target):
                 self._render_calendar_program(result)
             pending = self.calendar_pending
             self.calendar_pending = None
             if pending is not None and pending != result.get("date"):
                 self._render_calendar_loading(pending)
                 QTimer.singleShot(0, lambda d=pending: self._load_calendar_day_async(d))
-            elif self.current_page == "month" and self.calendar_selected == target and not self._calendar_cached(target):
+            elif self.current_page == "calendar" and self.calendar_selected == target and not self._calendar_cached(target):
                 QTimer.singleShot(0, lambda d=target: self._load_calendar_day_async(d))
 
         def failure(message):
@@ -404,7 +453,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
                 QTimer.singleShot(0, lambda d=pending: self._load_calendar_day_async(d))
                 return
             self.set_status("Programul calendaristic a eșuat.", False)
-            if self.current_page == "month" and self.calendar_focus_layout is not None:
+            if self.current_page == "calendar" and self.calendar_focus_layout is not None:
                 self._clear_layout(self.calendar_focus_layout)
                 x = QLabel("Nu am putut calcula recomandările: " + message)
                 x.setWordWrap(True); self.calendar_focus_layout.addWidget(x)
@@ -425,9 +474,17 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
                     "Nu am găsit momentan niciun film nevăzut care să treacă regula specifică a reperului. "
                     "Las ziua goală decât să-ți prezint o potrivire falsă."
                 )
+            elif bool(result.get("ordinary_day")):
+                text = (
+                    "Ziua nu are un reper calendaristic concret. Nu afișez aici filme generale doar ca să umplu pagina."
+                )
             else:
                 text = "Nu am găsit suficiente filme eligibile pentru această zi."
             label = QLabel(text); label.setObjectName("BodyStrong"); label.setWordWrap(True); layout.addWidget(label)
+            if bool(result.get("ordinary_day")):
+                go = QPushButton("Deschide Recomandări")
+                go.clicked.connect(lambda _checked=False: self.show_page("recommendations"))
+                layout.addWidget(go, alignment=Qt.AlignLeft)
             return
 
         stats = QLabel(

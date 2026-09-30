@@ -74,7 +74,7 @@ def test_concrete_event_removes_generic_seasonal_filler(tmp_path, monkeypatch):
     assert result["specific_event_active"] is True
 
 
-def test_ordinary_day_can_keep_seasonal_fallback(tmp_path, monkeypatch):
+def test_ordinary_day_does_not_duplicate_general_recommendations(tmp_path, monkeypatch):
     engine = _engine(tmp_path)
 
     def fake_parent(self, when=None, count_per_section=6):
@@ -88,6 +88,9 @@ def test_ordinary_day_can_keep_seasonal_fallback(tmp_path, monkeypatch):
 
     monkeypatch.setattr(FastRecommendationEngineV9, "calendar_day_program", fake_parent)
 
-    # A date without a concrete indexed event keeps the honest seasonal fallback.
+    # A date without a concrete indexed event stays calendar-only; general recommendations
+    # remain in the Recommendations page instead of being duplicated here.
     result = engine.calendar_day_program(date(2026, 7, 13), 6)
-    assert any(section["key"] == "season" for section in result["sections"])
+    assert result["sections"] == []
+    assert result["ordinary_day"] is True
+    assert result["specific_event_active"] is False

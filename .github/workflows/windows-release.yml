@@ -295,7 +295,7 @@ jobs:
             version = $version
             url = $url
             sha256 = $sha
-            notes = 'Alpha 33: Program calendar devine o experiență lunară imersivă, cu grilă reală, spotlight pentru zi și legături stricte cu reperul. Sunt adăugate Ziua Lecturii, Ziua Eroilor, Ziua Limbii Române, comemorarea Holocaustului din România și Sf. Parascheva, fiecare cu regulă proprie de relevanță.'
+            notes = 'Alpha 34: Calendar și Program calendar sunt unite într-un singur tab. Vederea lunară și reperele anuale rămân în aceeași pagină, iar zilele fără reper concret nu mai dublează Recomandările cu filme generale. Filmele din Calendar apar numai când există o legătură susținută de un reper.'
             publishedAt = [DateTime]::UtcNow.ToString('o')
             channel = 'alpha'
           } | ConvertTo-Json -Depth 4
