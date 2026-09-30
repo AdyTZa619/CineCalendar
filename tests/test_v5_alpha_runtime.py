@@ -74,3 +74,13 @@ def test_v5_alpha_uses_separate_default_data_root(tmp_path, monkeypatch):
 def test_v5_alpha_disables_stable_updater(monkeypatch):
     monkeypatch.setenv("CINECALENDAR_V5_ALPHA","1")
     assert update_supported() is False
+
+
+def test_stable_launcher_explicitly_clears_alpha_flags():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "launcher.py").read_text(encoding="utf-8")
+    assert '"CINECALENDAR_V5_ALPHA"' in source
+    assert '"CINECALENDAR_V5_ALPHA_ALLOW_EMPTY"' in source
+    assert '"CINECALENDAR_V5_ALPHA_SOURCE_DB"' in source
+    assert "os.environ.pop(_key, None)" in source
