@@ -105,8 +105,8 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         # Switching from the actual Settings control must rebuild and persist the shell.
         choices = [button for button in window.stack.currentWidget().findChildren(QPushButton)
                    if button.text() == "Folosește skinul"]
-        assert len(choices) == 3
-        choices[0].click()
+        assert len(choices) == 4
+        choices[1].click()
         assert window.skin == "cinematic" and service.db.get_setting("ui_skin") == "cinematic"
         choices = [button for button in window.stack.currentWidget().findChildren(QPushButton)
                    if button.text() == "Folosește skinul"]
@@ -141,8 +141,9 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         QTimer.singleShot(0, close_comparison)
         compare.click()
         assert viewed == [4]
-        # The initial decision is visible while real gallery films arrive later.
-        monkeypatch.setattr(service.recommender, "recommend", lambda *args, **kwargs: recs)
+        # Gallery failure offers a retry without replacing the already visible decision.
+        monkeypatch.setattr(service.recommender, "recommend",
+                            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")))
         monkeypatch.setattr(window, "_ensure_metadata", lambda *args: None)
         window.today_gallery = []
         window.today_gallery_signature = None
@@ -153,11 +154,31 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
                    for x in window.stack.currentWidget().findChildren(QLabel))
         QTest.qWait(300)
         app.processEvents()
+        assert window.today_gallery_failed
+        retry = next(button for button in window.stack.currentWidget().findChildren(QPushButton)
+                     if button.text() == "Reîncearcă doar galeria")
+        monkeypatch.setattr(service.recommender, "recommend", lambda *args, **kwargs: recs)
+        retry.click()
+        assert window.today_result[0].movie.id == recs[0].movie.id
+        QTest.qWait(300)
+        app.processEvents()
         assert [r.movie.id for r in window.today_gallery] == [r.movie.id for r in recs[3:]]
         assert window.today_gallery_signature == window._today_signature()
         inspector = window.stack.currentWidget().findChild(QStackedWidget)
         assert inspector.count() == 4
         assert inspector.currentIndex() == 1
+        decision_before_switch = window.today_result
+        window.set_skin("simple")
+        window.show_page("today")
+        simple_page = window.stack.currentWidget()
+        assert window.today_result is decision_before_switch
+        assert any("Film verificabil 1" in label.text() for label in simple_page.findChildren(QLabel))
+        assert any("DESCHIDE ÎN STREMIO" == button.text()
+                   for button in simple_page.findChildren(QPushButton))
+        assert not simple_page.findChildren(HeroCanvas)
+        window.set_skin("workbench")
+        window.show_page("today")
+        inspector = window.stack.currentWidget().findChild(QStackedWidget)
         selectors = [b for b in window.stack.currentWidget().findChildren(QPushButton)
                      if b.text() == "Selectează"]
         selectors[1].click()
@@ -175,6 +196,29 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
     try:
         assert reopened.skin == "workbench"
         assert reopened.db.get_setting("ui_skin") == "workbench"
+        reopened.today_result = (recs[0], recs[1:3])
+        reopened.today_cache_signature = reopened._today_signature()
+        reopened.set_skin("editorial")
+        assert reopened.theme == "light"
+        reopened.set_skin("simple")
+        assert reopened.skin == "simple"
+        assert reopened.theme == service.db.get_setting("theme", "dark")
+        assert service.db.get_setting("ui_skin") == "simple"
+        assert set(reopened.nav_buttons) == expected_menus
+        assert reopened.centralWidget().findChild(QFrame, "UtilityBar") is None
+        reopened.show_page("today")
+        simple_page = reopened.stack.currentWidget()
+        assert any("Film verificabil 2" in label.text() for label in simple_page.findChildren(QLabel))
+        assert any("DESCHIDE ÎN STREMIO" == button.text()
+                   for button in simple_page.findChildren(QPushButton))
+        assert not simple_page.findChildren(HeroCanvas)
+        for key in expected_menus:
+            reopened.show_page(key)
+            assert reopened.stack.currentWidget() is not None
+        reopened.show_page("settings")
+        simple_choice = next(button for button in reopened.stack.currentWidget().findChildren(QPushButton)
+                             if button.text() == "Activ")
+        assert simple_choice.isEnabled()
         with service.db.tx() as con:
             con.execute("UPDATE movies SET tmdb_id=98765 WHERE id=?", (recs[0].movie.id,))
             con.execute("""INSERT INTO metadata_cache(provider,cache_key,payload_json,fetched_at,expires_at)
@@ -184,4 +228,12 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         assert _cached_backdrop_url(reopened, recs[0]) == 'https://image.tmdb.org/t/p/w1280/scene.jpg'
     finally:
         reopened.close()
+        app.processEvents()
+
+    persisted = CalendarPremiumWindow(service)
+    try:
+        assert persisted.skin == "simple"
+        assert persisted.db.get_setting("ui_skin") == "simple"
+    finally:
+        persisted.close()
         app.processEvents()

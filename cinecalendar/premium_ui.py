@@ -697,6 +697,17 @@ class PremiumDecisionWindow(DecisionWindow):
             return
         self._ensure_metadata(self.today_gallery[:3], "today")
 
+    def retry_today_gallery(self):
+        """Retry supplemental results without invalidating the visible decision."""
+        if self.today_gallery_worker and self.today_gallery_worker.isRunning():
+            self.set_status("Galeria este deja în curs de încărcare.", True)
+            return
+        self.today_gallery_failed = False
+        self.today_gallery_signature = None
+        if self.current_page == "today" and self.today_result:
+            self._render_today(*self.today_result)
+        QTimer.singleShot(0, self._load_today_gallery_async)
+
     def _render_today(self, primary: Recommendation | None, backups: list[Recommendation]):
         if self.today_content is None:
             return

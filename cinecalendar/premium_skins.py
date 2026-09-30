@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 
 SKINS = {
+    "simple": ("Interfața simplă", "Aspectul clasic: meniu lateral, alegerea zilei și două alternative clare."),
     "cinematic": ("Cinema Immersive", "Cadru panoramic, navigare sus și selecția săptămânii."),
     "editorial": ("Cinematheque Editorial", "Afiș mare, poveste tipografică și coloană de sugestii."),
     "poster_wall": ("Poster Wall", "Perete de afișe, filtre și calendar lateral."),
@@ -27,6 +28,9 @@ SKINS = {
 }
 
 PALETTES = {
+    "simple": dict(bg="#0B0D12", surface="#11151D", card="#171C27", card2="#212837",
+                   text="#F8F7F2", muted="#A5B0C0", border="#30394A",
+                   accent="#D7AA55", on="#111217", good="#6ED6A0"),
     "cinematic": dict(bg="#0B0B0D", surface="#151416", card="#1B1A1D", card2="#282529",
                       text="#F7F1E7", muted="#B8AFA5", border="#3B3535",
                       accent="#D9AF69", on="#21170B", good="#D7BB80"),
@@ -378,7 +382,34 @@ def _skin_preview(skin: str) -> QFrame:
                             f"font-size:{size}px;font-weight:700;")
         return label
 
-    if skin == "cinematic":
+    if skin == "simple":
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(7, 7, 7, 7)
+        layout.setSpacing(6)
+        sidebar = block(50, c["surface"])
+        nav = QVBoxLayout(sidebar)
+        nav.setContentsMargins(5, 7, 5, 5)
+        nav.addWidget(mini("CINE", 8, True))
+        for title in ("Azi", "Calendar", "Filme", "Setări"):
+            nav.addWidget(mini(title, 7))
+        nav.addStretch(1)
+        layout.addWidget(sidebar)
+        main = QVBoxLayout()
+        main.addWidget(mini("Ce văd acum?", 10, True))
+        hero = block(fill=c["card"])
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(6, 5, 6, 5)
+        hero_layout.addWidget(mini("Alegerea zilei", 10))
+        hero_layout.addStretch(1)
+        hero_layout.addWidget(mini("Aleg  ·  Detalii", 8, True))
+        main.addWidget(hero, 1)
+        alternatives = QHBoxLayout()
+        alternatives.setSpacing(4)
+        alternatives.addWidget(block(fill=c["card2"]), 1)
+        alternatives.addWidget(block(fill=c["card2"]), 1)
+        main.addLayout(alternatives, 1)
+        layout.addLayout(main, 1)
+    elif skin == "cinematic":
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(8, 7, 8, 7)
         layout.setSpacing(5)
@@ -1439,6 +1470,12 @@ def render_skin_today(window, primary, backups):
         _poster_wall(window, primary, backups)
     else:
         _decision_studio(window, primary, backups)
+    if skin in ("cinematic", "poster_wall", "workbench") and getattr(window, "today_gallery_failed", False):
+        retry = QFrame(); retry.setObjectName("PremiumCard")
+        retry_layout = QHBoxLayout(retry)
+        retry_layout.addWidget(_label("Alegerea principală este gata. Filmele suplimentare nu s-au încărcat.", "Muted", True), 1)
+        retry_layout.addWidget(_action(window, "Reîncearcă doar galeria", window.retry_today_gallery))
+        content.addWidget(retry)
     content.addStretch(1)
 
 
@@ -1464,11 +1501,18 @@ def _select(stack, buttons, index):
 def install_premium_skins(window_cls) -> None:
     if getattr(window_cls, "_cinecalendar_skin_installed", False):
         return
+    original_build_shell = window_cls._build_shell
+    original_apply_theme = window_cls.apply_theme
+    original_page_shell = window_cls.page_shell
+    original_loading_panel = window_cls.loading_panel
+    original_render_today = window_cls._render_today
     original_settings = window_cls.page_settings
     original_resize_event = window_cls.resizeEvent
     original_show_page = window_cls.show_page
 
     def loading_panel(self, title, subtitle):
+        if normalized_skin(getattr(self, "skin", None)) == "simple":
+            return original_loading_panel(self, title, subtitle)
         box = QFrame()
         box.setObjectName("HeroCard")
         layout = QHBoxLayout(box)
@@ -1501,10 +1545,18 @@ def install_premium_skins(window_cls) -> None:
         return box
 
     def _build_shell(self):
-        build_skin_shell(self)
+        self.skin = normalized_skin(self.db.get_setting("ui_skin", "cinematic"))
+        if self.skin == "simple":
+            original_build_shell(self)
+        else:
+            build_skin_shell(self)
 
     def apply_theme(self):
         self.skin = normalized_skin(self.db.get_setting("ui_skin", "cinematic"))
+        if self.skin == "simple":
+            self.theme = self.db.get_setting("theme", "dark")
+            original_apply_theme(self)
+            return
         self.theme = "light" if self.skin == "editorial" else "dark"
         app = QApplication.instance()
         if app is not None:
@@ -1557,6 +1609,8 @@ def install_premium_skins(window_cls) -> None:
 
     def page_shell(self, title, subtitle="", actions=None):
         skin = normalized_skin(getattr(self, "skin", None))
+        if skin == "simple":
+            return original_page_shell(self, title, subtitle, actions)
         key = getattr(self, "current_page", "today")
         compact = key == "today" and skin in ("cinematic", "editorial", "poster_wall", "workbench")
         page = QWidget()
@@ -1653,6 +1707,10 @@ def install_premium_skins(window_cls) -> None:
                               and self.current_page == "today" else None)
 
     def show_page(self, key):
+        if normalized_skin(getattr(self, "skin", None)) == "simple":
+            self._poster_filter_row = None
+            original_show_page(self, key)
+            return
         utility = self.centralWidget().findChild(QFrame, "UtilityBar")
         if utility is not None:
             previous = utility.findChild(QFrame, "TodayGenreChooser")
@@ -1723,5 +1781,10 @@ def install_premium_skins(window_cls) -> None:
     window_cls.resizeEvent = resizeEvent
     window_cls.show_page = show_page
     window_cls.loading_panel = loading_panel
-    window_cls._render_today = render_skin_today
+    def _render_today(self, primary, backups):
+        if normalized_skin(getattr(self, "skin", None)) == "simple":
+            return original_render_today(self, primary, backups)
+        return render_skin_today(self, primary, backups)
+
+    window_cls._render_today = _render_today
     window_cls._cinecalendar_skin_installed = True
