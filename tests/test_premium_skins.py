@@ -256,6 +256,16 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         assert service.db.get_setting("ui_skin") == "simple"
         assert set(reopened.nav_buttons) == expected_menus
         assert all(not button.icon().isNull() for button in reopened.nav_buttons.values())
+        # The shared immersive calendar must respect both themes supported by Simple.
+        reopened.theme = "light"
+        reopened.db.set_setting("theme", "light")
+        reopened.apply_theme()
+        assert "#F4F2ED" in QApplication.instance().styleSheet()
+        assert "CalendarStage" in QApplication.instance().styleSheet()
+        reopened.theme = "dark"
+        reopened.db.set_setting("theme", "dark")
+        reopened.apply_theme()
+        assert "#0B0D12" in QApplication.instance().styleSheet()
         assert reopened.centralWidget().findChild(QFrame, "UtilityBar") is None
         reopened.show_page("today")
         simple_page = reopened.stack.currentWidget()

@@ -4,6 +4,7 @@ Interfață:
 - cinci skinuri funcționale pe aceeași bază de funcții: Simple, Cinema Immersive, Cinematheque Editorial, Poster Wall și Decision Studio;
 - toate skinurile păstrează aceleași meniuri și acțiuni esențiale;
 - skinul Simple primește iconițe vectoriale în meniul lateral;
+- Calendarul din Simple respectă atât tema Dark, cât și tema Light;
 - schimbarea skinului rămâne persistentă și nu schimbă motorul de recomandare.
 
 Calendar:

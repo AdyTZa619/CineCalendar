@@ -627,13 +627,19 @@ def build_skin_shell(window):
 
 
 
-def _simple_calendar_qss() -> str:
-    """Calendar-only supplement for the classic Simple skin.
+def _simple_palette(theme: str) -> dict:
+    if str(theme or "").lower() == "light":
+        return dict(
+            bg="#F4F2ED", surface="#FAF9F6", card="#FFFFFF", card2="#F0EEE9",
+            text="#17181C", muted="#687180", border="#DFDCD4",
+            accent="#9A6B18", on="#FFFFFF", good="#1B8751",
+        )
+    return PALETTES["simple"]
 
-    Simple intentionally keeps the original shell/theme.  The immersive calendar therefore
-    needs its own narrowly-scoped rules instead of inheriting the full alternate-skin QSS.
-    """
-    c = PALETTES["simple"]
+
+def _simple_calendar_qss(theme: str = "dark") -> str:
+    """Calendar-only supplement for the classic Simple skin, respecting its theme."""
+    c = _simple_palette(theme)
     radius = "13px"
     return f"""
         QFrame#CalendarStage {{
@@ -1645,7 +1651,7 @@ def install_premium_skins(window_cls) -> None:
         self.skin = normalized_skin(self.db.get_setting("ui_skin", "cinematic"))
         if self.skin == "simple":
             original_build_shell(self)
-            icon_color = PALETTES["simple"]["accent"]
+            icon_color = _simple_palette(self.db.get_setting("theme", "dark"))["accent"]
             for key, button in self.nav_buttons.items():
                 button.setIcon(_icon(key, icon_color, 17))
                 button.setIconSize(QSize(19, 19))
@@ -1660,7 +1666,7 @@ def install_premium_skins(window_cls) -> None:
             original_apply_theme(self)
             app = QApplication.instance()
             if app is not None:
-                app.setStyleSheet(app.styleSheet() + "\n" + _simple_calendar_qss())
+                app.setStyleSheet(app.styleSheet() + "\n" + _simple_calendar_qss(self.theme))
             return
         self.theme = "light" if self.skin == "editorial" else "dark"
         app = QApplication.instance()
