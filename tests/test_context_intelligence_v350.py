@@ -17,6 +17,8 @@ from cinecalendar.recommender_v17 import FastRecommendationEngineV17
 from cinecalendar import production_engine as production_engine_module
 from cinecalendar import service as service_module
 from cinecalendar import ui_composition as ui_composition_module
+from cinecalendar import premium_calendar_ui as premium_calendar_ui_module
+from cinecalendar import premium_skins as premium_skins_module
 
 
 def _event(engine, year: int, key: str):
@@ -36,6 +38,11 @@ def test_key_dates_expected_by_context_intelligence_are_indexed():
     assert by_key["september_transition"].start == date(2026, 9, 1)
     assert by_key["exaltation_cross"].start == date(2026, 9, 14)
     assert by_key["romania_national"].start == date(2026, 12, 1)
+    assert by_key["national_reading_day"].start == date(2026, 2, 15)
+    assert by_key["heroes_day_ro"].start == date(2026, 5, 21)
+    assert by_key["romanian_language_day"].start == date(2026, 8, 31)
+    assert by_key["romania_holocaust_memorial"].start == date(2026, 10, 9)
+    assert by_key["st_parascheva"].start == date(2026, 10, 14)
 
 
 def test_cross_influence_is_strongest_on_feast_and_fades_afterwards():
@@ -180,3 +187,18 @@ def test_context_diagnostics_are_in_canonical_ui_composition():
     assert "install_context_ui_v35(window_cls)" in composition
     assert "Motor recomandări • diagnostic" in patch
     assert "De ce acum:" in patch
+
+
+def test_existing_calendar_page_is_immersive_without_adding_a_duplicate_calendar():
+    source = inspect.getsource(premium_calendar_ui_module.CalendarPremiumWindow.page_month)
+    spotlight = inspect.getsource(premium_calendar_ui_module.CalendarPremiumWindow._render_calendar_spotlight)
+    qss = inspect.getsource(premium_skins_module.skin_qss)
+
+    assert "CalendarStage" in source
+    assert "CalendarDay" in source
+    assert "RO_WEEKDAYS" in inspect.getsource(premium_calendar_ui_module)
+    assert "CalendarSpotlight" in source
+    assert "Filmele zilei" in source
+    assert "regula lui specifică" in spotlight
+    assert "CalendarDay[selected='true']" in qss
+    assert "CalendarMovieCard" in qss

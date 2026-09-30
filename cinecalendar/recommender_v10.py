@@ -10,7 +10,7 @@ from .semantic import extract_semantic, feature_vector
 from .util import clamp, cosine_sparse, normalize_text
 
 
-ENGINE_VERSION = "10.0.0"
+ENGINE_VERSION = "10.1.0-calendar-anchors"
 
 
 # Broad-but-honest thematic bridges. These are NOT factual event matches; they are used only
@@ -39,6 +39,7 @@ _EVENT_GROUP_OVERRIDES: dict[str, tuple[tuple[str, ...], ...]] = {
 
     # Specific historical anchors
     "holocaust_day": (("holocaust",),),
+    "romania_holocaust_memorial": (("romania", "holocaust"),),
     "september_11": (("terrorism",),),
     "ww2_start": (("ww2",),),
     "victory_europe": (("ww2",), ("peace", "history")),
@@ -50,6 +51,10 @@ _EVENT_GROUP_OVERRIDES: dict[str, tuple[tuple[str, ...], ...]] = {
     "romania_national": (("romania", "history"),),
     "romanian_independence": (("romania", "history"), ("romania", "war")),
     "army_day_ro": (("romania", "war"),),
+    "heroes_day_ro": (("romanian_military",), ("romania", "war")),
+    "romanian_language_day": (("romanian_language",), ("romania", "literature")),
+    "national_reading_day": (("reading",), ("literature",)),
+    "st_parascheva": (("saints", "monasticism"),),
 
     # Civic/cultural/thematic days
     "romanian_culture": (("romania", "biography"), ("art",),),

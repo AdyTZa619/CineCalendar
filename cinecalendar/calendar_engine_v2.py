@@ -128,6 +128,12 @@ class RichCalendarEngine(CalendarEngine):
             direct=("christianity",), spiritual=("faith",), atmosphere=("autumn", "contemplative"),
         )
         add(
+            "st_parascheva", "Sf. Cuv. Parascheva de la Iași",
+            date(year, 10, 14), "ortodox", .70,
+            {"saints": .95, "monasticism": .8, "christianity": .72, "romania": .35},
+            direct=("saints",), spiritual=("christianity", "faith", "monasticism"),
+        )
+        add(
             "st_demetrius", "Sf. Mare Mucenic Dimitrie",
             date(year, 10, 26), "ortodox", .62,
             {"saints": .85, "christianity": .6},
@@ -193,6 +199,13 @@ class RichCalendarEngine(CalendarEngine):
             direct=("easter",), spiritual=("christianity", "faith"), atmosphere=("hopeful", "spring"),
             end=easter + timedelta(days=6),
         )
+        add(
+            "heroes_day_ro", "Ziua Eroilor • comemorarea eroilor României",
+            easter + timedelta(days=39), "comemorativ", .86,
+            {"romanian_military": 1.0, "romania": .95, "war": .78, "history": .72},
+            direct=("romania", "war"), historical=("history",),
+        )
+
         all_saints = easter + timedelta(days=56)
         add(
             "all_saints", "Duminica Tuturor Sfinților", all_saints,
@@ -222,6 +235,12 @@ class RichCalendarEngine(CalendarEngine):
             date(year, 1, 24), "istoric", .90,
             {"romania": 1.0, "history": .9, "politics": .55},
             direct=("romania",), historical=("history", "politics"), before=2, after=1,
+        )
+        add(
+            "national_reading_day", "Ziua Națională a Lecturii",
+            date(year, 2, 15), "cultural", .58,
+            {"reading": 1.0, "literature": .9, "education": .7},
+            direct=("reading", "literature"), atmosphere=("contemplative",),
         )
         add(
             "brancusi_day", "Ziua Națională Constantin Brâncuși",
@@ -279,6 +298,12 @@ class RichCalendarEngine(CalendarEngine):
             {"romania": .75, "history": .4}, direct=("romania",), historical=("history",),
         )
         add(
+            "romanian_language_day", "Ziua Limbii Române",
+            date(year, 8, 31), "cultural", .64,
+            {"romanian_language": 1.0, "romania": .8, "literature": .6, "education": .45},
+            direct=("romanian_language",), historical=("romania",),
+        )
+        add(
             "august_23_1944", "23 August 1944 • România întoarce armele",
             date(year, 8, 23), "istoric", .82,
             {"romania": .95, "war": .9, "history": .9, "politics": .45},
@@ -294,6 +319,12 @@ class RichCalendarEngine(CalendarEngine):
             date(year, 9, 11), "istoric", .72,
             {"history": .75, "politics": .6, "death": .55},
             historical=("history", "politics"), atmosphere=("dark", "contemplative"),
+        )
+        add(
+            "romania_holocaust_memorial", "Ziua Națională de Comemorare a Holocaustului din România",
+            date(year, 10, 9), "istoric", .90,
+            {"holocaust": 1.0, "romania": .9, "ww2": .7, "history": .85},
+            direct=("holocaust",), historical=("romania", "history"),
         )
         add(
             "army_day_ro", "Ziua Armatei României",

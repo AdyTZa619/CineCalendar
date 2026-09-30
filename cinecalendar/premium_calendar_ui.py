@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import sys
-from calendar import month_name, monthrange
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -20,6 +20,7 @@ RO_MONTHS = (
     "", "Ianuarie", "Februarie", "Martie", "Aprilie", "Mai", "Iunie",
     "Iulie", "August", "Septembrie", "Octombrie", "Noiembrie", "Decembrie",
 )
+RO_WEEKDAYS = ("LUN", "MAR", "MIE", "JOI", "VIN", "SÂM", "DUM")
 
 
 class CalendarPremiumWindow(PremiumDecisionWindow):
@@ -33,6 +34,8 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
     def __init__(self, service):
         self.calendar_worker: WorkerThread | None = None
         self.calendar_focus_layout: QVBoxLayout | None = None
+        self.calendar_spotlight_layout: QVBoxLayout | None = None
+        self.calendar_day_buttons: dict[date, QPushButton] = {}
         self.calendar_selected: date = date.today()
         self.calendar_month_anchor: date = date.today().replace(day=1)
         self.calendar_pending: date | None = None
@@ -134,7 +137,7 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
 
         page, content = self.page_shell(
             f"Program calendar — {RO_MONTHS[anchor.month]} {anchor.year}",
-            "Fiecare zi are contextul ei. Alege orice dată și primești filme legate expres de reperul religios, istoric, spiritual, atmosferic sau sezonier activ în ziua respectivă.",
+            "Alege o zi ca pe o scenă: vezi reperul real al datei, apoi numai filmele care trec legătura calendaristică verificată. Zilele fără reper concret rămân sezoniere, fără etichete inventate.",
             [
                 ("‹ Luna anterioară", lambda: self._shift_month(-1), False),
                 ("Azi", self._go_today, True),
@@ -142,46 +145,111 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
             ],
         )
 
-        focus = QFrame(); focus.setObjectName("HeroCard")
-        self.calendar_focus_layout = QVBoxLayout(focus)
-        self.calendar_focus_layout.setContentsMargins(24,22,24,22)
+        month_events = [ev for ev in self.s.calendar.events_for_year(anchor.year) if ev.start.month == anchor.month]
+        starts: dict[int, list] = {}
+        for ev in month_events:
+            starts.setdefault(ev.start.day, []).append(ev)
+        for items in starts.values():
+            items.sort(key=lambda ev: (float(ev.importance), ev.name), reverse=True)
+
+        stage = QFrame(); stage.setObjectName("CalendarStage")
+        stage_layout = QVBoxLayout(stage)
+        stage_layout.setContentsMargins(20,18,20,20); stage_layout.setSpacing(12)
+
+        month_head = QHBoxLayout()
+        month_copy = QVBoxLayout(); month_copy.setSpacing(2)
+        kicker = QLabel("LUNA TA DE FILM"); kicker.setObjectName("Kicker"); month_copy.addWidget(kicker)
+        month_title = QLabel(f"{RO_MONTHS[anchor.month]} {anchor.year}")
+        month_title.setObjectName("HeroTitle"); month_copy.addWidget(month_title)
+        month_head.addLayout(month_copy, 1)
+        count_label = QLabel(f"{len(month_events)} repere indexate")
+        count_label.setObjectName("Muted"); month_head.addWidget(count_label, 0, Qt.AlignBottom)
+        stage_layout.addLayout(month_head)
+
+        weekday_grid = QGridLayout(); weekday_grid.setHorizontalSpacing(8)
+        for col, name in enumerate(RO_WEEKDAYS):
+            label = QLabel(name); label.setObjectName("CalendarWeekday")
+            label.setAlignment(Qt.AlignCenter)
+            weekday_grid.addWidget(label, 0, col)
+        stage_layout.addLayout(weekday_grid)
+
+        days_grid = QGridLayout()
+        days_grid.setHorizontalSpacing(8); days_grid.setVerticalSpacing(8)
+        first_col = anchor.weekday()
+        last_day = monthrange(anchor.year, anchor.month)[1]
+        total_slots = first_col + last_day
+        rows = (total_slots + 6) // 7
+        for row in range(rows):
+            days_grid.setRowStretch(row, 1)
+        for col in range(7):
+            days_grid.setColumnStretch(col, 1)
+
+        self.calendar_day_buttons = {}
+        today = date.today()
+        for slot in range(first_col):
+            blank = QFrame(); blank.setObjectName("CalendarDayBlank"); blank.setMinimumHeight(82)
+            days_grid.addWidget(blank, 0, slot)
+
+        for day_no in range(1, last_day + 1):
+            target = date(anchor.year, anchor.month, day_no)
+            events = starts.get(day_no, [])
+            primary = events[0] if events else None
+            if primary is not None:
+                name = primary.name
+                short = name if len(name) <= 28 else name[:27].rstrip() + "…"
+                extra = f"  +{len(events)-1}" if len(events) > 1 else ""
+                text = f"{day_no}\n{short}{extra}"
+            else:
+                text = f"{day_no}\n "
+
+            button = QPushButton(text)
+            button.setObjectName("CalendarDay")
+            button.setProperty("hasEvent", bool(events))
+            button.setProperty("major", any(float(ev.importance) >= .80 for ev in events))
+            button.setProperty("selected", target == self.calendar_selected)
+            button.setProperty("today", target == today)
+            button.setMinimumHeight(82)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            if events:
+                button.setToolTip("\n".join(ev.name for ev in events))
+            else:
+                phase, _tags = self.s.calendar.season_phase(target)
+                button.setToolTip(f"{target:%d.%m.%Y} • {phase}")
+            button.clicked.connect(lambda _checked=False, d=target: self._select_calendar_day(d))
+            self.calendar_day_buttons[target] = button
+            absolute = first_col + day_no - 1
+            row, col = divmod(absolute, 7)
+            days_grid.addWidget(button, row, col)
+
+        trailing = rows * 7 - total_slots
+        for offset in range(trailing):
+            absolute = total_slots + offset
+            row, col = divmod(absolute, 7)
+            blank = QFrame(); blank.setObjectName("CalendarDayBlank"); blank.setMinimumHeight(82)
+            days_grid.addWidget(blank, row, col)
+
+        stage_layout.addLayout(days_grid)
+        content.addWidget(stage)
+
+        spotlight = QFrame(); spotlight.setObjectName("CalendarSpotlight")
+        self.calendar_spotlight_layout = QVBoxLayout(spotlight)
+        self.calendar_spotlight_layout.setContentsMargins(24,22,24,22)
+        self.calendar_spotlight_layout.setSpacing(10)
+        content.addWidget(spotlight)
+
+        program_title = QLabel("Filmele zilei")
+        program_title.setObjectName("SectionTitle"); content.addWidget(program_title)
+        program = QFrame(); program.setObjectName("CalendarProgram")
+        self.calendar_focus_layout = QVBoxLayout(program)
+        self.calendar_focus_layout.setContentsMargins(18,18,18,18)
         self.calendar_focus_layout.setSpacing(12)
-        content.addWidget(focus)
+        content.addWidget(program)
+        content.addStretch(1)
+
         if self._calendar_cached(self.calendar_selected):
             self._render_calendar_program(self.calendar_last_result)
         else:
             self._render_calendar_loading(self.calendar_selected)
-
-        head = QLabel("Luna, zi cu zi")
-        head.setObjectName("SectionTitle"); content.addWidget(head)
-        expl = QLabel("Nu trebuie să existe o sărbătoare mare ca o zi să fie utilizabilă: zilele fără reper nominal folosesc perioada ortodoxă activă și atmosfera sezonului. Zilele cu repere au etichete explicite.")
-        expl.setObjectName("Muted"); expl.setWordWrap(True); content.addWidget(expl)
-
-        days_grid = QGridLayout(); days_grid.setHorizontalSpacing(10); days_grid.setVerticalSpacing(8)
-        last_day = monthrange(anchor.year, anchor.month)[1]
-        for day_no in range(1, last_day + 1):
-            d = date(anchor.year, anchor.month, day_no)
-            events = self.s.calendar.relevant_events(d)
-            phase, _tags = self.s.calendar.season_phase(d)
-            card = QFrame(); card.setObjectName("PremiumCard")
-            row = QHBoxLayout(card); row.setContentsMargins(13,10,13,10); row.setSpacing(10)
-            date_label = QLabel(d.strftime("%d.%m")); date_label.setObjectName("BodyStrong"); date_label.setFixedWidth(48); row.addWidget(date_label)
-            if events:
-                names = [ev.name for ev, _ in events[:2]]
-                context = QLabel(" • ".join(names))
-            else:
-                context = QLabel(phase)
-            context.setObjectName("Muted"); context.setWordWrap(True); row.addWidget(context, 1)
-            btn = QPushButton("Filme")
-            if d == self.calendar_selected:
-                btn.setProperty("accent", True)
-            btn.clicked.connect(lambda _, target=d: self._select_calendar_day(target))
-            row.addWidget(btn)
-            days_grid.addWidget(card, (day_no - 1) // 2, (day_no - 1) % 2)
-        wrap = QFrame(); wrap.setLayout(days_grid); content.addWidget(wrap)
-        content.addStretch(1)
-
-        if not self._calendar_cached(self.calendar_selected):
             QTimer.singleShot(0, lambda d=self.calendar_selected: self._load_calendar_day_async(d))
         return page
 
@@ -192,30 +260,110 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
             and self.calendar_last_signature == (target, self._browse_state_signature())
         )
 
+    def _refresh_calendar_day_button(self, target: date):
+        button = self.calendar_day_buttons.get(target)
+        if button is None:
+            return
+        button.setProperty("selected", target == self.calendar_selected)
+        style = button.style()
+        style.unpolish(button); style.polish(button); button.update()
+
     def _select_calendar_day(self, target: date):
+        previous = self.calendar_selected
         self.calendar_selected = target
+        self._refresh_calendar_day_button(previous)
+        self._refresh_calendar_day_button(target)
         if self._calendar_cached(target):
             self._render_calendar_program(self.calendar_last_result)
         else:
             self._render_calendar_loading(target)
             self._load_calendar_day_async(target)
 
+    def _render_calendar_spotlight(self, target: date, result: dict | None = None, *, loading: bool = False):
+        layout = self.calendar_spotlight_layout
+        if layout is None:
+            return
+        self._clear_layout(layout)
+
+        events = list((result or {}).get("events") or self.s.calendar.relevant_events(target))
+        exact = [(ev, p) for ev, p in events if ev.category != "sezon" and ev.start <= target <= ev.end]
+        nearby = [(ev, p) for ev, p in events if ev.category != "sezon"]
+        candidates = exact or nearby or events
+        primary = max(candidates, key=lambda item: float(item[0].importance) * float(item[1]), default=None)
+        phase = (result or {}).get("phase") or self.s.calendar.season_phase(target)[0]
+
+        top = QHBoxLayout(); top.setSpacing(18)
+        copy = QVBoxLayout(); copy.setSpacing(5)
+        eyebrow = "REPER ACTIV AZI" if exact else ("ÎN JURUL UNUI REPER" if nearby else "ATMOSFERA ZILEI")
+        k = QLabel(eyebrow); k.setObjectName("Kicker"); copy.addWidget(k)
+        dt = QLabel(f"{target.day} {RO_MONTHS[target.month]} {target.year}")
+        dt.setObjectName("HeroTitle"); dt.setWordWrap(True); copy.addWidget(dt)
+
+        if primary is not None:
+            event, proximity = primary
+            title = QLabel(event.name); title.setObjectName("CardTitle"); title.setWordWrap(True); copy.addWidget(title)
+            if exact:
+                explanation = (
+                    "Pentru acest reper, filmele factuale trebuie să treacă regula lui specifică. "
+                    "«Istorie», «război», «România», «credință» sau alte etichete generale nu sunt suficiente singure."
+                )
+            elif nearby:
+                explanation = (
+                    "Data este în fereastra de influență a reperului. Recomandările păstrează aceeași "
+                    "regulă strictă și nu primesc o legătură factuală doar din teme generale."
+                )
+            else:
+                explanation = "Nu există un reper concret; aici perioada și anotimpul sunt prezentate explicit ca atmosferă."
+            detail = QLabel(explanation); detail.setObjectName("Muted"); detail.setWordWrap(True); copy.addWidget(detail)
+            pills = QHBoxLayout(); pills.setSpacing(6)
+            pills.addWidget(self.pill(event.category.replace("_", " ").title()))
+            pills.addWidget(self.pill(f"{round(float(proximity) * 100)}% context"))
+            if len(exact) > 1:
+                pills.addWidget(self.pill(f"+{len(exact)-1} repere azi"))
+            pills.addStretch(1); copy.addLayout(pills)
+        else:
+            title = QLabel(phase); title.setObjectName("CardTitle"); copy.addWidget(title)
+            detail = QLabel(
+                "Zi fără reper nominal major. Filmele pot fi potrivite sezonier sau personal, "
+                "dar nu vor fi prezentate ca fiind despre o sărbătoare inexistentă."
+            )
+            detail.setObjectName("Muted"); detail.setWordWrap(True); copy.addWidget(detail)
+
+        top.addLayout(copy, 1)
+        nav = QHBoxLayout(); nav.setSpacing(6)
+        previous = QPushButton("‹ Ziua")
+        previous.clicked.connect(lambda _checked=False, d=target-timedelta(days=1): self._open_calendar_date(d))
+        following = QPushButton("Ziua ›")
+        following.clicked.connect(lambda _checked=False, d=target+timedelta(days=1): self._open_calendar_date(d))
+        nav.addWidget(previous); nav.addWidget(following); top.addLayout(nav)
+        layout.addLayout(top)
+
+        if result is not None:
+            sections = list(result.get("sections") or [])
+            unique = {int(rec.movie.id) for section in sections for rec in (section.get("recommendations") or []) if rec.movie.id}
+            if bool(result.get("specific_event_active")) and not unique:
+                status = "0 potriviri reale în catalogul nevăzut — nu completez ziua cu filme fără legătură."
+            elif bool(result.get("specific_event_active")):
+                status = f"{len(unique)} filme eligibile au trecut legătura cu reperul acestei zile."
+            else:
+                status = f"{len(unique)} opțiuni eligibile pentru profilul și perioada ta."
+            label = QLabel(status); label.setObjectName("BodyStrong"); label.setWordWrap(True); layout.addWidget(label)
+        elif loading:
+            label = QLabel("Verific filmele eligibile și păstrez numai legăturile pe care motorul le poate susține.")
+            label.setObjectName("Muted"); label.setWordWrap(True); layout.addWidget(label)
+
     def _render_calendar_loading(self, target: date):
+        self._render_calendar_spotlight(target, loading=True)
         layout = self.calendar_focus_layout
         if layout is None:
             return
         self._clear_layout(layout)
-        h = QLabel(f"Filme pentru {target:%d.%m.%Y}")
-        h.setObjectName("SectionTitle"); layout.addWidget(h)
-        events = self.s.calendar.relevant_events(target)
-        phase, _ = self.s.calendar.season_phase(target)
-        if events:
-            text = " • ".join(ev.name for ev, _ in events[:4])
-        else:
-            text = f"Fără reper nominal major • {phase}"
-        c = QLabel(text); c.setObjectName("Muted"); c.setWordWrap(True); layout.addWidget(c)
-        wait = QLabel("Calculez o singură dată pool-ul zilei și construiesc categoriile…")
-        wait.setObjectName("Muted"); layout.addWidget(wait)
+        wait = QLabel("Caut filme pentru ziua selectată…")
+        wait.setObjectName("SectionTitle"); layout.addWidget(wait)
+        detail = QLabel(
+            "Mai întâi verific legătura cu reperul; gustul tău ordonează doar filmele care au trecut acel filtru."
+        )
+        detail.setObjectName("Muted"); detail.setWordWrap(True); layout.addWidget(detail)
 
     def _load_calendar_day_async(self, target: date):
         if self._ui_closing or self.current_page != "month" or target != self.calendar_selected:
@@ -267,52 +415,45 @@ class CalendarPremiumWindow(PremiumDecisionWindow):
         layout = self.calendar_focus_layout
         if layout is None:
             return
+        self._render_calendar_spotlight(result["date"], result)
         self._clear_layout(layout)
-        target = result["date"]
-        h = QLabel(f"Pentru {target:%d.%m.%Y} — {result.get('phase', '')}")
-        h.setObjectName("SectionTitle"); layout.addWidget(h)
 
-        events = result.get("events") or []
-        if events:
-            event_box = QFrame(); event_box.setObjectName("PremiumCard")
-            el = QVBoxLayout(event_box); el.setContentsMargins(16,14,16,14); el.setSpacing(6)
-            eh = QLabel("Context activ în ziua selectată"); eh.setObjectName("BodyStrong"); el.addWidget(eh)
-            for ev, proximity in events[:8]:
-                row = QHBoxLayout()
-                n = QLabel(ev.name); n.setWordWrap(True); row.addWidget(n, 1)
-                row.addWidget(self.pill(ev.category.replace("_", " ").title()))
-                strength = QLabel(f"{round(proximity * 100)}%")
-                strength.setObjectName("Muted"); row.addWidget(strength)
-                el.addLayout(row)
-            layout.addWidget(event_box)
-        else:
-            x = QLabel("Nu există un reper nominal major în această dată; recomandările de mai jos sunt marcate explicit ca sezoniere/atmosferice, nu ca legătură directă.")
-            x.setObjectName("Muted"); x.setWordWrap(True); layout.addWidget(x)
+        sections = list(result.get("sections") or [])
+        if not sections:
+            if bool(result.get("specific_event_active")):
+                text = (
+                    "Nu am găsit momentan niciun film nevăzut care să treacă regula specifică a reperului. "
+                    "Las ziua goală decât să-ți prezint o potrivire falsă."
+                )
+            else:
+                text = "Nu am găsit suficiente filme eligibile pentru această zi."
+            label = QLabel(text); label.setObjectName("BodyStrong"); label.setWordWrap(True); layout.addWidget(label)
+            return
 
         stats = QLabel(
-            f"Pool rapid: {int(result.get('pre_rank_count', 0)):,} candidați • scor complet: {int(result.get('full_score_count', 0)):,}. "
-            "Filmele deja evaluate/văzute rămân excluse."
+            f"Analiză: {int(result.get('pre_rank_count', 0)):,} candidați rapizi • "
+            f"{int(result.get('full_score_count', 0)):,} finaliști evaluați complet • filmele văzute rămân excluse."
         )
         stats.setObjectName("Muted"); stats.setWordWrap(True); layout.addWidget(stats)
 
-        sections = result.get("sections") or []
-        if not sections:
-            n = QLabel("Nu am găsit suficiente filme eligibile cu o legătură calendaristică reală pentru ziua asta.")
-            n.setObjectName("Muted"); layout.addWidget(n); return
-
         for section in sections:
-            sh = QLabel(section["title"]); sh.setObjectName("SectionTitle"); layout.addWidget(sh)
+            recs = list(section.get("recommendations") or [])
+            if not recs:
+                continue
+            head = QHBoxLayout()
+            sh = QLabel(section["title"]); sh.setObjectName("SectionTitle"); head.addWidget(sh, 1)
+            head.addWidget(self.pill(f"{len(recs)} filme")); layout.addLayout(head)
             ss = QLabel(section["subtitle"]); ss.setObjectName("Muted"); ss.setWordWrap(True); layout.addWidget(ss)
             grid = QGridLayout(); grid.setHorizontalSpacing(12); grid.setVerticalSpacing(12)
-            for i, rec in enumerate(section["recommendations"]):
+            for i, rec in enumerate(recs):
                 grid.addWidget(self.calendar_movie_card(rec), i // 2, i % 2)
             wrap = QFrame(); wrap.setLayout(grid); layout.addWidget(wrap)
 
     def calendar_movie_card(self, rec: Recommendation):
         m, s = rec.movie, rec.score
-        card = QFrame(); card.setObjectName("PremiumCard"); card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        main = QHBoxLayout(card); main.setContentsMargins(14,14,14,14); main.setSpacing(12)
-        poster = self.poster_label(82,123); main.addWidget(poster, 0, Qt.AlignTop)
+        card = QFrame(); card.setObjectName("CalendarMovieCard"); card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        main = QHBoxLayout(card); main.setContentsMargins(15,15,15,15); main.setSpacing(13)
+        poster = self.poster_label(92,138); main.addWidget(poster, 0, Qt.AlignTop)
         if m.poster_url:
             self.load_poster_async(poster, m.poster_url, m.imdb_id or str(m.id))
         l = QVBoxLayout(); l.setSpacing(5)

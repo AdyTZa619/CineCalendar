@@ -10,7 +10,7 @@ from .semantic import extract_semantic
 from .util import clamp, normalize_text
 
 
-CONTEXT_ENGINE_VERSION = "calendar-context-v3.5.0"
+CONTEXT_ENGINE_VERSION = "calendar-context-v3.6.0"
 
 
 class ContextCalendarEngineV35(RichCalendarEngine):
@@ -32,7 +32,10 @@ class ContextCalendarEngineV35(RichCalendarEngine):
         "children": ("child", "children", "kid", "kids", "copil", "copii", "childhood"),
         "labour": ("worker", "workers", "labour", "labor", "factory", "muncitor", "munca", "strike"),
         "education": ("school", "student", "teacher", "education", "scoala", "elev", "profesor"),
-        "literature": ("writer", "poet", "poetry", "literature", "author", "scriitor", "poet", "roman"),
+        "literature": ("writer", "poet", "poetry", "literature", "author", "scriitor", "poet", "roman", "book", "books", "carte", "carti", "library", "biblioteca"),
+        "reading": ("reading", "reader", "book club", "library", "librarian", "lectura", "cititor", "biblioteca"),
+        "romanian_language": ("romanian language", "limba romana", "romanian linguist", "romanian linguistics", "romanian philology", "filologie romana"),
+        "romanian_military": ("romanian army", "romanian military", "romanian soldiers", "armata romana", "soldati romani", "eroi romani", "eroii romaniei"),
         "art": ("artist", "art", "sculpt", "painter", "painting", "arta", "sculptor", "pictor"),
         "travel": ("travel", "journey", "trip", "tourism", "calator", "vacation"),
         "human_rights": ("human rights", "civil rights", "rights activist", "drepturile omului"),

@@ -725,6 +725,24 @@ def skin_qss(skin: str) -> str:
         QFrame#Sidebar QLabel#Brand {{ color:{c['accent']}; }}
         QFrame#UtilityBar QLineEdit {{ background:{c['card2']}; border-radius:6px; padding:9px 14px; }}
         QFrame#PosterFeature, QFrame#StudioInspector, QFrame#StudioChoice, QFrame#WeekDock {{ background:{c['card']}; border:1px solid {c['border']}; border-radius:{radius}; }}
+        QFrame#CalendarStage, QFrame#CalendarProgram, QFrame#CalendarSpotlight, QFrame#CalendarMovieCard {{
+            background:{c['card']}; border:1px solid {c['border']}; border-radius:{radius};
+        }}
+        QFrame#CalendarSpotlight {{
+            background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {c['card2']},stop:.62 {c['card']},stop:1 {c['surface']});
+        }}
+        QLabel#CalendarWeekday {{ color:{c['muted']}; font-size:10px; font-weight:800; letter-spacing:1px; padding:4px; }}
+        QFrame#CalendarDayBlank {{ background:{c['surface']}; border:1px solid {c['border']}; border-radius:{radius}; }}
+        QPushButton#CalendarDay {{
+            min-height:70px; text-align:left; padding:10px; background:{c['surface']};
+            color:{c['text']}; border:1px solid {c['border']}; border-radius:{radius}; font-weight:700;
+        }}
+        QPushButton#CalendarDay:hover {{ background:{c['card2']}; border-color:{c['accent']}; }}
+        QPushButton#CalendarDay[hasEvent='true'] {{ background:{c['card2']}; border-color:{c['accent']}; }}
+        QPushButton#CalendarDay[major='true'] {{ font-weight:800; }}
+        QPushButton#CalendarDay[today='true'] {{ border:2px solid {c['good']}; }}
+        QPushButton#CalendarDay[selected='true'] {{ background:{c['accent']}; color:{c['on']}; border:2px solid {c['accent']}; }}
+        QFrame#CalendarMovieCard:hover {{ border-color:{c['accent']}; }}
         QFrame#StudioChoice[selected='true'] {{ border:2px solid {c['accent']}; background:{c['card2']}; }}
         QFrame#StudioChoice QLabel#ScoreLarge {{ color:{c['accent']}; }}
         QFrame#PosterTile {{ background:{c['surface']}; border:1px solid {c['border']}; border-radius:9px; }}

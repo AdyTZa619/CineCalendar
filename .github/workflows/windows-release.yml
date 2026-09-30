@@ -292,7 +292,7 @@ jobs:
             version = $version
             url = $url
             sha256 = $sha
-            notes = 'Alpha 32: Ce văd acum? verifică metadatele Top 3 înainte de afișare și recalculează alegerea când apar fapte noi. Finaliștii promițători intră în coada de completare pentru zilele viitoare. Calendarul cere legături concrete pentru Înălțarea Sfintei Cruci și Ziua Națională.'
+            notes = 'Alpha 33: Program calendar devine o experiență lunară imersivă, cu grilă reală, spotlight pentru zi și legături stricte cu reperul. Sunt adăugate Ziua Lecturii, Ziua Eroilor, Ziua Limbii Române, comemorarea Holocaustului din România și Sf. Parascheva, fiecare cu regulă proprie de relevanță.'
             publishedAt = [DateTime]::UtcNow.ToString('o')
             channel = 'alpha'
           } | ConvertTo-Json -Depth 4

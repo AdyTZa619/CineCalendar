@@ -8,7 +8,7 @@ from .semantic import extract_semantic
 from .util import clamp, normalize_text
 
 
-ENGINE_VERSION = "7.0.0"
+ENGINE_VERSION = "7.1.0-event-precision"
 
 # Calendar relevance is precision-first. Every concrete event must have its own subject
 # anchor. Broad labels such as History, War, Drama, Christianity, Romania or Politics are
@@ -186,6 +186,10 @@ EVENT_RELEVANCE_RULES: dict[str, dict] = {
         "kind": "directă", "label": "Acoperământul Maicii Domnului",
         "terms": ("protection of the theotokos", "intercession of the theotokos", "pokrov", "acoperamantul maicii domnului"),
     },
+    "st_parascheva": {
+        "kind": "directă", "label": "Sf. Cuvioasă Parascheva de la Iași",
+        "terms": ("saint parascheva", "saint paraskeva", "st parascheva", "cuvioasa parascheva", "sfanta parascheva", "sf cuvioasa parascheva", "paraskeva of the balkans"),
+    },
     "st_demetrius": {
         "kind": "directă", "label": "Sf. Mare Mucenic Dimitrie",
         "terms": ("saint demetrius", "st demetrius", "demetrius of thessaloniki", "sfantul dimitrie", "sf dimitrie"),
@@ -255,6 +259,10 @@ EVENT_RELEVANCE_RULES: dict[str, dict] = {
         "kind": "istorică", "label": "Unirea Principatelor din 1859",
         "terms": ("alexandru ioan cuza", "union of the principalities", "unirea principatelor", "moldavia wallachia union", "1859 romania", "little union"),
     },
+    "national_reading_day": {
+        "kind": "directă", "label": "lectură / carte / bibliotecă",
+        "terms": ("ziua nationala a lecturii", "national reading day", "reading culture", "books and reading", "book club", "library", "librarian", "love of reading", "literacy"),
+    },
     "brancusi_day": {
         "kind": "istorică", "label": "Constantin Brâncuși",
         "terms": ("constantin brancusi", "brancusi"),
@@ -295,6 +303,14 @@ EVENT_RELEVANCE_RULES: dict[str, dict] = {
         "kind": "istorică", "label": "Imnul Național al României",
         "terms": ("desteapta te romane", "romanian national anthem", "national anthem of romania", "imnul national al romaniei"),
     },
+    "heroes_day_ro": {
+        "kind": "istorică", "label": "eroii militari români",
+        "terms": ("ziua eroilor", "romanian war heroes", "romanian military heroes", "fallen romanian soldiers", "romanian soldiers", "eroii romani", "eroi ai neamului", "soldati romani", "militari romani cazuti"),
+    },
+    "romanian_language_day": {
+        "kind": "directă", "label": "limba română",
+        "terms": ("ziua limbii romane", "romanian language day", "romanian language", "limba romana", "romanian linguistics", "romanian philology"),
+    },
     "august_23_1944": {
         "kind": "istorică", "label": "23 August 1944 / actul Regelui Mihai",
         "terms": ("23 august 1944", "king michael coup", "michael coup 1944", "romania 1944 coup", "romania switches sides", "romania changed sides 1944"),
@@ -306,6 +322,11 @@ EVENT_RELEVANCE_RULES: dict[str, dict] = {
     "september_11": {
         "kind": "istorică", "label": "atentatele din 11 septembrie 2001",
         "terms": ("september 11 attacks", "september 11 2001", "9 11 attacks", "world trade center attacks", "twin towers 2001", "9/11 attacks"),
+    },
+    "romania_holocaust_memorial": {
+        "kind": "istorică", "label": "Holocaustul din România",
+        "terms": ("holocaust in romania", "romanian holocaust", "holocaustul din romania", "iasi pogrom", "pogromul de la iasi", "dorohoi pogrom", "transnistria deportations", "deportarile in transnistria"),
+        "all_tag_groups": (("holocaust", "romania"),),
     },
     "army_day_ro": {
         "kind": "istorică", "label": "Armata României",

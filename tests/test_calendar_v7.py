@@ -63,6 +63,11 @@ def test_generic_metadata_cannot_claim_specific_calendar_dates(tmp_path):
         date(2026, 9, 11),   # 9/11
         date(2026, 5, 8),    # VE Day
         date(2026, 1, 15),   # Eminescu / Culture Day
+        date(2026, 2, 15),   # National Reading Day
+        date(2026, 5, 21),   # Heroes Day / Ascension
+        date(2026, 8, 31),   # Romanian Language Day
+        date(2026, 10, 9),   # Holocaust remembrance in Romania
+        date(2026, 10, 14),  # St Parascheva
     ):
         score, kind, _reason = engine._calendar_score_cached(generic, when)
         assert score == 0.0, (when, score, kind)
@@ -99,6 +104,26 @@ def test_real_event_anchors_are_accepted_across_different_date_types(tmp_path):
         (
             date(2026, 4, 22),
             Movie(title="Planet Earth", genres=["Documentary"], overview="Nature, wildlife and conservation across the planet."),
+        ),
+        (
+            date(2026, 2, 15),
+            Movie(title="The Library", overview="A documentary about books, librarians, libraries and a culture of reading."),
+        ),
+        (
+            date(2026, 5, 21),
+            Movie(title="Eroii Români", overview="A documentary about Romanian soldiers and fallen Romanian war heroes."),
+        ),
+        (
+            date(2026, 8, 31),
+            Movie(title="Limba română", overview="A documentary about the Romanian language, Romanian linguistics and philology."),
+        ),
+        (
+            date(2026, 10, 9),
+            Movie(title="Holocaustul din România", overview="A documentary about the Holocaust in Romania and the Iași pogrom."),
+        ),
+        (
+            date(2026, 10, 14),
+            Movie(title="Sfânta Parascheva", overview="The life of Saint Paraskeva, known in Romania as Cuvioasa Parascheva."),
         ),
     ]
 
