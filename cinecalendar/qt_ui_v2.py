@@ -589,9 +589,29 @@ class DecisionWindow(CineCalendarWindow):
         evt.setWordWrap(True); evt.setObjectName("Muted"); evl.addWidget(evt)
         content.addWidget(events)
 
+        visible = dict(report.get("visible_decision_replay") or {})
+        visible_guard = dict(visible.get("guard") or {})
+        visible_box = self.card(); vbl = QVBoxLayout(visible_box)
+        vbh = QLabel("Ce văd acum? — test pe cele trei opțiuni"); vbh.setObjectName("CardTitle"); vbl.addWidget(vbh)
+        visible_text = QLabel(
+            f"Ferestre istorice: {visible_guard.get('fold_count', 0)} • "
+            f"V16: {(visible_guard.get('v16') or {}).get('liked_8_plus', 0)} filme 8+, "
+            f"{(visible_guard.get('v16') or {}).get('disliked_4_minus', 0)} filme 1–4 • "
+            f"V5: {(visible_guard.get('v5_20') or {}).get('liked_8_plus', 0)} filme 8+, "
+            f"{(visible_guard.get('v5_20') or {}).get('disliked_4_minus', 0)} filme 1–4.\n"
+            + (str(visible_guard.get("reason")) if visible_guard else
+               "Raportul anterior nu a testat traseul «Ce văd acum?». Reevaluează pentru un verdict actual.")
+        )
+        visible_text.setWordWrap(True); visible_text.setObjectName("Muted"); vbl.addWidget(visible_text)
+        content.addWidget(visible_box)
+
         verdict = self.card(); vl = QVBoxLayout(verdict)
         vh = QLabel("Decizie de siguranță pentru Alpha"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
-        eligible = bool(decision.get("eligible_for_visible_alpha_trial")) and freshness is not False
+        eligible = bool(
+            decision.get("eligible_for_visible_alpha_trial")
+            and decision.get("visible_decision_guard_passed")
+            and freshness is True
+        )
         vt = QLabel(
             (
                 "Eligibil pentru următorul pas: trial vizibil controlat în V5 Alpha."
@@ -599,7 +619,7 @@ class DecisionWindow(CineCalendarWindow):
                 "Rămâne în shadow mode. Nu activăm rankerul în recomandările vizibile."
             )
             + "\n"
-            + ("Raportul trebuie refăcut după schimbarea ratingurilor." if freshness is False
+            + ("Raportul trebuie refăcut pentru ratingurile actuale." if freshness is not True
                else str(decision.get("reason") or ""))
             + "\nStable 4.14.1 rămâne neatins."
         )

@@ -13,6 +13,7 @@ from .db import Database
 from .production_engine import build_production_recommender, production_stack_status
 from .recommender_v16 import FastRecommendationEngineV16
 from .temp_workspaces import backtest_storage_guard, managed_temp_workspace
+from .profile import build_profile
 
 
 @dataclass(frozen=True)
@@ -190,9 +191,19 @@ def _remove_future_signals(db: Database, holdout: list[HoldoutRating]) -> str:
             marks = ",".join("?" for _ in chunk)
             con.execute(f"DELETE FROM ratings WHERE movie_id IN ({marks})", tuple(chunk))
         if cutoff:
+            con.execute(
+                "DELETE FROM recommendation_outcomes WHERE rating_id IN "
+                "(SELECT id FROM ratings WHERE substr(COALESCE(date_rated,updated_at,''),1,10)>=?)",
+                (cutoff,),
+            )
+            con.execute("DELETE FROM ratings WHERE substr(COALESCE(date_rated,updated_at,''),1,10)>=?", (cutoff,))
             con.execute("DELETE FROM feedback WHERE substr(created_at,1,10)>=?", (cutoff,))
             con.execute("DELETE FROM recommendation_history WHERE context_date>=?", (cutoff,))
             con.execute("DELETE FROM watchlist WHERE substr(added_at,1,10)>=?", (cutoff,))
+            con.execute("DELETE FROM recommendation_outcomes WHERE context_date>=? OR substr(COALESCE(rating_date,''),1,10)>=?", (cutoff, cutoff))
+            con.execute("DELETE FROM recommendation_outcomes WHERE rating_id IS NOT NULL AND rating_id NOT IN (SELECT id FROM ratings)")
+        con.execute("DELETE FROM settings WHERE key LIKE 'decision_pool_v%' OR key='v5_evaluation_report'")
+    build_profile(db)
     return cutoff
 
 

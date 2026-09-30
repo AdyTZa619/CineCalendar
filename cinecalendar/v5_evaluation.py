@@ -15,6 +15,7 @@ from .v5_knowledge import V5KnowledgeBase
 from .v5_lab import V5LabRecommendationEngine
 from .v5_personal_ranker import PersonalUtilityRankerV5
 from .v5_rating_snapshot import rating_history_snapshot
+from .v5_decision_replay import run_visible_decision_replay
 from .v5_shadow_ranker import (
     V5ShadowRankedEngine,
     V5ShadowRankedEngine10,
@@ -23,7 +24,7 @@ from .v5_shadow_ranker import (
 )
 
 
-V5_EVALUATION_VERSION = "v5-evaluation-alpha2"
+V5_EVALUATION_VERSION = "v5-evaluation-alpha3"
 
 
 def _metric(payload: dict, key: str):
@@ -278,6 +279,11 @@ def run_v5_evaluation(
             "ranked_guard": _event_guard(baseline_event, ranked_event),
         }
 
+    decision_replay = run_visible_decision_replay(
+        source, desired_folds=max(2, int(rolling_folds)), als_timeout=als_timeout,
+        progress=progress,
+    )
+    decision_guard = dict(decision_replay.get("guard") or {})
     rolling_retrieval = dict(retrieval_comparison.get("aggregate") or {})
     rolling_selected = dict(selected_comparison.get("aggregate") or {})
     ranker_validated = bool(ranker_status.get("validated"))
@@ -287,6 +293,7 @@ def run_v5_evaluation(
         ranker_validated
         and rolling_selected.get("approved")
         and event_guard_passed
+        and decision_guard.get("passed")
     )
 
     report = {
@@ -304,6 +311,7 @@ def run_v5_evaluation(
             "selected_ranked": selected_comparison,
         },
         "event_replay": event_payload,
+        "visible_decision_replay": decision_replay,
         "decision": {
             "ranker_validated": ranker_validated,
             "retrieval_rolling_approved": bool(rolling_retrieval.get("approved")),
@@ -312,6 +320,7 @@ def run_v5_evaluation(
             "selected_rolling_approved": bool(rolling_selected.get("approved")),
             "event_guard_passed": event_guard_passed,
             "event_guard_informative": bool(event_guard.get("informative")),
+            "visible_decision_guard_passed": bool(decision_guard.get("passed")),
             "eligible_for_visible_alpha_trial": eligible,
             "visible_ranking_changed": False,
             "reason": (

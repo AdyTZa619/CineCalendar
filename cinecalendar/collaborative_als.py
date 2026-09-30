@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import threading
 from typing import Iterable
@@ -134,13 +135,21 @@ class CollaborativeALSProvider:
 
     @staticmethod
     def _fetch_manifest() -> dict:
-        response = requests.get(
-            MODEL_MANIFEST_URL,
-            timeout=(10, 30),
-            headers={"Cache-Control": "no-cache", "User-Agent": "CineCalendar/2.4"},
-        )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = requests.get(
+                MODEL_MANIFEST_URL,
+                timeout=(10, 30),
+                headers={"Cache-Control": "no-cache", "User-Agent": "CineCalendar/2.4"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException:
+            # The signed model archive is still checked against SHA-256 below. A bundled
+            # manifest lets an already cached model work during a GitHub outage.
+            local = Path(__file__).resolve().parent.parent / "collaborative-model.json"
+            if not local.is_file():
+                raise
+            payload = json.loads(local.read_text(encoding="utf-8"))
         required = ("version", "url", "sha256", "factors", "regularization")
         if any(not payload.get(k) for k in required):
             raise RuntimeError("Manifestul modelului colaborativ este incomplet.")

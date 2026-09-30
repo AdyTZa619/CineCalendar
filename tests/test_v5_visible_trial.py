@@ -54,8 +54,10 @@ def _eligible(db):
         {
             "decision": {
                 "eligible_for_visible_alpha_trial": True,
+                "visible_decision_guard_passed": True,
                 "selected_variant": "20%",
-            }
+            },
+            "rating_snapshot": rating_history_snapshot(db),
         },
     )
 
@@ -112,6 +114,21 @@ def test_alpha_trial_refuses_v5_without_eligible_report(tmp_path):
         pass
     else:
         raise AssertionError("V5 trial should stay blocked without an eligible report")
+
+
+def test_legacy_or_unverified_report_cannot_activate_v5(tmp_path):
+    db = Database(tmp_path / "legacy.db")
+    _eligible(db)
+    report = db.get_setting("v5_evaluation_report")
+    report.pop("rating_snapshot")
+    db.set_setting("v5_evaluation_report", report)
+    proxy = AlphaTrialRecommender(db, FakeEngine([_rec(1, .7)]), FakeEngine([_rec(2, .8)]))
+    assert proxy.mode == MODE_V16
+    assert proxy.trial_status()["report_current"] is None
+    report["rating_snapshot"] = rating_history_snapshot(db)
+    report["decision"].pop("visible_decision_guard_passed")
+    db.set_setting("v5_evaluation_report", report)
+    assert proxy.trial_status()["eligible"] is False
 
 
 def test_model_switch_reuses_the_exact_same_frozen_pair(tmp_path):

@@ -18,6 +18,7 @@ from .recommendation_backtest import (
     visible_outcome_metrics,
 )
 from .temp_workspaces import backtest_storage_guard, managed_temp_workspace
+from .profile import build_profile
 
 
 BACKTEST_VERSION = "rolling-temporal-v3.7.0"
@@ -127,9 +128,24 @@ def _remove_future(db: Database, window: TemporalWindowV37) -> None:
             con.execute(f"DELETE FROM ratings WHERE id IN ({marks})", tuple(chunk))
         if window.cutoff_date:
             cutoff = window.cutoff_date
+            con.execute(
+                "DELETE FROM recommendation_outcomes WHERE rating_id IN "
+                "(SELECT id FROM ratings WHERE substr(COALESCE(date_rated,updated_at,''),1,10)>=?)",
+                (cutoff,),
+            )
+            # The UI makes a decision at the start of this day. Ratings from later on the
+            # same day cannot be part of its training profile, even if they precede the
+            # first row of this holdout by SQLite id.
+            con.execute("DELETE FROM ratings WHERE substr(COALESCE(date_rated,updated_at,''),1,10)>=?", (cutoff,))
             con.execute("DELETE FROM feedback WHERE substr(created_at,1,10)>=?", (cutoff,))
             con.execute("DELETE FROM recommendation_history WHERE context_date>=?", (cutoff,))
             con.execute("DELETE FROM watchlist WHERE substr(added_at,1,10)>=?", (cutoff,))
+            con.execute("DELETE FROM recommendation_outcomes WHERE context_date>=? OR substr(COALESCE(rating_date,''),1,10)>=?", (cutoff, cutoff))
+            con.execute("DELETE FROM recommendation_outcomes WHERE rating_id IS NOT NULL AND rating_id NOT IN (SELECT id FROM ratings)")
+        # A copied decision pool was built from the present-day profile. Never reuse it
+        # on a historical snapshot, even if its state token happens to look unchanged.
+        con.execute("DELETE FROM settings WHERE key LIKE 'decision_pool_v%' OR key='v5_evaluation_report'")
+    build_profile(db)
 
 
 def _candidate_imdb_ids(engine, eval_date: date, test_db: Database, candidate_limit: int) -> list[str]:

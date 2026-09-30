@@ -104,8 +104,9 @@ class AlphaTrialRecommender:
         return bool(
             isinstance(decision, dict)
             and decision.get("eligible_for_visible_alpha_trial")
+            and decision.get("visible_decision_guard_passed")
             and str(decision.get("selected_variant") or "") == "20%"
-            and report_rating_freshness(self.db, report) is not False
+            and report_rating_freshness(self.db, report) is True
         )
 
     @property
