@@ -1664,6 +1664,10 @@ def install_premium_skins(window_cls) -> None:
         if self.skin == "simple":
             self.theme = self.db.get_setting("theme", "dark")
             original_apply_theme(self)
+            icon_color = _simple_palette(self.theme)["accent"]
+            for key, button in self.nav_buttons.items():
+                button.setIcon(_icon(key, icon_color, 17))
+                button.setIconSize(QSize(19, 19))
             app = QApplication.instance()
             if app is not None:
                 app.setStyleSheet(app.styleSheet() + "\n" + _simple_calendar_qss(self.theme))
