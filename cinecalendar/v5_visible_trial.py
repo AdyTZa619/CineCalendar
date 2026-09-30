@@ -175,8 +175,16 @@ class AlphaTrialRecommender:
         self, *, when, count: int, exclude_ids, slot: str, candidate_limit: int,
         mode: str, runtime_max, runtime_min,
     ) -> tuple:
+        context_date = when or date.today()
+        genre_setting = self.db.get_setting("daily_genre_filter", {})
+        active_genre = (
+            str(genre_setting.get("genre") or "").strip()
+            if isinstance(genre_setting, dict)
+            and str(genre_setting.get("date") or "") == context_date.isoformat()
+            else ""
+        )
         return (
-            (when or date.today()).isoformat(),
+            context_date.isoformat(),
             int(count),
             tuple(sorted(int(x) for x in (exclude_ids or set()))),
             str(slot or ""),
@@ -184,6 +192,7 @@ class AlphaTrialRecommender:
             str(mode or ""),
             None if runtime_max is None else int(runtime_max),
             None if runtime_min is None else int(runtime_min),
+            active_genre,
             self._user_state_token(),
         )
 

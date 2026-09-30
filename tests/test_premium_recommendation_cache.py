@@ -1,4 +1,9 @@
 from pathlib import Path
+from datetime import date
+from types import SimpleNamespace
+
+from cinecalendar.db import Database
+from cinecalendar.premium_ui import PremiumDecisionWindow
 
 
 def _premium_source() -> str:
@@ -56,3 +61,18 @@ def test_explicit_recalculate_invalidates_frozen_trial_pair():
     block = source[start:end]
 
     assert 'invalidate("browse")' in block
+
+
+def test_browse_cache_changes_with_explicit_daily_genre(tmp_path):
+    db = Database(tmp_path / "browse-genre.db")
+    fake = SimpleNamespace(
+        db=db,
+        s=SimpleNamespace(recommender=SimpleNamespace(mode="v16")),
+        session_skips=set(),
+        _today_genre=lambda: str(
+            (db.get_setting("daily_genre_filter", {}) or {}).get("genre") or ""
+        ),
+    )
+    baseline = PremiumDecisionWindow._browse_state_signature(fake)
+    db.set_setting("daily_genre_filter", {"date": date.today().isoformat(), "genre": "Western"})
+    assert PremiumDecisionWindow._browse_state_signature(fake) != baseline

@@ -140,3 +140,12 @@ astfel nu mai creează simultan sute de carduri și solicitări de postere.
 - Aceleași rezultate, verificări, expuneri și acțiuni sunt folosite în toate cele trei skinuri.
 - Cinematic afișează navigarea sus și alternativele sub alegerea zilei; Editorial arată afișul și explicația lângă alternative; Workbench permite selectarea unui rând și inspectarea filmului în dreapta.
 - Skinurile nu schimbă ordinea recomandărilor sau formula motorului V5.
+
+## Alpha 27 — rezultate când este ales un gen rar
+
+- Filtrul opțional pentru genul zilei caută și în afara listei generice de candidați
+  dacă acea listă are prea puține filme din genul cerut. Păstrează numai titluri
+  nevăzute, nerespinse și deja lansate.
+- Schimbarea genului invalidează perechea de rezultate V16/V5 pentru lista de
+  recomandări și galeria zilei; navigarea fără schimbări reutilizează rezultatul.
+- Formula de scor, alegerea automată fără filtru și Stable rămân neschimbate.

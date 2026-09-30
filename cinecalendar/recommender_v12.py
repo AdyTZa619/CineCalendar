@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import time
 
 from .models import Recommendation
 from .profile import get_profile
@@ -15,6 +16,8 @@ ENGINE_VERSION = "12.4.0-fast-shortlist-romanian-language-first"
 
 class FastRecommendationEngineV12(FastRecommendationEngineV11):
     """Calibrated ALS recommender with optional daily genre and a language-first Romanian lane."""
+
+    GENRE_BACKFILL_TARGET = 120
 
     def __init__(self, db, calendar=None):
         super().__init__(db, calendar)
@@ -43,6 +46,14 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
         genres = json_loads(row["genres_json"], []) or []
         return any(normalize_text(str(value)) == target for value in genres)
 
+    @staticmethod
+    def _released_by(row, when: date) -> bool:
+        year = row["year"]
+        release = str(row["release_date"] or "")[:10]
+        return (year is None or int(year) <= when.year) and (
+            len(release) < 10 or release <= when.isoformat()
+        )
+
     def _state_token(self) -> tuple:
         base = super()._state_token()
         payload = self._daily_genre_payload()
@@ -55,9 +66,67 @@ class FastRecommendationEngineV12(FastRecommendationEngineV11):
 
         requested = max(int(limit or self.EXPLORE_POOL), self.EXPLORE_POOL)
         rows = list(super()._candidate_rows(when, requested))
-        filtered = [row for row in rows if self._row_matches_genre(row, genre)]
+        filtered = [
+            row for row in rows
+            if self._row_matches_genre(row, genre) and self._released_by(row, when)
+        ]
+        if len(filtered) < self.GENRE_BACKFILL_TARGET:
+            start = time.perf_counter()
+            seen = {int(row["id"]) for row in filtered}
+            for row in self._genre_backfill_rows(when, genre):
+                mid = int(row["id"])
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                filtered.append(row)
+                if len(filtered) >= self.GENRE_BACKFILL_TARGET:
+                    break
+            self.last_candidate_query_seconds += time.perf_counter() - start
         self.last_candidate_count = len(filtered)
         return filtered
+
+    def _genre_backfill_rows(self, when: date, genre: str):
+        """Search outside the generic Top-N when the user explicitly requests a rare genre.
+
+        The SQL text match is only a cheap shortlist. Hydration and the exact JSON-genre check
+        still enforce identity, watched/rejected exclusions, and the requested genre.
+        """
+        pattern = '%"' + genre.replace('"', '') + '"%'
+        base = """ FROM movies m
+            WHERE m.title_type IN ('movie','short','tvMovie','video','Movie','TV Movie','tv movie')
+              AND m.genres_json LIKE ?
+              AND (m.year IS NULL OR m.year <= ?)
+              AND (m.release_date IS NULL OR length(m.release_date) < 10
+                   OR substr(m.release_date,1,10) <= ?)
+              AND NOT EXISTS (SELECT 1 FROM ratings r WHERE r.movie_id=m.id)
+              AND m.id NOT IN (
+                  SELECT movie_id FROM feedback
+                  WHERE kind IN ('not_interested','seen','never_similar')
+              )"""
+        args = (pattern, when.year, when.isoformat())
+        with self.db.connect() as con:
+            groups = [
+                con.execute("SELECT m.id" + base +
+                            " AND m.id IN (SELECT movie_id FROM watchlist) "
+                            "ORDER BY m.num_votes DESC LIMIT 120", args).fetchall(),
+                con.execute("SELECT m.id" + base +
+                            " ORDER BY m.num_votes DESC LIMIT 450", args).fetchall(),
+                con.execute("SELECT m.id" + base +
+                            " AND m.num_votes BETWEEN 50 AND 25000 "
+                            "ORDER BY m.imdb_rating DESC,m.num_votes DESC LIMIT 450", args).fetchall(),
+                con.execute("SELECT m.id" + base +
+                            " AND m.year >= ? ORDER BY m.num_votes DESC LIMIT 250",
+                            (*args, when.year - 10)).fetchall(),
+            ]
+        ids = []
+        seen = set()
+        for group in groups:
+            for item in group:
+                mid = int(item["id"])
+                if mid not in seen:
+                    seen.add(mid)
+                    ids.append(mid)
+        return [row for row in self._hydrate_ids(ids) if self._row_matches_genre(row, genre)]
 
     def _romanian_rows(self):
         imdb_ids = sorted(self.romanian_cinema.imdb_ids())

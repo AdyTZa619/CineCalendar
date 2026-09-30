@@ -251,6 +251,30 @@ def test_decision_trial_refreshes_both_engines_when_chooser_changes(tmp_path):
     assert (v16.decision_calls, v5.decision_calls) == (4, 4)
 
 
+def test_browse_trial_recomputes_both_sides_when_daily_genre_changes(tmp_path):
+    db = Database(tmp_path / "trial-genre.db")
+    _eligible(db)
+    v16 = FakeEngine([_rec(1, 0.76)])
+    v5 = FakeEngine([_rec(2, 0.81)])
+    proxy = AlphaTrialRecommender(db, v16, v5)
+    when = date(2026, 9, 28)
+
+    proxy.recommend(when=when, count=1, slot="today-gallery")
+    proxy.recommend(when=when, count=1, slot="today-gallery")
+    assert (v16.recommend_calls, v5.recommend_calls) == (1, 1)
+
+    db.set_setting("daily_genre_filter", {"date": when.isoformat(), "genre": "Horror"})
+    proxy.recommend(when=when, count=1, slot="today-gallery")
+    assert (v16.recommend_calls, v5.recommend_calls) == (2, 2)
+
+    # A filter for another date must not invalidate today's frozen comparison.
+    db.set_setting("daily_genre_filter", {"date": "2026-09-29", "genre": "Western"})
+    proxy.recommend(when=when, count=1, slot="today-gallery")
+    assert (v16.recommend_calls, v5.recommend_calls) == (3, 3)
+    proxy.recommend(when=when, count=1, slot="today-gallery")
+    assert (v16.recommend_calls, v5.recommend_calls) == (3, 3)
+
+
 def test_trial_detects_changed_ratings_after_a_fingerprinted_report(tmp_path):
     db = Database(tmp_path / "trial-history.db")
     _eligible(db)

@@ -8,6 +8,7 @@ from cinecalendar.daily_genre_ui_patch import GENRES, install_daily_genre_ui_pat
 from cinecalendar.recommendation import romance_policy
 from cinecalendar.recommender_v12 import FastRecommendationEngineV12
 from cinecalendar.models import Movie
+from cinecalendar.util import json_dumps, utcnow_iso
 from cinecalendar import app as app_module
 from cinecalendar import service as service_module
 from cinecalendar import ui_composition as ui_composition_module
@@ -68,3 +69,49 @@ def test_genre_match_is_exact_and_romance_is_a_normal_choice():
     assert FastRecommendationEngineV12._row_matches_genre(row, "Romance") is True
     assert FastRecommendationEngineV12._row_matches_genre(row, "Drama") is True
     assert FastRecommendationEngineV12._row_matches_genre(row, "War") is False
+
+
+def test_rare_daily_genre_searches_beyond_generic_pool_without_leaking_watched_or_future(tmp_path, monkeypatch):
+    db = Database(tmp_path / "rare-genre.db")
+    when = date(2026, 9, 30)
+    db.set_setting("daily_genre_filter", {"date": when.isoformat(), "genre": "Western"})
+    now = utcnow_iso()
+    with db.tx() as con:
+        con.executemany(
+            """INSERT INTO movies(imdb_id,identity_key,title,year,title_type,genres_json,
+                   imdb_rating,num_votes,source,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                (f"tt{i + 8000000:07d}", f"drama:{i}", f"Drama {i}", 2010,
+                 "movie", json_dumps(["Drama"]), 8.5, 10000, "test", now, now)
+                for i in range(3500)
+            ),
+        )
+        ids = {}
+        for name, year in (("unseen", 1982), ("rated", 1982),
+                           ("rejected", 1982), ("future", 2027)):
+            ids[name] = con.execute(
+                """INSERT INTO movies(imdb_id,identity_key,title,year,title_type,
+                       genres_json,imdb_rating,num_votes,source,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (f"tt{9000000 + len(ids):07d}", f"western:{name}", name, year,
+                 "movie", json_dumps(["Western"]), 6.2, 500, "test", now, now),
+            ).lastrowid
+        con.execute(
+            "INSERT INTO ratings(movie_id,rating,source,imported_at,updated_at) VALUES(?,?,?,?,?)",
+            (ids["rated"], 7, "test", now, now),
+        )
+        con.execute(
+            "INSERT INTO feedback(movie_id,kind,weight,created_at) VALUES(?,?,?,?)",
+            (ids["rejected"], "not_interested", 1.0, now),
+        )
+
+    engine = FastRecommendationEngineV12(db)
+    monkeypatch.setattr(engine.collaborative, "is_ready", lambda: False)
+    monkeypatch.setattr(engine.collaborative, "start_background", lambda: None)
+    # The regular bounded shortlist is dominated by 3,500 more popular dramas.
+    baseline = super(FastRecommendationEngineV12, engine)._candidate_rows(when, 3000)
+    assert ids["unseen"] not in {row["id"] for row in baseline}
+
+    candidates = engine._candidate_rows(when, 3000)
+    assert [row["id"] for row in candidates] == [ids["unseen"]]

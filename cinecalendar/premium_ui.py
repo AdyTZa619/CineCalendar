@@ -865,6 +865,7 @@ class PremiumDecisionWindow(DecisionWindow):
             user_state,
             trial_mode,
             tuple(sorted(int(movie_id) for movie_id in self.session_skips)),
+            self._today_genre() if callable(getattr(self, "_today_genre", None)) else "",
         )
 
     def _browse_cache_valid(self) -> bool:
