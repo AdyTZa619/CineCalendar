@@ -675,6 +675,7 @@ class PremiumDecisionWindow(DecisionWindow):
             self.today_gallery_signature = signature
             if self.current_page == "today" and self.today_result:
                 self._render_today(*self.today_result)
+                self._enrich_today_gallery()
         def failure(message):
             self.today_gallery_worker = None
             if generation == self.today_gallery_generation and signature == self._today_signature():
@@ -683,6 +684,18 @@ class PremiumDecisionWindow(DecisionWindow):
                     self._render_today(*self.today_result)
                 self.set_status("Selecția principală este gata; galeria suplimentară nu s-a încărcat.", False)
         worker.success.connect(gallery_ready); worker.failure.connect(failure); worker.start()
+
+    def _enrich_today_gallery(self):
+        """Fetch actual artwork for supplemental cards after the Top-3 metadata pass."""
+        if (self._ui_closing or self.current_page != "today" or not self.today_gallery
+                or self.today_gallery_signature != self._today_signature()):
+            return
+        if self.metadata_worker and self.metadata_worker.isRunning():
+            self.metadata_worker.finished.connect(
+                lambda: QTimer.singleShot(0, self._enrich_today_gallery)
+            )
+            return
+        self._ensure_metadata(self.today_gallery[:3], "today")
 
     def _render_today(self, primary: Recommendation | None, backups: list[Recommendation]):
         if self.today_content is None:

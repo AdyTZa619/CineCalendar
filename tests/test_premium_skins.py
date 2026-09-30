@@ -143,6 +143,7 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         assert viewed == [4]
         # The initial decision is visible while real gallery films arrive later.
         monkeypatch.setattr(service.recommender, "recommend", lambda *args, **kwargs: recs)
+        monkeypatch.setattr(window, "_ensure_metadata", lambda *args: None)
         window.today_gallery = []
         window.today_gallery_signature = None
         window.today_gallery_failed = False
