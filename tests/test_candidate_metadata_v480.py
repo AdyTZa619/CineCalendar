@@ -215,6 +215,31 @@ def test_new_keywords_request_rerank_even_when_synopsis_already_exists():
     assert report["ranking_change"] is True
 
 
+def test_translated_synopsis_keeps_existing_semantic_ranking():
+    rec = _rec(
+        1, genres=["Drama"], directors=["Director"], countries=["Romania"],
+        overview="English synopsis", runtime_min=95, poster_url="poster",
+        semantic={"family": .7},
+    )
+
+    class LocalizedPreflight(CandidateMetadataPreflight):
+        def _romanian_upgrade_ids(self, _recs):
+            return {1}
+
+    class Translator:
+        def __init__(self, _db, _token):
+            pass
+
+        def enrich_by_imdb(self, movie):
+            movie.overview = "Descriere în română"
+
+    report = LocalizedPreflight(
+        object(), "token", tmdb_factory=Translator,
+    ).run([rec])
+    assert report["changed_titles"] == 1
+    assert report["ranking_change"] is False
+
+
 def test_wikimedia_fallback_still_runs_when_tmdb_fails():
     rec = _rec(1)
     report = CandidateMetadataPreflight(

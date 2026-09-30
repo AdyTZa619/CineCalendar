@@ -92,13 +92,13 @@ def ranking_fields_added(before: dict[str, bool], after: dict[str, bool]) -> lis
 
 
 def ranking_fingerprint(movie: Movie) -> tuple:
-    """Actual taste inputs, so a new keyword is noticed even if a synopsis already exists."""
+    """Actual taste inputs, excluding a description-only translation."""
     return (
         tuple(movie.genres or ()),
         tuple(movie.directors or ()),
         tuple(movie.countries or ()),
-        str(movie.overview or ""),
         tuple(movie.keywords or ()),
+        tuple(sorted((movie.semantic or {}).items())),
         movie.runtime_min,
     )
 
@@ -323,7 +323,7 @@ class CandidateMetadataPreflight:
             added = ranking_fields_added(before, after)
             if added:
                 ranking_added[int(movie.id)] = added
-            if ranking_fingerprint(movie) != before_ranking:
+            if added or ranking_fingerprint(movie) != before_ranking:
                 ranking_changed.append(int(movie.id))
             if not before["poster"] and after["poster"]:
                 visual_added += 1
