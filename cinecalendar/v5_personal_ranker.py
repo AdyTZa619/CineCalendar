@@ -255,29 +255,36 @@ class PersonalUtilityRankerV5:
             self._dislike_bias = trained["dislike_bias"]
             self._status = trained["status"]
 
-    def score(self, movie) -> dict:
+    def score_many(self, movies) -> list[dict]:
         self._ensure()
         with self._lock:
             status = dict(self._status)
             if not bool(status.get("validated")):
-                return {"active": False, **status}
-            like_weights = self._like_weights
-            dislike_weights = self._dislike_weights
-            like_bias = self._like_bias
-            dislike_bias = self._dislike_bias
-        vector = self.encoder._vector(movie)[0]
-        like = self._predict(vector, like_weights, like_bias)
-        dislike = self._predict(vector, dislike_weights, dislike_bias)
-        raw = like - DISLIKE_PENALTY * dislike
-        normalized = clamp((raw + DISLIKE_PENALTY) / (1.0 + DISLIKE_PENALTY))
-        return {
-            "active": True,
-            "like_score": like,
-            "dislike_risk": dislike,
-            "dislike_penalty": DISLIKE_PENALTY,
-            "utility": normalized,
-            "blend_weight": float(status.get("blend_weight", 0.0) or 0.0),
-        }
+                return [{"active": False, **status} for _movie in movies]
+            like_weights = list(self._like_weights)
+            dislike_weights = list(self._dislike_weights)
+            like_bias = float(self._like_bias)
+            dislike_bias = float(self._dislike_bias)
+
+        out = []
+        for movie in movies:
+            vector = self.encoder._vector(movie)[0]
+            like = self._predict(vector, like_weights, like_bias)
+            dislike = self._predict(vector, dislike_weights, dislike_bias)
+            raw = like - DISLIKE_PENALTY * dislike
+            normalized = clamp((raw + DISLIKE_PENALTY) / (1.0 + DISLIKE_PENALTY))
+            out.append({
+                "active": True,
+                "like_score": like,
+                "dislike_risk": dislike,
+                "dislike_penalty": DISLIKE_PENALTY,
+                "utility": normalized,
+                "blend_weight": float(status.get("blend_weight", 0.0) or 0.0),
+            })
+        return out
+
+    def score(self, movie) -> dict:
+        return self.score_many([movie])[0]
 
     def status(self) -> dict:
         self._ensure()

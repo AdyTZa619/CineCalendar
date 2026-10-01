@@ -193,8 +193,9 @@ def adaptive_engine_class(
                 )
                 mature = list(super()._adaptive_rerank(recs, pool_target))
                 reranked = []
-                for rec in mature:
-                    payload = self.v5.personal_ranker.score(rec.movie)
+                personal_payloads = self.v5.personal_ranker.score_many([rec.movie for rec in mature])
+                recent_payloads = self.recent_taste.score_many([rec.movie for rec in mature])
+                for rec, payload, recent in zip(mature, personal_payloads, recent_payloads):
                     base = float(rec.score.final)
                     combined = base
                     if bool(payload.get("active")):
@@ -218,7 +219,6 @@ def adaptive_engine_class(
                             ),
                         )
 
-                    recent = self.recent_taste.score(rec.movie)
                     if bool(recent.get("active")):
                         nudge = float(recent.get("nudge", 0.0) or 0.0)
                         before_recent = combined

@@ -129,12 +129,8 @@ class RecentTasteContext:
                 "anchor_date": anchor.isoformat() if anchor else "",
             }
 
-    def score(self, movie) -> dict:
-        self._ensure()
-        with self._lock:
-            status = dict(self._status)
-            positive = dict(self._positive)
-            negative = dict(self._negative)
+    @staticmethod
+    def _score_snapshot(movie, status: dict, positive: dict[str, float], negative: dict[str, float]) -> dict:
         if not status.get("active"):
             return {"active": False, **status, "score": 0.5, "nudge": 0.0}
 
@@ -160,6 +156,17 @@ class RecentTasteContext:
             "negative_similarity": neg,
             "nudge": nudge,
         }
+
+    def score_many(self, movies) -> list[dict]:
+        self._ensure()
+        with self._lock:
+            status = dict(self._status)
+            positive = dict(self._positive)
+            negative = dict(self._negative)
+        return [self._score_snapshot(movie, status, positive, negative) for movie in movies]
+
+    def score(self, movie) -> dict:
+        return self.score_many([movie])[0]
 
     def status(self) -> dict:
         self._ensure()
