@@ -86,6 +86,12 @@ class DecisionWindow(CineCalendarWindow):
         )
         if not path:
             return
+        if Path(path).resolve() == self.db.path.resolve():
+            QMessageBox.warning(
+                self, "Unirea bazelor de date",
+                "Ai ales baza principală. Selectează cinecalendar.db din vechiul folder V5Alpha.",
+            )
+            return
         try:
             self.s.alpha_merge_status = merge_existing_alpha_data(
                 self.db, self.s.paths.root, extra_source=path,
@@ -93,13 +99,44 @@ class DecisionWindow(CineCalendarWindow):
         except AlphaMergeError as exc:
             QMessageBox.warning(self, "Unirea bazelor de date", str(exc))
             return
-        QMessageBox.information(
-            self, "Unirea bazelor de date",
-            "Datele au fost unite în CineCalendarData. Baza Alpha originală a rămas "
-            "neatinsă, iar copia de siguranță este în CineCalendarData/backups. "
-            "Redeschide aplicația pentru actualizarea recomandărilor.",
-        )
+        if self.s.alpha_merge_status.get("state") == "merged":
+            message = (
+                "Datele au fost unite în CineCalendarData. Baza Alpha originală a rămas "
+                "neatinsă, iar copia de siguranță este în CineCalendarData/backups. "
+                "Redeschide aplicația pentru actualizarea recomandărilor."
+            )
+        else:
+            message = "Baza aleasă fusese deja unită. Nu au fost importate date noi."
+        QMessageBox.information(self, "Unirea bazelor de date", message)
         self.show_page("v5_lab")
+
+    def _add_alpha_merge_status(self, content):
+        status = getattr(self.s, "alpha_merge_status", {}) or {}
+        box = self.card(); layout = QVBoxLayout(box)
+        title = QLabel("Baza de date Alpha"); title.setObjectName("CardTitle")
+        layout.addWidget(title)
+        if status.get("state") == "merged":
+            details = (
+                "Datele din Alpha au fost unite în CineCalendarData: "
+                f"{int(status.get('ratings') or 0)} ratinguri noi/actualizate, "
+                f"{int(status.get('feedback') or 0)} reacții și "
+                f"{int(status.get('history') or 0)} înregistrări de istoric. "
+                "Baza Alpha originală a fost păstrată; copia bazei principale este "
+                "în CineCalendarData/backups."
+            )
+        elif status.get("state") == "already_merged" and status.get("known_sources"):
+            details = (
+                "Baza vechiului Alpha a fost deja unită în CineCalendarData. "
+                "Verifică un rating adăugat doar în Alpha înainte să ștergi folderul vechi."
+            )
+        else:
+            details = (
+                "Unirea cu Alpha nu este confirmată. Apasă „Unește baza din vechiul Alpha…” "
+                "și alege fișierul cinecalendar.db din V5Alpha/CineCalendarV5AlphaData/data. "
+                "Nu șterge folderul Alpha înainte de verificarea ratingurilor."
+            )
+        label = QLabel(details); label.setWordWrap(True); label.setObjectName("Muted")
+        layout.addWidget(label); content.addWidget(box)
 
     def _trial_audit_text(self, rec) -> str:
         factors = dict(getattr(rec.score, "score_factors", {}) or {})
@@ -496,6 +533,7 @@ class DecisionWindow(CineCalendarWindow):
                 ("Unește baza din vechiul Alpha…", self.import_alpha_database, False),
             ],
         )
+        self._add_alpha_merge_status(content)
 
         knowledge = V5KnowledgeBase(self.db).status()
         shadow = self.db.get_setting("v5_ranker_shadow_status", {}) or {}
@@ -737,23 +775,6 @@ class DecisionWindow(CineCalendarWindow):
         content.addWidget(verdict)
 
         engine_status = self.s.engine_mode_status()
-        alpha_merge = getattr(self.s, "alpha_merge_status", {}) or {}
-        if alpha_merge.get("state") == "merged":
-            merged = QLabel(
-                "Datele din Alpha au fost unite în CineCalendarData: "
-                f"{int(alpha_merge.get('ratings') or 0)} ratinguri noi/actualizate, "
-                f"{int(alpha_merge.get('feedback') or 0)} reacții și "
-                f"{int(alpha_merge.get('history') or 0)} înregistrări de istoric. "
-                "Baza Alpha originală și copia de siguranță au fost păstrate."
-            )
-            merged.setObjectName("Muted"); merged.setWordWrap(True); content.addWidget(merged)
-        elif alpha_merge.get("state") == "already_merged" and alpha_merge.get("known_sources"):
-            merged = QLabel(
-                "Datele din vechiul Alpha au fost deja unite în CineCalendarData. "
-                "Copiile de siguranță sunt în CineCalendarData/backups; poți folosi "
-                "toate modurile din acest program."
-            )
-            merged.setObjectName("Muted"); merged.setWordWrap(True); content.addWidget(merged)
         trial_box = self.card(); tbl = QVBoxLayout(trial_box)
         th = QLabel("Motor folosit pentru recomandări"); th.setObjectName("CardTitle"); tbl.addWidget(th)
         active_mode = str(engine_status.get("mode") or "stable")

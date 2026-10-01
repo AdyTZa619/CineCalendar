@@ -116,6 +116,11 @@ def test_explicit_alpha_path_outside_neighboring_folders(tmp_path):
     assert str(remote_alpha.path) in report["sources"]
     with stable.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 1
+    assert merge_existing_alpha_data(stable, root)["state"] == "already_merged"
+    _movie(remote_alpha, "tt0000004", 7, "2026-10-01T14:00:00+00:00")
+    assert merge_existing_alpha_data(stable, root)["state"] == "merged"
+    with stable.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 2
 
 
 def test_corrupt_alpha_does_not_modify_stable_database(tmp_path):

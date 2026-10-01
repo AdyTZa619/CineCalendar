@@ -134,15 +134,22 @@ def merge_existing_alpha_data(
     A changed Alpha database is reconciled again on the next launch.
     """
     stable_root = Path(stable_root).resolve()
-    sources = [
-        path for path in _alpha_databases(stable_root, Path(extra_source) if extra_source else None)
-        if path != db.path.resolve()
-    ]
     state = db.get_setting(MERGE_SETTING, {}) or {}
     completed = dict(state.get("sources") or {}) if isinstance(state, dict) else {}
+    candidates = _alpha_databases(stable_root, Path(extra_source) if extra_source else None)
+    # Remember a database selected through the file picker, even when it lives on
+    # another drive and is not discoverable from the executable's folder.
+    candidates.extend(Path(path) for path in completed if Path(path).is_file())
+    sources = sorted(
+        {str(path.resolve()).casefold(): path.resolve() for path in candidates
+         if path.resolve() != db.path.resolve()}.values(),
+        key=lambda path: str(path).casefold(),
+    )
     result = {"state": "none", "sources": [], "ratings": 0, "feedback": 0,
               "history": 0, "backups": [], "known_sources": list(completed)}
     if not sources:
+        if completed:
+            result["state"] = "already_merged"
         return result
 
     backups = stable_root / "backups"
