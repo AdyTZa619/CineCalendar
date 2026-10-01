@@ -50,7 +50,7 @@ class DecisionWindow(CineCalendarWindow):
         self.update_worker: WorkerThread | None = None
         self.v5_eval_worker: WorkerThread | None = None
         self.NAV = list(type(self).NAV)
-        if is_v5_alpha() and not any(key == "v5_lab" for key, _label in self.NAV):
+        if not any(key == "v5_lab" for key, _label in self.NAV):
             self.NAV.insert(-2, ("v5_lab", "Comparare motor"))
         super().__init__(service)
         alpha_mode = is_v5_alpha()
@@ -58,16 +58,24 @@ class DecisionWindow(CineCalendarWindow):
         if bool(self.db.get_setting("auto_update_check", True)):
             QTimer.singleShot(2800, lambda: self.check_updates(False) if not self._ui_closing else None)
 
-    def set_v5_trial_mode(self, mode: str):
+    def set_engine_mode(self, mode: str):
         try:
-            status = self.s.set_alpha_trial_mode(mode)
+            status = self.s.set_engine_mode(mode)
         except Exception as exc:
-            QMessageBox.warning(self, "Motor experimental", str(exc))
+            QMessageBox.warning(self, "Schimbare motor", str(exc))
             return
-        label = ENGINE_PERSONAL_LABEL if status.get("mode") == "v5_20" else ENGINE_CURRENT_LABEL
-        self.set_status(f"Motor activ: {label}. Schimbarea se aplică recomandărilor următoare.", False)
+        label = {
+            "stable": ENGINE_CURRENT_LABEL,
+            "discovery": ENGINE_DISCOVERY_LABEL,
+            "adaptive": ENGINE_PERSONAL_LABEL,
+        }.get(str(status.get("mode") or ""), ENGINE_CURRENT_LABEL)
+        self.set_status(f"Motor activ: {label}.", False)
         if self.current_page == "v5_lab":
             self.show_page("v5_lab")
+
+    def set_v5_trial_mode(self, mode: str):
+        mapped = {"v16": "stable", "v5_20": "adaptive"}.get(str(mode), str(mode))
+        self.set_engine_mode(mapped)
 
     def _trial_audit_text(self, rec) -> str:
         factors = dict(getattr(rec.score, "score_factors", {}) or {})
@@ -407,9 +415,6 @@ class DecisionWindow(CineCalendarWindow):
         return box
 
     def run_v5_lab_evaluation(self):
-        if not is_v5_alpha():
-            QMessageBox.information(self, "Comparare motor", "Evaluatorul motoarelor este disponibil numai în Alpha.")
-            return
         if self.v5_eval_worker and self.v5_eval_worker.isRunning():
             self.set_status("Compararea motoarelor rulează deja.", True)
             return
@@ -456,8 +461,8 @@ class DecisionWindow(CineCalendarWindow):
     def page_v5_lab(self):
         page, content = self.page_shell(
             "Comparare motor",
-            "Test offline pe istoricul tău: Motor actual vs Motor actual + căutare extinsă vs Motor personal experimental. "
-            "Testul nu modifică Stable și nu schimbă recomandările vizibile.",
+            "Test offline pe istoricul tău: Stabil vs Descoperire vs Adaptiv. "
+            "Folosește aceeași bază de date; motorul activ se schimbă numai dacă alegi tu.",
             [("Rulează comparația", self.run_v5_lab_evaluation, True)],
         )
 
@@ -656,38 +661,43 @@ class DecisionWindow(CineCalendarWindow):
         vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
         content.addWidget(verdict)
 
-        trial_status = self.s.alpha_trial_status()
+        engine_status = self.s.engine_mode_status()
         trial_box = self.card(); tbl = QVBoxLayout(trial_box)
         th = QLabel("Motor folosit pentru recomandări"); th.setObjectName("CardTitle"); tbl.addWidget(th)
-        active_mode = str(trial_status.get("mode") or "v16")
-        eligible_trial = bool(trial_status.get("eligible"))
-        try:
-            with self.db.connect() as con:
-                audit_rows = int(con.execute("SELECT COUNT(*) FROM v5_trial_audit").fetchone()[0])
-        except Exception:
-            audit_rows = 0
+        active_mode = str(engine_status.get("mode") or "stable")
+        discovery_ok = bool(engine_status.get("discovery_eligible"))
+        adaptive_ok = bool(engine_status.get("adaptive_eligible"))
+        active_label = {
+            "stable": ENGINE_CURRENT_LABEL,
+            "discovery": ENGINE_DISCOVERY_LABEL,
+            "adaptive": ENGINE_PERSONAL_LABEL,
+        }.get(active_mode, ENGINE_CURRENT_LABEL)
         tt = QLabel(
-            (
-                f"Activ acum: {ENGINE_PERSONAL_LABEL}."
-                if active_mode == "v5_20"
-                else f"Activ acum: {ENGINE_CURRENT_LABEL}."
+            f"Activ acum: {active_label}. "
+            + (
+                "Descoperire și Adaptiv folosesc aceeași CineCalendarData; nu există bază separată."
             )
-            + f"  Audit comparativ salvat: {audit_rows} recomandări."
-            + ("  Poți comuta instant; Stabil rămâne neatins." if eligible_trial
-               else "  Adaptiv necesită o reevaluare pe ratingurile actuale." if freshness is False
-               else "  Adaptiv rămâne blocat până la un raport eligibil.")
+            + (
+                " Raportul trebuie refăcut după schimbarea ratingurilor."
+                if engine_status.get("report_current") is False else ""
+            )
         )
         tt.setWordWrap(True); tt.setObjectName("Muted"); tbl.addWidget(tt)
         tr = QHBoxLayout()
-        use_v16 = QPushButton("Folosește Stabil")
-        use_v16.setProperty("accent", active_mode == "v16")
-        use_v16.clicked.connect(lambda: self.set_v5_trial_mode("v16"))
-        tr.addWidget(use_v16)
-        use_v5 = QPushButton("Folosește Adaptiv")
-        use_v5.setProperty("accent", active_mode == "v5_20")
-        use_v5.setEnabled(eligible_trial)
-        use_v5.clicked.connect(lambda: self.set_v5_trial_mode("v5_20"))
-        tr.addWidget(use_v5)
+        use_stable = QPushButton("Folosește Stabil")
+        use_stable.setProperty("accent", active_mode == "stable")
+        use_stable.clicked.connect(lambda: self.set_engine_mode("stable"))
+        tr.addWidget(use_stable)
+        use_discovery = QPushButton("Folosește Descoperire")
+        use_discovery.setProperty("accent", active_mode == "discovery")
+        use_discovery.setEnabled(discovery_ok)
+        use_discovery.clicked.connect(lambda: self.set_engine_mode("discovery"))
+        tr.addWidget(use_discovery)
+        use_adaptive = QPushButton("Folosește Adaptiv")
+        use_adaptive.setProperty("accent", active_mode == "adaptive")
+        use_adaptive.setEnabled(adaptive_ok)
+        use_adaptive.clicked.connect(lambda: self.set_engine_mode("adaptive"))
+        tr.addWidget(use_adaptive)
         tr.addStretch(1)
         tbl.addLayout(tr)
         content.addWidget(trial_box)

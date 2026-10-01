@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from .util import clamp
-from .v5_lab import DiscoveryRecommendationEngine
+import threading
+from .v5_lab import DiscoveryRecommendationEngine, discovery_engine_class
 
 
 V5_SHADOW_RANKED_VERSION = "v5-shadow-ranked-alpha1"
@@ -116,3 +117,104 @@ class V5ShadowRankedEngine15(V5ShadowRankedEngine):
 
 class V5ShadowRankedEngine20(V5ShadowRankedEngine):
     SHADOW_BLEND_OVERRIDE = 0.20
+
+
+_ADAPTIVE_RUNTIME_CACHE: dict[tuple[type, str, float], type] = {}
+_ADAPTIVE_RUNTIME_LOCK = threading.RLock()
+
+
+def adaptive_engine_class(
+    base_cls: type,
+    discovery_variant: str = "balanced",
+    blend_weight: float = 0.20,
+) -> type:
+    """Layer the personal Adaptive re-ranker over the exact Stable + Discovery engine."""
+    discovery_cls = discovery_engine_class(base_cls, discovery_variant)
+    weight = round(max(0.0, min(0.20, float(blend_weight))), 2)
+    key = (base_cls, str(discovery_variant), weight)
+    with _ADAPTIVE_RUNTIME_LOCK:
+        cached = _ADAPTIVE_RUNTIME_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+        class RuntimeAdaptive(discovery_cls):
+            SHADOW_BLEND_OVERRIDE = weight
+            ADAPTIVE_RUNTIME = True
+
+            @staticmethod
+            def _blend(base_final: float, utility: float, blend: float) -> float:
+                w = max(0.0, min(0.20, float(blend)))
+                return clamp((1.0 - w) * clamp(float(base_final)) + w * clamp(float(utility)))
+
+            def _adaptive_rerank(self, recs, count: int):
+                requested = max(1, int(count))
+                knowledge = self.v5.knowledge.status()
+                ranker_status = self.v5.personal_ranker.status()
+                active = bool(
+                    knowledge.get("ready_for_rich_ranker")
+                    and ranker_status.get("validated")
+                    and self.SHADOW_BLEND_OVERRIDE > 0.0
+                )
+                if not active:
+                    return super()._adaptive_rerank(recs, requested)
+
+                pool_target = (
+                    max(requested, int(self.QUALITY_GATE_POOL_MAX))
+                    if requested <= int(self.QUALITY_GATE_MAX_VISIBLE)
+                    else requested
+                )
+                mature = list(super()._adaptive_rerank(recs, pool_target))
+                reranked = []
+                for rec in mature:
+                    payload = self.v5.personal_ranker.score(rec.movie)
+                    if bool(payload.get("active")):
+                        base = float(rec.score.final)
+                        utility = float(payload.get("utility", 0.0) or 0.0)
+                        combined = self._blend(base, utility, self.SHADOW_BLEND_OVERRIDE)
+                        rec.score.score_factors["adaptive_base_final"] = base
+                        rec.score.score_factors["adaptive_utility"] = utility
+                        rec.score.score_factors["adaptive_like_score"] = float(
+                            payload.get("like_score", 0.0) or 0.0
+                        )
+                        rec.score.score_factors["adaptive_dislike_risk"] = float(
+                            payload.get("dislike_risk", 0.0) or 0.0
+                        )
+                        rec.score.score_factors["adaptive_blend_weight"] = self.SHADOW_BLEND_OVERRIDE
+                        rec.score.final = combined
+                        rec.score.contributions.insert(
+                            0,
+                            (
+                                "Adaptiv",
+                                (combined - base) * 100.0,
+                                "Model personal: probabilitate 8+ minus riscul 1–4.",
+                            ),
+                        )
+                    reranked.append(rec)
+                reranked.sort(
+                    key=lambda rec: (
+                        float(rec.score.final),
+                        float(rec.score.predicted_rating or 0.0),
+                        float(rec.score.confidence or 0.0),
+                    ),
+                    reverse=True,
+                )
+                if requested <= int(self.QUALITY_GATE_MAX_VISIBLE):
+                    return self._quality_gate(reranked, requested)
+                return reranked[:requested]
+
+            def candidate_generation_status(self) -> dict:
+                status = dict(super().candidate_generation_status())
+                status["adaptive"] = {
+                    "blend_weight": self.SHADOW_BLEND_OVERRIDE,
+                    "visible_ranking_changed": True,
+                    "base": base_cls.__name__,
+                    "discovery_variant": str(discovery_variant),
+                }
+                return status
+
+        RuntimeAdaptive.__name__ = (
+            f"{base_cls.__name__}Adaptive{int(weight * 100):02d}"
+        )
+        RuntimeAdaptive.__qualname__ = RuntimeAdaptive.__name__
+        _ADAPTIVE_RUNTIME_CACHE[key] = RuntimeAdaptive
+        return RuntimeAdaptive

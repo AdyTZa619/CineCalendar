@@ -12,8 +12,10 @@ from .temp_workspaces import cleanup_abandoned_workspaces
 from .util import AppPaths
 from .full_catalog_shadow_v414 import FullCatalogShadowEvaluatorV414
 from .v5_alpha_runtime import ensure_alpha_database, is_v5_alpha
-from .v5_lab import V5LabRecommendationEngine
+from .v5_lab import V5LabRecommendationEngine, discovery_engine_class
 from .v5_visible_trial import AlphaTrialRecommender, V5VisibleTrialEngine20
+from .v5_shadow_ranker import adaptive_engine_class
+from .engine_modes import EngineModeRouter
 
 
 class CineCalendarService:
@@ -47,34 +49,39 @@ class CineCalendarService:
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = ContextCalendarEngineV35()
 
-        # 4.6 keeps the current validated engine and hybrid balance until stricter personal rolling
-        # backtests have a verdict. Production and evaluation share the same canonical wrappers.
+        # One executable / one DB: Stabil is the validated production base. Descoperire and
+        # Adaptiv are lazy guarded layers over that exact taste engine and use the same database.
         self.quality_manager = RecommendationQualityManagerV47(self.db)
-        if self.v5_alpha:
-            # Alpha 7 keeps both sides resident so the user can switch instantly between the
-            # established V16 stack and the approved V5 20% trial. Stable uses neither object.
-            self.alpha_v16_recommender = build_production_recommender(
-                self.db, FastRecommendationEngineV16, self.calendar
-            )
-            self.alpha_v5_recommender = build_production_recommender(
-                self.db, V5VisibleTrialEngine20, self.calendar
-            )
-            self.alpha_v16_recommender._v5_candidate_frontier_enabled = True
-            self.alpha_v5_recommender._v5_candidate_frontier_enabled = True
-            self.recommender = AlphaTrialRecommender(
-                self.db, self.alpha_v16_recommender, self.alpha_v5_recommender
-            )
-            self.alpha_v16_recommender.collaborative.start_background()
-            self.alpha_v5_recommender.collaborative.start_background()
-            runtime_engine = self.recommender.active
-        else:
-            self.quality_manager.refresh_live_guard()
-            engine_cls = self.quality_manager.preferred_engine_class()
-            if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
-                engine_cls = FastRecommendationEngineV16
-            self.recommender = build_production_recommender(self.db, engine_cls, self.calendar)
-            self.recommender.collaborative.start_background()
-            runtime_engine = self.recommender
+        self.quality_manager.refresh_live_guard()
+        engine_cls = self.quality_manager.preferred_engine_class()
+        if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
+            engine_cls = FastRecommendationEngineV16
+        self.stable_recommender = build_production_recommender(
+            self.db, engine_cls, self.calendar
+        )
+        self.stable_recommender.collaborative.start_background()
+
+        def build_discovery():
+            report = self.db.get_setting("v5_evaluation_report", {}) or {}
+            decision = report.get("decision") if isinstance(report, dict) else {}
+            variant = str((decision or {}).get("selected_discovery_variant") or "balanced")
+            cls = discovery_engine_class(engine_cls, variant)
+            return build_production_recommender(self.db, cls, self.calendar)
+
+        def build_adaptive():
+            report = self.db.get_setting("v5_evaluation_report", {}) or {}
+            decision = report.get("decision") if isinstance(report, dict) else {}
+            variant = str((decision or {}).get("selected_discovery_variant") or "balanced")
+            cls = adaptive_engine_class(engine_cls, variant, 0.20)
+            return build_production_recommender(self.db, cls, self.calendar)
+
+        self.recommender = EngineModeRouter(
+            self.db,
+            self.stable_recommender,
+            build_discovery,
+            build_adaptive,
+        )
+        runtime_engine = self.recommender.active
 
         self.quality_manager.set_runtime_engine(runtime_engine)
         self.production_stack = production_stack_status(runtime_engine)
@@ -89,17 +96,17 @@ class CineCalendarService:
         if not self.v5_alpha:
             self.quality_manager.start_background()
 
-    def alpha_trial_status(self) -> dict:
-        if not self.v5_alpha or not hasattr(self.recommender, "trial_status"):
+    def engine_mode_status(self) -> dict:
+        status = getattr(self.recommender, "status", None)
+        if not callable(status):
             return {"available": False, "mode": "stable"}
-        status = dict(self.recommender.trial_status())
-        status["available"] = True
-        return status
+        return dict(status())
 
-    def set_alpha_trial_mode(self, mode: str) -> dict:
-        if not self.v5_alpha or not hasattr(self.recommender, "set_mode"):
-            raise RuntimeError("Comutatorul V16/V5 este disponibil numai în V5 Alpha.")
-        status = dict(self.recommender.set_mode(mode))
+    def set_engine_mode(self, mode: str) -> dict:
+        setter = getattr(self.recommender, "set_mode", None)
+        if not callable(setter):
+            raise RuntimeError("Schimbarea motorului nu este disponibilă.")
+        status = dict(setter(mode))
         runtime_engine = self.recommender.active
         self.quality_manager.set_runtime_engine(runtime_engine)
         self.production_stack = production_stack_status(runtime_engine)
@@ -109,11 +116,20 @@ class CineCalendarService:
             str(self.production_stack.get("recommendation_engine_identity") or ""),
         )
         self.log.info(
-            "V5 visible trial mode changed: mode=%s eligible=%s",
+            "Recommendation engine mode changed: mode=%s discovery=%s adaptive=%s",
             status.get("mode"),
-            status.get("eligible"),
+            status.get("discovery_eligible"),
+            status.get("adaptive_eligible"),
         )
         return status
+
+    # Backward-compatible aliases for older Alpha UI code.
+    def alpha_trial_status(self) -> dict:
+        return self.engine_mode_status()
+
+    def set_alpha_trial_mode(self, mode: str) -> dict:
+        mapped = {"v16": "stable", "v5_20": "adaptive"}.get(str(mode), str(mode))
+        return self.set_engine_mode(mapped)
 
     def _defaults(self):
         # No global genre vetoes. Taste is learned from ratings instead of hard exclusions.

@@ -120,3 +120,15 @@ def test_discovery_variants_are_ordered_by_frontier_width():
     assert DiscoveryRecommendationEngine.DISCOVERY_EXTRA_SHARE < DiscoveryWideRecommendationEngine.DISCOVERY_EXTRA_SHARE
     assert DiscoveryStrictRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT == 0
     assert DiscoveryWideRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT > DiscoveryRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT
+
+
+def test_runtime_discovery_can_wrap_exact_stable_engine_class():
+    from cinecalendar.hybrid_calibration_v46 import calibrated_hybrid_engine_class
+    from cinecalendar.recommender_v16 import FastRecommendationEngineV16
+    from cinecalendar.v5_lab import discovery_engine_class
+
+    stable = calibrated_hybrid_engine_class(FastRecommendationEngineV16, 0.60)
+    wrapped = discovery_engine_class(stable, "strict")
+    assert issubclass(wrapped, stable)
+    assert wrapped.DISCOVERY_VARIANT == "strict"
+    assert wrapped.ALS_WEIGHT == stable.ALS_WEIGHT

@@ -152,3 +152,16 @@ def test_visible_decision_guard_compares_discovery_and_adaptive_separately():
     assert discovery["discovery"]["liked_8_plus"] == 3
     assert adaptive["passed"] is False
     assert adaptive["v5_20"]["disliked_4_minus"] == 1
+
+
+def test_runtime_adaptive_wraps_discovery_over_same_stable_base():
+    from cinecalendar.hybrid_calibration_v46 import calibrated_hybrid_engine_class
+    from cinecalendar.recommender_v16 import FastRecommendationEngineV16
+    from cinecalendar.v5_shadow_ranker import adaptive_engine_class
+
+    stable = calibrated_hybrid_engine_class(FastRecommendationEngineV16, 0.60)
+    adaptive = adaptive_engine_class(stable, "wide", 0.20)
+    assert issubclass(adaptive, stable)
+    assert adaptive.DISCOVERY_VARIANT == "wide"
+    assert adaptive.SHADOW_BLEND_OVERRIDE == pytest.approx(0.20)
+    assert adaptive.ALS_WEIGHT == stable.ALS_WEIGHT
