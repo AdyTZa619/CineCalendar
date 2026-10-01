@@ -504,7 +504,7 @@ class DecisionWindow(CineCalendarWindow):
         history_text = (
             "Ratingurile sunt aceleași ca în evaluare."
             if freshness is True else
-            "Ratingurile s-au schimbat după evaluare; V5 revine la V16 până la o reevaluare."
+            "Ratingurile s-au schimbat după evaluare; Adaptiv revine la Stabil până la o reevaluare."
             if freshness is False else
             "Raportul vechi nu conține amprenta ratingurilor; actualitatea lui nu poate fi confirmată."
         )
@@ -571,7 +571,7 @@ class DecisionWindow(CineCalendarWindow):
             f"9+: {baseline_event.get('candidate_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(baseline_event.get('candidate_9_plus_recall'), percent=True)})\n"
             f"{ENGINE_DISCOVERY_LABEL} — candidați 8+: {discovery_event.get('candidate_8_plus_hits', 0)}/{liked} "
-            f"({self._v5_metric(ranked_event.get('candidate_8_plus_recall'), percent=True)}) • "
+            f"({self._v5_metric(discovery_event.get('candidate_8_plus_recall'), percent=True)}) • "
             f"9+: {discovery_event.get('candidate_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(discovery_event.get('candidate_9_plus_recall'), percent=True)})\n"
             f"{ENGINE_CURRENT_LABEL} Top25 — 8+: {baseline_event.get('top25_8_plus_hits', 0)}/{liked} "
@@ -579,6 +579,11 @@ class DecisionWindow(CineCalendarWindow):
             f"9+: {baseline_event.get('top25_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(baseline_event.get('top25_9_plus_recall'), percent=True)}) • "
             f"1–4: {self._v5_metric(baseline_event.get('top25_dislike_rate'), percent=True)}\n"
+            f"{ENGINE_DISCOVERY_LABEL} Top25 — 8+: {discovery_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"({self._v5_metric(discovery_event.get('top25_8_plus_recall'), percent=True)}) • "
+            f"9+: {discovery_event.get('top25_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(discovery_event.get('top25_9_plus_recall'), percent=True)}) • "
+            f"1–4: {self._v5_metric(discovery_event.get('top25_dislike_rate'), percent=True)}\n"
             f"{ENGINE_PERSONAL_LABEL} Top25 — 8+: {ranked_event.get('top25_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(ranked_event.get('top25_8_plus_recall'), percent=True)}) • "
             f"9+: {ranked_event.get('top25_9_plus_hits', 0)}/{loved} "
@@ -596,17 +601,26 @@ class DecisionWindow(CineCalendarWindow):
         content.addWidget(events)
 
         visible = dict(report.get("visible_decision_replay") or {})
-        visible_guard = dict(visible.get("guard") or {})
+        visible_guards = dict(visible.get("guards") or {})
+        discovery_visible = dict(visible_guards.get("discovery") or {})
+        adaptive_visible = dict(visible_guards.get("adaptive") or visible.get("guard") or {})
+        stable_visible = dict(
+            (discovery_visible.get("v16") or adaptive_visible.get("v16") or {})
+        )
+        discovery_visible_counts = dict(discovery_visible.get("discovery") or {})
+        adaptive_visible_counts = dict(adaptive_visible.get("v5_20") or {})
         visible_box = self.card(); vbl = QVBoxLayout(visible_box)
         vbh = QLabel("Ce văd acum? — test pe cele trei opțiuni"); vbh.setObjectName("CardTitle"); vbl.addWidget(vbh)
         visible_text = QLabel(
-            f"Ferestre istorice: {visible_guard.get('fold_count', 0)} • "
-            f"V16: {(visible_guard.get('v16') or {}).get('liked_8_plus', 0)} filme 8+, "
-            f"{(visible_guard.get('v16') or {}).get('disliked_4_minus', 0)} filme 1–4 • "
-            f"V5: {(visible_guard.get('v5_20') or {}).get('liked_8_plus', 0)} filme 8+, "
-            f"{(visible_guard.get('v5_20') or {}).get('disliked_4_minus', 0)} filme 1–4.\n"
-            + (str(visible_guard.get("reason")) if visible_guard else
-               "Raportul anterior nu a testat traseul «Ce văd acum?». Reevaluează pentru un verdict actual.")
+            f"Ferestre istorice: {max(int(discovery_visible.get('fold_count', 0) or 0), int(adaptive_visible.get('fold_count', 0) or 0))}\n"
+            f"{ENGINE_CURRENT_LABEL}: {stable_visible.get('liked_8_plus', 0)} filme 8+, "
+            f"{stable_visible.get('disliked_4_minus', 0)} filme 1–4\n"
+            f"{ENGINE_DISCOVERY_LABEL}: {discovery_visible_counts.get('liked_8_plus', 0)} filme 8+, "
+            f"{discovery_visible_counts.get('disliked_4_minus', 0)} filme 1–4 • "
+            f"{'TRECUT' if discovery_visible.get('passed') else ('neconcludent' if not discovery_visible.get('informative') else 'netrecut')}\n"
+            f"{ENGINE_PERSONAL_LABEL}: {adaptive_visible_counts.get('liked_8_plus', 0)} filme 8+, "
+            f"{adaptive_visible_counts.get('disliked_4_minus', 0)} filme 1–4 • "
+            f"{'TRECUT' if adaptive_visible.get('passed') else ('neconcludent' if not adaptive_visible.get('informative') else 'netrecut')}."
         )
         visible_text.setWordWrap(True); visible_text.setObjectName("Muted"); vbl.addWidget(visible_text)
         content.addWidget(visible_box)
@@ -620,14 +634,14 @@ class DecisionWindow(CineCalendarWindow):
         )
         vt = QLabel(
             (
-                "Eligibil pentru următorul pas: trial vizibil controlat în V5 Alpha."
+                "Adaptiv este eligibil pentru un test vizibil controlat în Alpha."
                 if eligible else
-                "Rămâne în shadow mode. Nu activăm rankerul în recomandările vizibile."
+                "Adaptiv rămâne doar în test. Nu îl activăm în recomandările vizibile."
             )
             + "\n"
             + ("Raportul trebuie refăcut pentru ratingurile actuale." if freshness is not True
                else str(decision.get("reason") or ""))
-            + "\nStable 4.14.1 rămâne neatins."
+            + "\nStable 4.15.0 rămâne neatins."
         )
         vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
         content.addWidget(verdict)
@@ -650,16 +664,16 @@ class DecisionWindow(CineCalendarWindow):
             )
             + f"  Audit comparativ salvat: {audit_rows} recomandări."
             + ("  Poți comuta instant; Stable rămâne neatins." if eligible_trial
-               else "  Motorul personal experimental necesită o reevaluare pe ratingurile actuale." if freshness is False
-               else "  Motorul personal experimental rămâne blocat până la un raport eligibil.")
+               else "  Adaptiv necesită o reevaluare pe ratingurile actuale." if freshness is False
+               else "  Adaptiv rămâne blocat până la un raport eligibil.")
         )
         tt.setWordWrap(True); tt.setObjectName("Muted"); tbl.addWidget(tt)
         tr = QHBoxLayout()
-        use_v16 = QPushButton("Folosește Motor actual")
+        use_v16 = QPushButton("Folosește Stabil")
         use_v16.setProperty("accent", active_mode == "v16")
         use_v16.clicked.connect(lambda: self.set_v5_trial_mode("v16"))
         tr.addWidget(use_v16)
-        use_v5 = QPushButton("Folosește Motor personal experimental")
+        use_v5 = QPushButton("Folosește Adaptiv")
         use_v5.setProperty("accent", active_mode == "v5_20")
         use_v5.setEnabled(eligible_trial)
         use_v5.clicked.connect(lambda: self.set_v5_trial_mode("v5_20"))

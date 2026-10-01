@@ -3,6 +3,7 @@ import pytest
 from cinecalendar.v5_lab import DiscoveryRecommendationEngine, V5LabRecommendationEngine
 from cinecalendar.v5_event_replay import aggregate_event_reports
 from cinecalendar.v5_evaluation import _event_guard
+from cinecalendar.v5_decision_replay import decision_replay_guard
 from cinecalendar.v5_shadow_ranker import (
     V5ShadowRankedEngine,
     V5ShadowRankedEngine10,
@@ -122,3 +123,24 @@ def test_user_facing_engine_names_are_clear():
     assert 'ENGINE_CURRENT_LABEL = "Stabil"' in source
     assert 'ENGINE_DISCOVERY_LABEL = "Descoperire"' in source
     assert 'ENGINE_PERSONAL_LABEL = "Adaptiv"' in source
+
+
+def test_visible_decision_guard_compares_discovery_and_adaptive_separately():
+    folds = [
+        {
+            "v16": {"matched": [{"rating": 8}]},
+            "discovery": {"matched": [{"rating": 8}, {"rating": 9}]},
+            "v5_20": {"matched": [{"rating": 8}, {"rating": 3}]},
+        },
+        {
+            "v16": {"matched": [{"rating": 6}]},
+            "discovery": {"matched": [{"rating": 8}]},
+            "v5_20": {"matched": [{"rating": 7}]},
+        },
+    ]
+    discovery = decision_replay_guard(folds, "discovery", "Descoperire")
+    adaptive = decision_replay_guard(folds, "v5_20", "Adaptiv")
+    assert discovery["passed"] is True
+    assert discovery["discovery"]["liked_8_plus"] == 3
+    assert adaptive["passed"] is False
+    assert adaptive["v5_20"]["disliked_4_minus"] == 1

@@ -293,7 +293,14 @@ def run_v5_evaluation(
         source, desired_folds=max(2, int(rolling_folds)), als_timeout=als_timeout,
         progress=progress,
     )
-    decision_guard = dict(decision_replay.get("guard") or {})
+    decision_guards = dict(decision_replay.get("guards") or {})
+    discovery_decision_guard = dict(decision_guards.get("discovery") or {})
+    adaptive_decision_guard = dict(
+        decision_guards.get("adaptive")
+        or decision_replay.get("guard")
+        or {}
+    )
+    decision_guard = adaptive_decision_guard
     rolling_discovery = dict(discovery_comparison.get("aggregate") or {})
     rolling_selected = dict(selected_comparison.get("aggregate") or {})
     ranker_validated = bool(ranker_status.get("validated"))
@@ -304,6 +311,7 @@ def run_v5_evaluation(
     discovery_candidate_for_stable = bool(
         rolling_discovery.get("approved")
         and discovery_event_guard_passed
+        and discovery_decision_guard.get("passed")
     )
     eligible = bool(
         ranker_validated
@@ -334,6 +342,7 @@ def run_v5_evaluation(
             "retrieval_rolling_approved": bool(rolling_discovery.get("approved")),
             "discovery_rolling_approved": bool(rolling_discovery.get("approved")),
             "discovery_event_guard_passed": discovery_event_guard_passed,
+            "discovery_visible_decision_guard_passed": bool(discovery_decision_guard.get("passed")),
             "discovery_candidate_for_stable": discovery_candidate_for_stable,
             "selected_variant": selected_name,
             "selected_variant_engine": selected_engine_name,
