@@ -20,9 +20,9 @@ from .v5_knowledge import V5KnowledgeBase
 from .v5_rating_snapshot import report_rating_freshness
 
 
-ENGINE_CURRENT_LABEL = "Motor actual"
-ENGINE_DISCOVERY_LABEL = "Motor actual + căutare extinsă"
-ENGINE_PERSONAL_LABEL = "Motor personal experimental"
+ENGINE_CURRENT_LABEL = "Standard"
+ENGINE_DISCOVERY_LABEL = "Extins"
+ENGINE_PERSONAL_LABEL = "Personal"
 
 
 class DecisionWindow(CineCalendarWindow):
