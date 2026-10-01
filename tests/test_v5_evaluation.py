@@ -38,10 +38,13 @@ def test_v5_evaluator_wires_three_way_historical_comparison():
     assert "event_replay_windows(" in source
     assert "run_window_backtest_group(" in source
     assert "eligible_for_visible_alpha_trial" in source
+    assert "Evaluatorul motoarelor este disponibil numai în Alpha." not in source
+    assert "self.s.engine_mode_status()" in source
+    assert 'QPushButton("Folosește Descoperire")' in source
     assert '"visible_ranking_changed": False' in source
 
 
-def test_v5_lab_is_exposed_only_as_alpha_runtime_page():
+def test_engine_comparison_is_exposed_in_single_executable():
     source = open("cinecalendar/qt_ui_v2.py", encoding="utf-8").read()
     assert '("v5_lab", "Comparare motor")' in source
     assert "def page_v5_lab(self):" in source
