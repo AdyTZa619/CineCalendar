@@ -6,6 +6,7 @@ from cinecalendar.engine_modes import (
     MODE_STABLE,
 )
 from cinecalendar.v5_rating_snapshot import rating_history_snapshot
+from cinecalendar.recommender_v16 import recommendation_engine_identity
 
 
 class _Collaborative:
@@ -21,10 +22,15 @@ class _Engine:
         self.collaborative = _Collaborative()
 
 
-def _eligible_report(db):
+def _eligible_report(db, stable=None):
+    stable = stable or _Engine("stable")
     return {
         "generated_at": "2026-10-01T00:00:00+00:00",
         "rating_snapshot": rating_history_snapshot(db),
+        "stable_engine": {
+            "class": type(stable).__name__,
+            "identity": recommendation_engine_identity(stable),
+        },
         "decision": {
             "discovery_candidate_for_stable": True,
             "discovery_rolling_approved": True,
@@ -56,8 +62,8 @@ def test_one_database_router_is_stable_by_default_and_lazy(tmp_path):
 
 def test_router_unlocks_discovery_and_adaptive_only_for_current_report(tmp_path):
     db = Database(tmp_path / "cinecalendar.db")
-    db.set_setting("v5_evaluation_report", _eligible_report(db))
     stable = _Engine("stable")
+    db.set_setting("v5_evaluation_report", _eligible_report(db, stable))
     router = EngineModeRouter(
         db, stable, lambda: _Engine("discovery"), lambda: _Engine("adaptive")
     )
@@ -78,9 +84,10 @@ def test_router_falls_back_to_stable_when_ratings_change(tmp_path):
     from cinecalendar.util import identity_key, json_dumps, normalize_text, utcnow_iso
 
     db = Database(tmp_path / "cinecalendar.db")
-    db.set_setting("v5_evaluation_report", _eligible_report(db))
+    stable = _Engine("stable")
+    db.set_setting("v5_evaluation_report", _eligible_report(db, stable))
     router = EngineModeRouter(
-        db, _Engine("stable"), lambda: _Engine("discovery"), lambda: _Engine("adaptive")
+        db, stable, lambda: _Engine("discovery"), lambda: _Engine("adaptive")
     )
     router.set_mode(MODE_DISCOVERY)
 
@@ -117,9 +124,27 @@ def test_router_refreshes_when_new_report_arrives_without_rating_change(tmp_path
     )
     assert router.discovery_eligible() is False
 
-    report = _eligible_report(db)
+    report = _eligible_report(db, stable)
     report["generated_at"] = "2026-10-01T01:00:00+00:00"
     db.set_setting("v5_evaluation_report", report)
 
     assert router.discovery_eligible() is True
     assert router.adaptive_eligible() is True
+
+
+def test_router_rejects_report_from_different_stable_engine(tmp_path):
+    db = Database(tmp_path / "cinecalendar.db")
+    current = _Engine("current")
+    other = _Engine("other")
+    report = _eligible_report(db, other)
+    # Same ratings, valid challenger verdict, but evaluated against a different Stable identity.
+    report["stable_engine"]["identity"] = "different-stable-identity"
+    db.set_setting("v5_evaluation_report", report)
+
+    router = EngineModeRouter(
+        db, current, lambda: _Engine("discovery"), lambda: _Engine("adaptive")
+    )
+    assert router.status()["report_current"] is True
+    assert router.status()["report_matches_stable"] is False
+    assert router.discovery_eligible() is False
+    assert router.adaptive_eligible() is False

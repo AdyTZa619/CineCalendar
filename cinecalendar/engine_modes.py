@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .util import utcnow_iso
+from .recommender_v16 import recommendation_engine_identity
 from .v5_rating_snapshot import report_rating_freshness
 
 
@@ -17,9 +18,15 @@ class EngineModeRouter:
     only when the latest evaluation report is current for the present rating history.
     """
 
-    def __init__(self, db, stable_engine, discovery_factory, adaptive_factory):
+    def __init__(
+        self, db, stable_engine, discovery_factory, adaptive_factory,
+        *, stable_identity: str | None = None,
+    ):
         self.db = db
         self.stable = stable_engine
+        self.stable_identity = str(
+            stable_identity or recommendation_engine_identity(stable_engine)
+        )
         self._discovery_factory = discovery_factory
         self._adaptive_factory = adaptive_factory
         self._discovery = None
@@ -27,11 +34,14 @@ class EngineModeRouter:
         self._freshness_token = None
         self._freshness_value = None
 
-        saved = str(self.db.get_setting("recommendation_engine_mode", MODE_STABLE) or MODE_STABLE)
+        saved_raw = self.db.get_setting("recommendation_engine_mode", None)
+        saved = str(saved_raw or MODE_STABLE)
         if saved not in _ALLOWED:
             saved = MODE_STABLE
         self._mode = saved
         self._enforce_guard()
+        if saved_raw is None or str(saved_raw) not in _ALLOWED:
+            self.db.set_setting("recommendation_engine_mode", self._mode)
 
     def _report(self) -> dict:
         report = self.db.get_setting("v5_evaluation_report", {}) or {}
@@ -65,10 +75,19 @@ class EngineModeRouter:
             self._freshness_value = report_rating_freshness(self.db, report) is True
         return bool(self._freshness_value)
 
+    def _report_matches_stable(self) -> bool:
+        report = self._report()
+        stable = report.get("stable_engine") if isinstance(report, dict) else {}
+        return bool(
+            isinstance(stable, dict)
+            and str(stable.get("identity") or "") == self.stable_identity
+        )
+
     def discovery_eligible(self) -> bool:
         decision = self._decision()
         return bool(
             self._report_current()
+            and self._report_matches_stable()
             and decision.get("discovery_candidate_for_stable")
             and decision.get("discovery_rolling_approved")
             and decision.get("discovery_event_guard_passed")
@@ -79,6 +98,7 @@ class EngineModeRouter:
         decision = self._decision()
         return bool(
             self._report_current()
+            and self._report_matches_stable()
             and decision.get("eligible_for_visible_alpha_trial")
             and decision.get("visible_decision_guard_passed")
             and str(decision.get("selected_variant") or "") == "20%"
@@ -156,7 +176,9 @@ class EngineModeRouter:
         return {
             "available": True,
             "mode": self.mode,
-            "report_current": report_rating_freshness(self.db, report),
+            "report_current": self._report_current(),
+            "report_matches_stable": self._report_matches_stable(),
+            "stable_identity": self.stable_identity,
             "report_generated_at": str(report.get("generated_at") or ""),
             "discovery_eligible": self.discovery_eligible(),
             "adaptive_eligible": self.adaptive_eligible(),

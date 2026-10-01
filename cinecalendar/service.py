@@ -81,6 +81,7 @@ class CineCalendarService:
             self.stable_recommender,
             build_discovery,
             build_adaptive,
+            stable_identity=recommendation_engine_identity(engine_cls),
         )
         runtime_engine = self.recommender.active
 

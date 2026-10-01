@@ -42,9 +42,8 @@ def test_v5_evaluator_wires_three_way_historical_comparison():
     assert "run_window_backtest_group(" in source
     assert "eligible_for_visible_alpha_trial" in source
     assert "Evaluatorul motoarelor este disponibil numai în Alpha." not in source
-    assert "self.s.engine_mode_status()" in source
-    assert 'QPushButton("Folosește Descoperire")' in source
-    assert '"visible_ranking_changed": False' in source
+    assert '"stable_engine"' in source
+    assert "stable_identity" in source
 
 
 def test_engine_comparison_is_exposed_in_single_executable():
@@ -55,6 +54,8 @@ def test_engine_comparison_is_exposed_in_single_executable():
     assert "run_v5_evaluation(" in source
     assert 'stable_engine_cls=getattr(self.s, "stable_engine_class", None)' in source
     assert "eligible_for_visible_alpha_trial" in source
+    assert "self.s.engine_mode_status()" in source
+    assert 'QPushButton("Folosește Descoperire")' in source
     assert "if bool(self.db.get_setting(\"auto_update_check\", True)):" in source
 
 
