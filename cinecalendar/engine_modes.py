@@ -24,6 +24,8 @@ class EngineModeRouter:
         self._adaptive_factory = adaptive_factory
         self._discovery = None
         self._adaptive = None
+        self._freshness_token = None
+        self._freshness_value = None
 
         saved = str(self.db.get_setting("recommendation_engine_mode", MODE_STABLE) or MODE_STABLE)
         if saved not in _ALLOWED:
@@ -40,8 +42,22 @@ class EngineModeRouter:
         decision = report.get("decision") or {}
         return decision if isinstance(decision, dict) else {}
 
+    def _rating_state_token(self) -> tuple:
+        try:
+            with self.db.connect() as con:
+                row = con.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(updated_at),'') FROM ratings"
+                ).fetchone()
+            return int(row[0]), str(row[1] or "")
+        except Exception:
+            return ()
+
     def _report_current(self) -> bool:
-        return report_rating_freshness(self.db, self._report()) is True
+        token = self._rating_state_token()
+        if token != self._freshness_token:
+            self._freshness_token = token
+            self._freshness_value = report_rating_freshness(self.db, self._report()) is True
+        return bool(self._freshness_value)
 
     def discovery_eligible(self) -> bool:
         decision = self._decision()
@@ -67,11 +83,13 @@ class EngineModeRouter:
         return value if value in {"strict", "balanced", "wide"} else "balanced"
 
     def _enforce_guard(self) -> None:
+        original = self._mode
         if self._mode == MODE_DISCOVERY and not self.discovery_eligible():
             self._mode = MODE_STABLE
         elif self._mode == MODE_ADAPTIVE and not self.adaptive_eligible():
             self._mode = MODE_STABLE
-        self.db.set_setting("recommendation_engine_mode", self._mode)
+        if self._mode != original:
+            self.db.set_setting("recommendation_engine_mode", self._mode)
 
     def _start_engine(self, engine):
         collaborative = getattr(engine, "collaborative", None)
@@ -115,6 +133,8 @@ class EngineModeRouter:
         if wanted == MODE_ADAPTIVE and not self.adaptive_eligible():
             raise RuntimeError("Adaptiv nu are încă un raport valid pentru ratingurile actuale.")
         self._mode = wanted
+        self._freshness_token = None
+        self._freshness_value = None
         self.db.set_setting("recommendation_engine_mode", wanted)
         self.db.set_setting("recommendation_engine_mode_changed_at", utcnow_iso())
         # Force a fresh visible round when switching engines.
