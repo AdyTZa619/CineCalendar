@@ -421,7 +421,11 @@ class DecisionWindow(CineCalendarWindow):
 
         self.set_status("Comparare motor: pregătesc testul Motor actual vs variantele noi…", True)
         worker = WorkerThread(
-            lambda progress: run_v5_evaluation(self.db, progress=progress),
+            lambda progress: run_v5_evaluation(
+                self.db,
+                progress=progress,
+                stable_engine_cls=getattr(self.s, "stable_engine_class", None),
+            ),
             self,
         )
         self.v5_eval_worker = worker

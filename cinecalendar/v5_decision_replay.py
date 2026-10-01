@@ -71,7 +71,9 @@ def decision_replay_guard(
 
 def run_visible_decision_replay(
     db_path: str | Path, *, desired_folds: int = 3, als_timeout: float = 150.0,
-    progress=None, discovery_cls=DiscoveryRecommendationEngine,
+    progress=None, baseline_cls=FastRecommendationEngineV16,
+    discovery_cls=DiscoveryRecommendationEngine,
+    adaptive_cls=V5VisibleTrialEngine20,
 ) -> dict:
     """Replay the exact Alpha decision path on separate, past-only SQLite copies.
 
@@ -100,9 +102,9 @@ def run_visible_decision_replay(
             temp_db = Database(temp_path)
             _remove_future(temp_db, window)
             eval_date = date.fromisoformat(window.cutoff_date)
-            v16 = _build_engine(availability_engine_class(FastRecommendationEngineV16), temp_db)
+            v16 = _build_engine(availability_engine_class(baseline_cls), temp_db)
             discovery = _build_engine(availability_engine_class(discovery_cls), temp_db)
-            adaptive = _build_engine(availability_engine_class(V5VisibleTrialEngine20), temp_db)
+            adaptive = _build_engine(availability_engine_class(adaptive_cls), temp_db)
             for engine in (v16, discovery, adaptive):
                 _wait_for_als(engine.collaborative, als_timeout)
             trial = AlphaTrialRecommender(temp_db, v16, adaptive)
@@ -142,7 +144,9 @@ def run_visible_decision_replay(
     return {
         "version": DECISION_REPLAY_VERSION,
         "method": "first decision of day / same recent exclusions / current UI settings",
+        "baseline_engine": getattr(baseline_cls, "__name__", str(baseline_cls)),
         "discovery_engine": getattr(discovery_cls, "__name__", str(discovery_cls)),
+        "adaptive_engine": getattr(adaptive_cls, "__name__", str(adaptive_cls)),
         "folds": folds,
         "guards": {
             "discovery": discovery_guard,

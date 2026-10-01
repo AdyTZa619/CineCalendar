@@ -56,6 +56,7 @@ class CineCalendarService:
         engine_cls = self.quality_manager.preferred_engine_class()
         if not isinstance(engine_cls, type) or not issubclass(engine_cls, FastRecommendationEngineV16):
             engine_cls = FastRecommendationEngineV16
+        self.stable_engine_class = engine_cls
         self.stable_recommender = build_production_recommender(
             self.db, engine_cls, self.calendar
         )

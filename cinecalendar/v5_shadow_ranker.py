@@ -119,26 +119,34 @@ class V5ShadowRankedEngine20(V5ShadowRankedEngine):
     SHADOW_BLEND_OVERRIDE = 0.20
 
 
-_ADAPTIVE_RUNTIME_CACHE: dict[tuple[type, str, float], type] = {}
+_ADAPTIVE_RUNTIME_CACHE: dict[tuple[type, str, str], type] = {}
 _ADAPTIVE_RUNTIME_LOCK = threading.RLock()
 
 
 def adaptive_engine_class(
     base_cls: type,
     discovery_variant: str = "balanced",
-    blend_weight: float = 0.20,
+    blend_weight: float | None = 0.20,
 ) -> type:
     """Layer the personal Adaptive re-ranker over the exact Stable + Discovery engine."""
     discovery_cls = discovery_engine_class(base_cls, discovery_variant)
-    weight = round(max(0.0, min(0.20, float(blend_weight))), 2)
-    key = (base_cls, str(discovery_variant), weight)
+    override = (
+        None
+        if blend_weight is None
+        else round(max(0.0, min(0.20, float(blend_weight))), 2)
+    )
+    key = (
+        base_cls,
+        str(discovery_variant),
+        "learned" if override is None else f"{override:.2f}",
+    )
     with _ADAPTIVE_RUNTIME_LOCK:
         cached = _ADAPTIVE_RUNTIME_CACHE.get(key)
         if cached is not None:
             return cached
 
         class RuntimeAdaptive(discovery_cls):
-            SHADOW_BLEND_OVERRIDE = weight
+            SHADOW_BLEND_OVERRIDE = override
             ADAPTIVE_RUNTIME = True
 
             @staticmethod
@@ -150,10 +158,16 @@ def adaptive_engine_class(
                 requested = max(1, int(count))
                 knowledge = self.v5.knowledge.status()
                 ranker_status = self.v5.personal_ranker.status()
+                learned_blend = float(ranker_status.get("blend_weight", 0.0) or 0.0)
+                effective_blend = (
+                    learned_blend
+                    if self.SHADOW_BLEND_OVERRIDE is None
+                    else float(self.SHADOW_BLEND_OVERRIDE)
+                )
                 active = bool(
                     knowledge.get("ready_for_rich_ranker")
                     and ranker_status.get("validated")
-                    and self.SHADOW_BLEND_OVERRIDE > 0.0
+                    and effective_blend > 0.0
                 )
                 if not active:
                     return super()._adaptive_rerank(recs, requested)
@@ -170,7 +184,7 @@ def adaptive_engine_class(
                     if bool(payload.get("active")):
                         base = float(rec.score.final)
                         utility = float(payload.get("utility", 0.0) or 0.0)
-                        combined = self._blend(base, utility, self.SHADOW_BLEND_OVERRIDE)
+                        combined = self._blend(base, utility, effective_blend)
                         rec.score.score_factors["adaptive_base_final"] = base
                         rec.score.score_factors["adaptive_utility"] = utility
                         rec.score.score_factors["adaptive_like_score"] = float(
@@ -179,7 +193,7 @@ def adaptive_engine_class(
                         rec.score.score_factors["adaptive_dislike_risk"] = float(
                             payload.get("dislike_risk", 0.0) or 0.0
                         )
-                        rec.score.score_factors["adaptive_blend_weight"] = self.SHADOW_BLEND_OVERRIDE
+                        rec.score.score_factors["adaptive_blend_weight"] = effective_blend
                         rec.score.final = combined
                         rec.score.contributions.insert(
                             0,
@@ -204,8 +218,15 @@ def adaptive_engine_class(
 
             def candidate_generation_status(self) -> dict:
                 status = dict(super().candidate_generation_status())
+                ranker = self.v5.personal_ranker.status()
+                effective_blend = (
+                    float(ranker.get("blend_weight", 0.0) or 0.0)
+                    if self.SHADOW_BLEND_OVERRIDE is None
+                    else float(self.SHADOW_BLEND_OVERRIDE)
+                )
                 status["adaptive"] = {
-                    "blend_weight": self.SHADOW_BLEND_OVERRIDE,
+                    "blend_weight": effective_blend,
+                    "blend_mode": "learned" if self.SHADOW_BLEND_OVERRIDE is None else "fixed",
                     "visible_ranking_changed": True,
                     "base": base_cls.__name__,
                     "discovery_variant": str(discovery_variant),
@@ -213,7 +234,9 @@ def adaptive_engine_class(
                 return status
 
         RuntimeAdaptive.__name__ = (
-            f"{base_cls.__name__}Adaptive{int(weight * 100):02d}"
+            f"{base_cls.__name__}AdaptiveLearned"
+            if override is None
+            else f"{base_cls.__name__}Adaptive{int(override * 100):02d}"
         )
         RuntimeAdaptive.__qualname__ = RuntimeAdaptive.__name__
         _ADAPTIVE_RUNTIME_CACHE[key] = RuntimeAdaptive

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .db import Database
-from .recommender_v16 import FastRecommendationEngineV16
+from .recommender_v16 import FastRecommendationEngineV16, recommendation_engine_identity
 from .rolling_backtest_v37 import (
     comparison_from_reports,
     rolling_windows,
@@ -14,19 +14,12 @@ from .v5_event_replay import aggregate_event_reports, event_replay_windows
 from .v5_knowledge import V5KnowledgeBase
 from .v5_lab import (
     DiscoveryRecommendationEngine,
-    DiscoveryStrictRecommendationEngine,
-    DiscoveryWideRecommendationEngine,
-    V5LabRecommendationEngine,
+    discovery_engine_class,
 )
 from .v5_personal_ranker import PersonalUtilityRankerV5
 from .v5_rating_snapshot import rating_history_snapshot
 from .v5_decision_replay import run_visible_decision_replay
-from .v5_shadow_ranker import (
-    V5ShadowRankedEngine,
-    V5ShadowRankedEngine10,
-    V5ShadowRankedEngine15,
-    V5ShadowRankedEngine20,
-)
+from .v5_shadow_ranker import adaptive_engine_class
 
 
 V5_EVALUATION_VERSION = "v5-evaluation-alpha4-discovery"
@@ -155,6 +148,7 @@ def run_v5_evaluation(
     candidate_limit: int = 1800,
     final_limit: int = 50,
     als_timeout: float = 150.0,
+    stable_engine_cls: type | None = None,
 ) -> dict:
     """Compare Stable, conservative Discovery, and a guarded sweep of Adaptive weights.
 
@@ -167,6 +161,10 @@ def run_v5_evaluation(
     if not source.is_file():
         raise FileNotFoundError(source)
     rating_snapshot = rating_history_snapshot(db)
+    stable_cls = stable_engine_cls or FastRecommendationEngineV16
+    if not isinstance(stable_cls, type) or not issubclass(stable_cls, FastRecommendationEngineV16):
+        stable_cls = FastRecommendationEngineV16
+    stable_identity = recommendation_engine_identity(stable_cls)
 
     knowledge = V5KnowledgeBase(db).status()
 
@@ -186,56 +184,44 @@ def run_v5_evaluation(
         raise RuntimeError("Nu există suficiente ferestre temporale pentru comparația Stabil vs variantele noi.")
 
     discovery_classes = [
-        DiscoveryStrictRecommendationEngine,
-        DiscoveryRecommendationEngine,
-        DiscoveryWideRecommendationEngine,
+        discovery_engine_class(stable_cls, "strict"),
+        discovery_engine_class(stable_cls, "balanced"),
+        discovery_engine_class(stable_cls, "wide"),
     ]
-    ranker_classes = [
-        V5ShadowRankedEngine,
-        V5ShadowRankedEngine10,
-        V5ShadowRankedEngine15,
-        V5ShadowRankedEngine20,
-    ]
-    classes = [FastRecommendationEngineV16, *discovery_classes, *ranker_classes]
+    discovery_classes_by_name = {
+        str(getattr(cls, "DISCOVERY_VARIANT", cls.__name__)): cls
+        for cls in discovery_classes
+    }
 
     baseline_reports: list[dict] = []
     discovery_variant_reports: dict[str, list[dict]] = {
-        str(getattr(cls, "DISCOVERY_VARIANT", cls.__name__)): []
-        for cls in discovery_classes
-    }
-    variant_reports: dict[str, list[dict]] = {
-        _variant_label(cls): [] for cls in ranker_classes
+        label: [] for label in discovery_classes_by_name
     }
 
+    # Phase 1: keep the exact Stable scorer fixed and choose only the retrieval frontier.
     for index, window in enumerate(windows, 1):
         progress(
-            f"Comparare motor: replay temporal {index}/{len(windows)} • "
+            f"Comparare motor: Descoperire {index}/{len(windows)} • "
             f"{window.cutoff_date or 'dată istorică'}"
         )
         reports = run_window_backtest_group(
             source,
             window,
-            engine_classes=classes,
+            engine_classes=[stable_cls, *discovery_classes],
             candidate_limit=max(500, int(candidate_limit)),
             final_limit=max(25, int(final_limit)),
             als_timeout=max(20.0, float(als_timeout)),
         )
         baseline_reports.append(reports[0])
-        offset = 1
-        for cls in discovery_classes:
+        for offset, cls in enumerate(discovery_classes, start=1):
             label = str(getattr(cls, "DISCOVERY_VARIANT", cls.__name__))
             discovery_variant_reports[label].append(reports[offset])
-            offset += 1
-        for cls in ranker_classes:
-            variant_reports[_variant_label(cls)].append(reports[offset])
-            offset += 1
 
     discovery_variants: dict[str, dict] = {}
-    for cls in discovery_classes:
-        label = str(getattr(cls, "DISCOVERY_VARIANT", cls.__name__))
+    for label, cls in discovery_classes_by_name.items():
         comparison = comparison_from_reports(
             windows,
-            baseline_cls=FastRecommendationEngineV16,
+            baseline_cls=stable_cls,
             challenger_cls=cls,
             baseline_reports=baseline_reports,
             challenger_reports=discovery_variant_reports[label],
@@ -251,19 +237,45 @@ def run_v5_evaluation(
     selected_discovery_name, selected_discovery_payload = _choose_discovery_variant(
         discovery_variants
     )
-    selected_discovery_engine_name = str(selected_discovery_payload.get("engine") or "")
-    selected_discovery_cls = next(
-        (cls for cls in discovery_classes if cls.__name__ == selected_discovery_engine_name),
-        DiscoveryRecommendationEngine,
+    selected_discovery_cls = discovery_classes_by_name.get(
+        selected_discovery_name,
+        discovery_engine_class(stable_cls, "balanced"),
     )
+    selected_discovery_engine_name = selected_discovery_cls.__name__
     discovery_comparison = dict(selected_discovery_payload.get("comparison") or {})
+
+    # Phase 2: only after retrieval is fixed do we test personal re-ordering weights.
+    ranker_classes = [
+        adaptive_engine_class(stable_cls, selected_discovery_name, None),
+        adaptive_engine_class(stable_cls, selected_discovery_name, 0.10),
+        adaptive_engine_class(stable_cls, selected_discovery_name, 0.15),
+        adaptive_engine_class(stable_cls, selected_discovery_name, 0.20),
+    ]
+    variant_reports: dict[str, list[dict]] = {
+        _variant_label(cls): [] for cls in ranker_classes
+    }
+    for index, window in enumerate(windows, 1):
+        progress(
+            f"Comparare motor: Adaptiv {index}/{len(windows)} • "
+            f"{window.cutoff_date or 'dată istorică'}"
+        )
+        reports = run_window_backtest_group(
+            source,
+            window,
+            engine_classes=ranker_classes,
+            candidate_limit=max(500, int(candidate_limit)),
+            final_limit=max(25, int(final_limit)),
+            als_timeout=max(20.0, float(als_timeout)),
+        )
+        for offset, cls in enumerate(ranker_classes):
+            variant_reports[_variant_label(cls)].append(reports[offset])
 
     ranked_variants: dict[str, dict] = {}
     for cls in ranker_classes:
         label = _variant_label(cls)
         comparison = comparison_from_reports(
             windows,
-            baseline_cls=FastRecommendationEngineV16,
+            baseline_cls=stable_cls,
             challenger_cls=cls,
             baseline_reports=baseline_reports,
             challenger_reports=variant_reports[label],
@@ -278,7 +290,7 @@ def run_v5_evaluation(
     selected_engine_name = str(selected_payload.get("engine") or "")
     selected_cls = next(
         (cls for cls in ranker_classes if cls.__name__ == selected_engine_name),
-        V5ShadowRankedEngine,
+        adaptive_engine_class(stable_cls, selected_discovery_name, None),
     )
     selected_comparison = dict(selected_payload.get("comparison") or {})
 
@@ -314,7 +326,7 @@ def run_v5_evaluation(
         e_baseline: list[dict] = []
         e_discovery: list[dict] = []
         e_ranked: list[dict] = []
-        event_classes = [FastRecommendationEngineV16, selected_discovery_cls, selected_cls]
+        event_classes = [stable_cls, selected_discovery_cls, selected_cls]
         for index, window in enumerate(selection.windows, 1):
             progress(
                 f"Comparare motor: validare pe zile reale {index}/{len(selection.windows)} • "
@@ -346,8 +358,13 @@ def run_v5_evaluation(
         }
 
     decision_replay = run_visible_decision_replay(
-        source, desired_folds=max(2, int(rolling_folds)), als_timeout=als_timeout,
-        progress=progress, discovery_cls=selected_discovery_cls,
+        source,
+        desired_folds=max(2, int(rolling_folds)),
+        als_timeout=als_timeout,
+        progress=progress,
+        baseline_cls=stable_cls,
+        discovery_cls=selected_discovery_cls,
+        adaptive_cls=selected_cls,
     )
     decision_guards = dict(decision_replay.get("guards") or {})
     discovery_decision_guard = dict(decision_guards.get("discovery") or {})
@@ -382,6 +399,10 @@ def run_v5_evaluation(
         "generated_at": utcnow_iso(),
         "rating_snapshot": rating_snapshot,
         "source_db": str(source),
+        "stable_engine": {
+            "class": stable_cls.__name__,
+            "identity": stable_identity,
+        },
         "knowledge": knowledge,
         "ranker_shadow": ranker_status,
         "rolling": {

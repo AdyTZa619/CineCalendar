@@ -29,11 +29,14 @@ def test_v5_shadow_ranker_is_evaluation_only_subclass():
 def test_v5_evaluator_wires_three_way_historical_comparison():
     source = open("cinecalendar/v5_evaluation.py", encoding="utf-8").read()
     assert "FastRecommendationEngineV16" in source
-    assert "DiscoveryRecommendationEngine" in source
-    assert "DiscoveryStrictRecommendationEngine" in source
-    assert "DiscoveryWideRecommendationEngine" in source
+    assert "discovery_engine_class" in source
+    assert 'discovery_engine_class(stable_cls, "strict")' in source
+    assert 'discovery_engine_class(stable_cls, "balanced")' in source
+    assert 'discovery_engine_class(stable_cls, "wide")' in source
     assert "selected_discovery_variant" in source
-    assert "V5ShadowRankedEngine" in source
+    assert "adaptive_engine_class" in source
+    assert "stable_engine_cls" in source
+    assert '"stable_engine"' in source
     assert "rolling_windows(" in source
     assert "event_replay_windows(" in source
     assert "run_window_backtest_group(" in source
@@ -49,7 +52,8 @@ def test_engine_comparison_is_exposed_in_single_executable():
     assert '("v5_lab", "Comparare motor")' in source
     assert "def page_v5_lab(self):" in source
     assert "def run_v5_lab_evaluation(self):" in source
-    assert "run_v5_evaluation(self.db" in source
+    assert "run_v5_evaluation(" in source
+    assert 'stable_engine_cls=getattr(self.s, "stable_engine_class", None)' in source
     assert "eligible_for_visible_alpha_trial" in source
     assert "if bool(self.db.get_setting(\"auto_update_check\", True)):" in source
 
@@ -168,3 +172,12 @@ def test_runtime_adaptive_wraps_discovery_over_same_stable_base():
     assert adaptive.DISCOVERY_VARIANT == "wide"
     assert adaptive.SHADOW_BLEND_OVERRIDE == pytest.approx(0.20)
     assert adaptive.ALS_WEIGHT == stable.ALS_WEIGHT
+
+
+def test_runtime_adaptive_factory_supports_learned_weight():
+    from cinecalendar.recommender_v16 import FastRecommendationEngineV16
+    from cinecalendar.v5_shadow_ranker import adaptive_engine_class
+
+    learned = adaptive_engine_class(FastRecommendationEngineV16, "balanced", None)
+    assert learned.SHADOW_BLEND_OVERRIDE is None
+    assert "Learned" in learned.__name__
