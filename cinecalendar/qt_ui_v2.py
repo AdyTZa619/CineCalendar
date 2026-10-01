@@ -626,7 +626,11 @@ class DecisionWindow(CineCalendarWindow):
         content.addWidget(visible_box)
 
         verdict = self.card(); vl = QVBoxLayout(verdict)
-        vh = QLabel("Decizie de siguranță pentru Alpha"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
+        vh = QLabel("Verdict"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
+        discovery_ready = bool(
+            decision.get("discovery_candidate_for_stable")
+            and freshness is True
+        )
         eligible = bool(
             decision.get("eligible_for_visible_alpha_trial")
             and decision.get("visible_decision_guard_passed")
@@ -634,14 +638,20 @@ class DecisionWindow(CineCalendarWindow):
         )
         vt = QLabel(
             (
-                "Adaptiv este eligibil pentru un test vizibil controlat în Alpha."
+                "Descoperire: PROMOVEAZĂ — a demonstrat câștig suficient peste Stabil."
+                if discovery_ready else
+                "Descoperire: NU PROMOVA — nu a demonstrat încă un câștig suficient peste Stabil."
+            )
+            + "\n"
+            + (
+                "Adaptiv: ELIGIBIL pentru test controlat."
                 if eligible else
-                "Adaptiv rămâne doar în test. Nu îl activăm în recomandările vizibile."
+                "Adaptiv: NU ESTE ELIGIBIL pentru activare."
             )
             + "\n"
             + ("Raportul trebuie refăcut pentru ratingurile actuale." if freshness is not True
                else str(decision.get("reason") or ""))
-            + "\nStable 4.15.0 rămâne neatins."
+            + "\nStabil 4.15.0 rămâne neatins până la un verdict pozitiv."
         )
         vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
         content.addWidget(verdict)

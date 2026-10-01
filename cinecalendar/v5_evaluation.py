@@ -370,7 +370,8 @@ def run_v5_evaluation(
         and discovery_decision_guard.get("passed")
     )
     eligible = bool(
-        ranker_validated
+        selected_name == "20%"
+        and ranker_validated
         and rolling_selected.get("approved")
         and event_guard_passed
         and decision_guard.get("passed")
