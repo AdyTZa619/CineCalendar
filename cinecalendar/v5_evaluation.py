@@ -98,7 +98,7 @@ def _event_guard(baseline: dict, challenger: dict) -> dict:
         "reason": (
             "Replay-ul pe zile reale are hit-uri pozitive în Top50 și poate valida rankingul final."
             if informative else
-            "Replay-ul pe zile reale este NECONCLUDENT: candidate pool-ul poate găsi filme bune, dar nici V16, nici V5 nu au pus vreun 8+/9+ în Top50."
+            "Replay-ul pe zile reale este NECONCLUDENT: pool-ul poate găsi filme bune, dar nici Stabil, nici varianta comparată nu au pus vreun 8+/9+ în Top50."
         ),
     }
 
@@ -170,9 +170,9 @@ def run_v5_evaluation(
 
     knowledge = V5KnowledgeBase(db).status()
     if not bool(knowledge.get("ready_for_rich_ranker")):
-        raise RuntimeError("Profilul V5 nu are încă suficiente date factuale pentru evaluarea rankerului.")
+        raise RuntimeError("Profilul personal nu are încă suficiente date factuale pentru evaluarea Adaptiv.")
 
-    progress("V5 Lab: verific modelul shadow pe istoricul complet…")
+    progress("Comparare motor: verific modelul Adaptiv pe istoricul complet…")
     ranker_status = PersonalUtilityRankerV5(db).status()
 
     windows = rolling_windows(
@@ -183,7 +183,7 @@ def run_v5_evaluation(
         maximum_holdout=160,
     )
     if len(windows) < 2:
-        raise RuntimeError("Nu există suficiente ferestre temporale pentru comparația V16 vs V5.")
+        raise RuntimeError("Nu există suficiente ferestre temporale pentru comparația Stabil vs variantele noi.")
 
     discovery_classes = [
         DiscoveryStrictRecommendationEngine,
@@ -209,7 +209,7 @@ def run_v5_evaluation(
 
     for index, window in enumerate(windows, 1):
         progress(
-            f"V5 Lab: sweep temporal {index}/{len(windows)} • "
+            f"Comparare motor: replay temporal {index}/{len(windows)} • "
             f"{window.cutoff_date or 'dată istorică'}"
         )
         reports = run_window_backtest_group(
@@ -317,7 +317,7 @@ def run_v5_evaluation(
         event_classes = [FastRecommendationEngineV16, selected_discovery_cls, selected_cls]
         for index, window in enumerate(selection.windows, 1):
             progress(
-                f"V5 Lab: validare externă {index}/{len(selection.windows)} • "
+                f"Comparare motor: validare pe zile reale {index}/{len(selection.windows)} • "
                 f"{window.cutoff_date} • ranker {selected_name}"
             )
             reports = run_window_backtest_group(
@@ -424,5 +424,5 @@ def run_v5_evaluation(
         raise RuntimeError("Ratingurile s-au schimbat în timpul evaluării; rulează din nou V5 Lab pentru un raport coerent.")
     db.set_setting("v5_evaluation_report", report)
     db.set_setting("v5_evaluation_last_success", report["generated_at"])
-    progress("V5 Lab: evaluarea s-a terminat; recomandările vizibile au rămas neschimbate.")
+    progress("Comparare motor: evaluarea s-a terminat; recomandările vizibile au rămas neschimbate.")
     return report

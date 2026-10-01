@@ -93,7 +93,7 @@ def run_visible_decision_replay(
     progress = progress or (lambda _message: None)
     folds = []
     for index, window in enumerate(windows, 1):
-        progress(f"V5 Lab: Ce văd acum? {index}/{len(windows)} • {window.cutoff_date}")
+        progress(f"Comparare motor: Ce văd acum? {index}/{len(windows)} • {window.cutoff_date}")
         with managed_temp_workspace("cinecalendar-rolling37-") as tmp:
             temp_path = tmp / "cinecalendar.db"
             _sqlite_backup(source, temp_path)
