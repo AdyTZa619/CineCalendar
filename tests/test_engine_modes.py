@@ -107,3 +107,19 @@ def test_router_falls_back_to_stable_when_ratings_change(tmp_path):
         )
     assert router.mode == MODE_STABLE
     assert db.get_setting("recommendation_engine_mode") == MODE_STABLE
+
+
+def test_router_refreshes_when_new_report_arrives_without_rating_change(tmp_path):
+    db = Database(tmp_path / "cinecalendar.db")
+    stable = _Engine("stable")
+    router = EngineModeRouter(
+        db, stable, lambda: _Engine("discovery"), lambda: _Engine("adaptive")
+    )
+    assert router.discovery_eligible() is False
+
+    report = _eligible_report(db)
+    report["generated_at"] = "2026-10-01T01:00:00+00:00"
+    db.set_setting("v5_evaluation_report", report)
+
+    assert router.discovery_eligible() is True
+    assert router.adaptive_eligible() is True
