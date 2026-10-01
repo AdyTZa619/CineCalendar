@@ -20,9 +20,10 @@ from .v5_personal_ranker import PersonalUtilityRankerV5
 from .v5_rating_snapshot import rating_history_snapshot
 from .v5_decision_replay import run_visible_decision_replay
 from .v5_shadow_ranker import adaptive_engine_class
+from .recommendation_miss_audit import build_miss_audit
 
 
-V5_EVALUATION_VERSION = "v5-evaluation-alpha4-discovery"
+V5_EVALUATION_VERSION = "engine-evaluation-v5-all-improvements"
 
 
 def _metric(payload: dict, key: str):
@@ -387,12 +388,25 @@ def run_v5_evaluation(
         and discovery_decision_guard.get("passed")
     )
     eligible = bool(
-        selected_name == "20%"
-        and ranker_validated
+        ranker_validated
         and rolling_selected.get("approved")
         and event_guard_passed
         and decision_guard.get("passed")
     )
+
+    miss_audit = build_miss_audit(
+        baseline_reports,
+        discovery_variant_reports.get(selected_discovery_name, []),
+        variant_reports.get(selected_name, []),
+    )
+
+    discovery_score = float(rolling_discovery.get("selection_score", -999.0) or -999.0)
+    adaptive_score = float(rolling_selected.get("selection_score", -999.0) or -999.0)
+    recommended_mode = "stable"
+    if discovery_candidate_for_stable:
+        recommended_mode = "discovery"
+    if eligible and adaptive_score > discovery_score + 0.002:
+        recommended_mode = "adaptive"
 
     report = {
         "version": V5_EVALUATION_VERSION,
@@ -418,6 +432,7 @@ def run_v5_evaluation(
         },
         "event_replay": event_payload,
         "visible_decision_replay": decision_replay,
+        "miss_audit": miss_audit,
         "decision": {
             "ranker_validated": ranker_validated,
             "retrieval_rolling_approved": bool(rolling_discovery.get("approved")),
@@ -434,11 +449,12 @@ def run_v5_evaluation(
             "event_guard_informative": bool(event_guard.get("informative")),
             "visible_decision_guard_passed": bool(decision_guard.get("passed")),
             "eligible_for_visible_alpha_trial": eligible,
+            "recommended_mode": recommended_mode,
+            "discovery_selection_score": round(discovery_score, 6),
+            "adaptive_selection_score": round(adaptive_score, 6),
             "visible_ranking_changed": False,
             "reason": (
-                f"Adaptiv {selected_name} poate trece la un test vizibil controlat în Alpha."
-                if eligible else
-                f"Adaptiv {selected_name or '—'} rămâne în test; gardurile de promovare nu sunt încă toate îndeplinite."
+                f"Verdict automat: {recommended_mode}. Adaptiv {selected_name or '—'} și Descoperire au fost comparate cu Stabil pe aceleași ferestre."
             ),
         },
     }
