@@ -12,7 +12,6 @@ import pytest
 from cinecalendar.updater import (
     POST_UPDATE_MODE,
     PREVIEW_MANIFEST_URL,
-    _powershell_helper,
     _safe_extract_zip,
     _repair_frozen_ca_bundle,
     check_for_update,
@@ -23,6 +22,7 @@ from cinecalendar.updater import (
     sha256_path,
     write_health_marker,
 )
+from cinecalendar.updater_v4 import _powershell_helper
 
 
 def valid_manifest(**overrides):

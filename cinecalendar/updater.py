@@ -234,13 +234,13 @@ function Write-UpdateLog([string]$Message) {
   } catch {}
 }
 
-function Wait-ParentExit([int]$ParentProcessId, [int]$Seconds) {
+function Wait-ParentExit([int]$Pid, [int]$Seconds) {
   $deadline = (Get-Date).AddSeconds($Seconds)
   while ((Get-Date) -lt $deadline) {
-    if (-not (Get-Process -Id $ParentProcessId -ErrorAction SilentlyContinue)) { return $true }
+    if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) { return $true }
     Start-Sleep -Milliseconds 250
   }
-  return -not (Get-Process -Id $ParentProcessId -ErrorAction SilentlyContinue)
+  return -not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)
 }
 
 function Norm([string]$PathValue) {
