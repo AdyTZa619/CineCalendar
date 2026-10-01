@@ -331,7 +331,7 @@ jobs:
         run: |
           git fetch origin feature/v16-retrieval-upgrade --tags
           $current = (git rev-parse HEAD).Trim()
-          $remote = (git rev-parse origin/feature/v16-retrieval-upgrade).Trim()
+          $remote = (git rev-parse FETCH_HEAD).Trim()
           if ($current -ne $remote) {
             Write-Host "A newer preview build exists ($remote); skip publication of $current."
             exit 0
