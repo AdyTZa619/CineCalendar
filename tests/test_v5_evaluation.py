@@ -1,6 +1,11 @@
 import pytest
 
-from cinecalendar.v5_lab import DiscoveryRecommendationEngine, V5LabRecommendationEngine
+from cinecalendar.v5_lab import (
+    DiscoveryRecommendationEngine,
+    DiscoveryStrictRecommendationEngine,
+    DiscoveryWideRecommendationEngine,
+    V5LabRecommendationEngine,
+)
 from cinecalendar.v5_event_replay import aggregate_event_reports
 from cinecalendar.v5_evaluation import _event_guard
 from cinecalendar.v5_decision_replay import decision_replay_guard
@@ -25,6 +30,9 @@ def test_v5_evaluator_wires_three_way_historical_comparison():
     source = open("cinecalendar/v5_evaluation.py", encoding="utf-8").read()
     assert "FastRecommendationEngineV16" in source
     assert "DiscoveryRecommendationEngine" in source
+    assert "DiscoveryStrictRecommendationEngine" in source
+    assert "DiscoveryWideRecommendationEngine" in source
+    assert "selected_discovery_variant" in source
     assert "V5ShadowRankedEngine" in source
     assert "rolling_windows(" in source
     assert "event_replay_windows(" in source

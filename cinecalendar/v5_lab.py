@@ -10,7 +10,7 @@ from .v5_personal_ranker import V5_RANKER_VERSION
 
 
 V5_LAB_ENGINE_VERSION = "v5-lab-alpha2-retrieval"
-DISCOVERY_ENGINE_VERSION = "discovery-v1-consensus"
+DISCOVERY_ENGINE_VERSION = "discovery-v2-sweep"
 
 
 class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEngineV16):
@@ -58,18 +58,28 @@ class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEng
 class DiscoveryRecommendationEngine(V5LabRecommendationEngine):
     """Production-shaped V16 scorer with conservative multi-source candidate discovery.
 
-    It preserves every baseline candidate and changes only retrieval. New candidates need
-    consensus from at least two lanes, except very highly ranked ALS/favourite-neighbour items.
-    Ranking/scoring remains the proven V16 surface.
+    It preserves every baseline candidate and changes only retrieval. Ranking/scoring remains
+    the proven V16 surface. Subclasses vary only the bounded discovery frontier so replay can
+    choose evidence-backed settings instead of hard-coding a guess.
     """
 
-    DISCOVERY_EXTRA_SHARE = 0.12
+    DISCOVERY_VARIANT = "balanced"
+    DISCOVERY_EXTRA_SHARE = 0.10
+    DISCOVERY_MIN_SUPPORT = 2
+    DISCOVERY_TRUSTED_SINGLE_SOURCES = ("als", "favorites")
+    DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT = 40
 
     def _state_token(self) -> tuple:
-        return super()._state_token() + (DISCOVERY_ENGINE_VERSION,)
+        return super()._state_token() + (
+            DISCOVERY_ENGINE_VERSION,
+            self.DISCOVERY_VARIANT,
+            self.DISCOVERY_EXTRA_SHARE,
+            self.DISCOVERY_MIN_SUPPORT,
+            self.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT,
+        )
 
     def _persistent_key(self, when, mode: str) -> str:
-        return f"discovery_v1:{when.isoformat()}:{mode}"
+        return f"discovery_v2:{self.DISCOVERY_VARIANT}:{when.isoformat()}:{mode}"
 
     def _balanced_candidate_ids(self, when: date, limit: int) -> list[int]:
         baseline = list(AvailabilityGuardMixinV37._balanced_candidate_ids(self, when, limit))
@@ -78,15 +88,34 @@ class DiscoveryRecommendationEngine(V5LabRecommendationEngine):
             when=when,
             extra_share=self.DISCOVERY_EXTRA_SHARE,
             policy="consensus",
+            minimum_support=self.DISCOVERY_MIN_SUPPORT,
+            trusted_single_sources=self.DISCOVERY_TRUSTED_SINGLE_SOURCES,
+            trusted_single_rank_limit=self.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT,
         )
 
     def candidate_generation_status(self) -> dict:
         status = dict(super().candidate_generation_status())
         status["discovery"] = {
             "version": DISCOVERY_ENGINE_VERSION,
+            "variant": self.DISCOVERY_VARIANT,
             "base": "V16",
             "ranking_changed": False,
             "extra_share": self.DISCOVERY_EXTRA_SHARE,
+            "minimum_support": self.DISCOVERY_MIN_SUPPORT,
+            "trusted_single_rank_limit": self.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT,
             "policy": "consensus",
         }
         return status
+
+
+class DiscoveryStrictRecommendationEngine(DiscoveryRecommendationEngine):
+    DISCOVERY_VARIANT = "strict"
+    DISCOVERY_EXTRA_SHARE = 0.06
+    DISCOVERY_TRUSTED_SINGLE_SOURCES = ()
+    DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT = 0
+
+
+class DiscoveryWideRecommendationEngine(DiscoveryRecommendationEngine):
+    DISCOVERY_VARIANT = "wide"
+    DISCOVERY_EXTRA_SHARE = 0.14
+    DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT = 80

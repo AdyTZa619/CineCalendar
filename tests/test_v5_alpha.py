@@ -108,3 +108,15 @@ def test_discovery_consensus_keeps_strong_consensus_and_personal_singles_only():
     assert 40 not in added
     assert 50 not in added
     assert all(item.support_count >= 2 or set(item.sources) & {"als", "favorites"} for item in evidence)
+
+
+def test_discovery_variants_are_ordered_by_frontier_width():
+    from cinecalendar.v5_lab import (
+        DiscoveryRecommendationEngine,
+        DiscoveryStrictRecommendationEngine,
+        DiscoveryWideRecommendationEngine,
+    )
+    assert DiscoveryStrictRecommendationEngine.DISCOVERY_EXTRA_SHARE < DiscoveryRecommendationEngine.DISCOVERY_EXTRA_SHARE
+    assert DiscoveryRecommendationEngine.DISCOVERY_EXTRA_SHARE < DiscoveryWideRecommendationEngine.DISCOVERY_EXTRA_SHARE
+    assert DiscoveryStrictRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT == 0
+    assert DiscoveryWideRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT > DiscoveryRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT

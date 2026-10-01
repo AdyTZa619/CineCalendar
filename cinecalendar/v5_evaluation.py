@@ -12,7 +12,12 @@ from .rolling_backtest_v37 import (
 from .util import utcnow_iso
 from .v5_event_replay import aggregate_event_reports, event_replay_windows
 from .v5_knowledge import V5KnowledgeBase
-from .v5_lab import DiscoveryRecommendationEngine, V5LabRecommendationEngine
+from .v5_lab import (
+    DiscoveryRecommendationEngine,
+    DiscoveryStrictRecommendationEngine,
+    DiscoveryWideRecommendationEngine,
+    V5LabRecommendationEngine,
+)
 from .v5_personal_ranker import PersonalUtilityRankerV5
 from .v5_rating_snapshot import rating_history_snapshot
 from .v5_decision_replay import run_visible_decision_replay
@@ -123,6 +128,24 @@ def _choose_ranker_variant(variants: dict[str, dict]) -> tuple[str, dict]:
     )
 
 
+def _choose_discovery_variant(variants: dict[str, dict]) -> tuple[str, dict]:
+    if not variants:
+        return "", {}
+    approved = [
+        (name, payload)
+        for name, payload in variants.items()
+        if bool(((payload.get("comparison") or {}).get("aggregate") or {}).get("approved"))
+    ]
+    pool = approved or list(variants.items())
+    return max(
+        pool,
+        key=lambda item: float(
+            (((item[1].get("comparison") or {}).get("aggregate") or {}).get("selection_score", -999.0))
+            or -999.0
+        ),
+    )
+
+
 def run_v5_evaluation(
     db: Database,
     *,
@@ -162,16 +185,24 @@ def run_v5_evaluation(
     if len(windows) < 2:
         raise RuntimeError("Nu există suficiente ferestre temporale pentru comparația V16 vs V5.")
 
+    discovery_classes = [
+        DiscoveryStrictRecommendationEngine,
+        DiscoveryRecommendationEngine,
+        DiscoveryWideRecommendationEngine,
+    ]
     ranker_classes = [
         V5ShadowRankedEngine,
         V5ShadowRankedEngine10,
         V5ShadowRankedEngine15,
         V5ShadowRankedEngine20,
     ]
-    classes = [FastRecommendationEngineV16, DiscoveryRecommendationEngine, *ranker_classes]
+    classes = [FastRecommendationEngineV16, *discovery_classes, *ranker_classes]
 
     baseline_reports: list[dict] = []
-    discovery_reports: list[dict] = []
+    discovery_variant_reports: dict[str, list[dict]] = {
+        str(getattr(cls, "DISCOVERY_VARIANT", cls.__name__)): []
+        for cls in discovery_classes
+    }
     variant_reports: dict[str, list[dict]] = {
         _variant_label(cls): [] for cls in ranker_classes
     }
@@ -190,17 +221,42 @@ def run_v5_evaluation(
             als_timeout=max(20.0, float(als_timeout)),
         )
         baseline_reports.append(reports[0])
-        discovery_reports.append(reports[1])
-        for offset, cls in enumerate(ranker_classes, start=2):
+        offset = 1
+        for cls in discovery_classes:
+            label = str(getattr(cls, "DISCOVERY_VARIANT", cls.__name__))
+            discovery_variant_reports[label].append(reports[offset])
+            offset += 1
+        for cls in ranker_classes:
             variant_reports[_variant_label(cls)].append(reports[offset])
+            offset += 1
 
-    discovery_comparison = comparison_from_reports(
-        windows,
-        baseline_cls=FastRecommendationEngineV16,
-        challenger_cls=DiscoveryRecommendationEngine,
-        baseline_reports=baseline_reports,
-        challenger_reports=discovery_reports,
+    discovery_variants: dict[str, dict] = {}
+    for cls in discovery_classes:
+        label = str(getattr(cls, "DISCOVERY_VARIANT", cls.__name__))
+        comparison = comparison_from_reports(
+            windows,
+            baseline_cls=FastRecommendationEngineV16,
+            challenger_cls=cls,
+            baseline_reports=baseline_reports,
+            challenger_reports=discovery_variant_reports[label],
+        )
+        discovery_variants[label] = {
+            "engine": cls.__name__,
+            "extra_share": float(getattr(cls, "DISCOVERY_EXTRA_SHARE", 0.0)),
+            "trusted_single_rank_limit": int(
+                getattr(cls, "DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT", 0)
+            ),
+            "comparison": comparison,
+        }
+    selected_discovery_name, selected_discovery_payload = _choose_discovery_variant(
+        discovery_variants
     )
+    selected_discovery_engine_name = str(selected_discovery_payload.get("engine") or "")
+    selected_discovery_cls = next(
+        (cls for cls in discovery_classes if cls.__name__ == selected_discovery_engine_name),
+        DiscoveryRecommendationEngine,
+    )
+    discovery_comparison = dict(selected_discovery_payload.get("comparison") or {})
 
     ranked_variants: dict[str, dict] = {}
     for cls in ranker_classes:
@@ -258,7 +314,7 @@ def run_v5_evaluation(
         e_baseline: list[dict] = []
         e_discovery: list[dict] = []
         e_ranked: list[dict] = []
-        event_classes = [FastRecommendationEngineV16, DiscoveryRecommendationEngine, selected_cls]
+        event_classes = [FastRecommendationEngineV16, selected_discovery_cls, selected_cls]
         for index, window in enumerate(selection.windows, 1):
             progress(
                 f"V5 Lab: validare externă {index}/{len(selection.windows)} • "
@@ -291,7 +347,7 @@ def run_v5_evaluation(
 
     decision_replay = run_visible_decision_replay(
         source, desired_folds=max(2, int(rolling_folds)), als_timeout=als_timeout,
-        progress=progress,
+        progress=progress, discovery_cls=selected_discovery_cls,
     )
     decision_guards = dict(decision_replay.get("guards") or {})
     discovery_decision_guard = dict(decision_guards.get("discovery") or {})
@@ -331,6 +387,9 @@ def run_v5_evaluation(
             "fold_count": len(windows),
             "retrieval_only": discovery_comparison,
             "discovery": discovery_comparison,
+            "discovery_variants": discovery_variants,
+            "selected_discovery_variant": selected_discovery_name,
+            "selected_discovery_engine": selected_discovery_engine_name,
             "ranked_variants": ranked_variants,
             "selected_variant": selected_name,
             "selected_ranked": selected_comparison,
@@ -341,6 +400,8 @@ def run_v5_evaluation(
             "ranker_validated": ranker_validated,
             "retrieval_rolling_approved": bool(rolling_discovery.get("approved")),
             "discovery_rolling_approved": bool(rolling_discovery.get("approved")),
+            "selected_discovery_variant": selected_discovery_name,
+            "selected_discovery_engine": selected_discovery_engine_name,
             "discovery_event_guard_passed": discovery_event_guard_passed,
             "discovery_visible_decision_guard_passed": bool(discovery_decision_guard.get("passed")),
             "discovery_candidate_for_stable": discovery_candidate_for_stable,

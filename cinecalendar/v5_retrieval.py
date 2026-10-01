@@ -208,6 +208,9 @@ class UnifiedCandidateRetrieverV5:
         when=None,
         extra_share: float | None = None,
         policy: str = "broad",
+        minimum_support: int | None = None,
+        trusted_single_sources: tuple[str, ...] | None = None,
+        trusted_single_rank_limit: int | None = None,
     ) -> list[int]:
         baseline = [int(value) for value in baseline_ids if int(value) > 0]
         if not baseline:
@@ -256,13 +259,28 @@ class UnifiedCandidateRetrieverV5:
             "online_discovery": online_ids,
         }
         consensus = str(policy or "broad").strip().lower() == "consensus"
+        min_support = (
+            max(1, int(minimum_support))
+            if minimum_support is not None
+            else (2 if consensus else 1)
+        )
+        trusted_sources = (
+            tuple(str(value) for value in trusted_single_sources)
+            if trusted_single_sources is not None
+            else (("als", "favorites") if consensus else ())
+        )
+        trusted_rank = (
+            max(0, int(trusted_single_rank_limit))
+            if trusted_single_rank_limit is not None
+            else (80 if consensus else 0)
+        )
         merged, selected = self.fuse(
             baseline,
             lanes,
             extra_limit=extra_limit,
-            minimum_support=2 if consensus else 1,
-            trusted_single_sources=("als", "favorites") if consensus else (),
-            trusted_single_rank_limit=80 if consensus else 0,
+            minimum_support=min_support,
+            trusted_single_sources=trusted_sources,
+            trusted_single_rank_limit=trusted_rank,
         )
         support_histogram: dict[str, int] = defaultdict(int)
         source_hits: dict[str, int] = defaultdict(int)
@@ -277,9 +295,9 @@ class UnifiedCandidateRetrieverV5:
                 "baseline": len(baseline),
                 "extra_budget": extra_limit,
                 "policy": "consensus" if consensus else "broad",
-                "minimum_support": 2 if consensus else 1,
-                "trusted_single_sources": ["als", "favorites"] if consensus else [],
-                "trusted_single_rank_limit": 80 if consensus else 0,
+                "minimum_support": min_support,
+                "trusted_single_sources": list(trusted_sources),
+                "trusted_single_rank_limit": trusted_rank,
                 "extra": len(selected),
                 "total": len(merged),
                 "support_histogram": dict(support_histogram),
