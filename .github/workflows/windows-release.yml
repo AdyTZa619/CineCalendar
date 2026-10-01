@@ -324,7 +324,8 @@ jobs:
           }
 
       - name: Publish single-executable preview
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/v16-retrieval-upgrade'
+        # Hold publication until the two existing databases can be safely reconciled.
+        if: false
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
