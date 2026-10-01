@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import closing
 import json
 from pathlib import Path
 import zipfile
@@ -65,7 +66,9 @@ def export_profile(db: Database, path: str | Path) -> Path:
         "exported_at": exported_at,
         "tables": {},
     }
-    with db.connect() as con:
+    # sqlite3.Connection.__exit__ only ends the transaction; it does not close
+    # the file handle. The exported database may be a disposable Windows snapshot.
+    with closing(db.connect()) as con:
         # One explicit read transaction pins a single WAL snapshot for every exported table.
         # Without it, a watcher/background worker could commit between SELECTs and create a
         # logically mixed backup assembled from two different moments in time.
