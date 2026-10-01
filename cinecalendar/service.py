@@ -7,7 +7,7 @@ from .db import Database
 from .logging_setup import setup_logging
 from .production_engine import build_production_recommender, production_stack_status
 from .quality_manager_v47 import RecommendationQualityManagerV47
-from .recommender_v16 import FastRecommendationEngineV16
+from .recommender_v16 import FastRecommendationEngineV16, recommendation_engine_identity
 from .temp_workspaces import cleanup_abandoned_workspaces
 from .util import AppPaths
 from .full_catalog_shadow_v414 import FullCatalogShadowEvaluatorV414
