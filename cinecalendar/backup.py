@@ -145,7 +145,9 @@ def _backup_row_is_newer(existing, incoming: dict, *time_fields: str) -> bool:
     # If neither side has useful timestamps, keep the current local value in merge mode.
     if incoming_time == 0.0 and existing_time == 0.0:
         return False
-    return incoming_time >= existing_time
+    # Equal timestamps cannot establish which database is newer. Preserve the
+    # current profile in a merge instead of arbitrarily overwriting it.
+    return incoming_time > existing_time
 
 
 def _find_or_insert_movie(con, movie: dict) -> int:

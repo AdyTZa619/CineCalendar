@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QFrame, QSizePolicy, QMessageBox, QCheckBox
+    QFrame, QSizePolicy, QMessageBox, QCheckBox, QFileDialog
 )
 
 from . import __version__ as APP_VERSION
@@ -19,6 +19,7 @@ from .v5_evaluation import run_v5_evaluation
 from .v5_knowledge import V5KnowledgeBase
 from .v5_rating_snapshot import report_rating_freshness
 from .rating_outcome_audit import latest_rating_outcome_audit
+from .unified_data import AlphaMergeError, merge_existing_alpha_data
 
 
 ENGINE_CURRENT_LABEL = "Stabil"
@@ -77,6 +78,28 @@ class DecisionWindow(CineCalendarWindow):
     def set_v5_trial_mode(self, mode: str):
         mapped = {"v16": "stable", "v5_20": "adaptive"}.get(str(mode), str(mode))
         self.set_engine_mode(mapped)
+
+    def import_alpha_database(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Alege baza de date din vechiul Alpha", "",
+            "Bază CineCalendar (cinecalendar.db);;SQLite (*.db)",
+        )
+        if not path:
+            return
+        try:
+            self.s.alpha_merge_status = merge_existing_alpha_data(
+                self.db, self.s.paths.root, extra_source=path,
+            )
+        except AlphaMergeError as exc:
+            QMessageBox.warning(self, "Unirea bazelor de date", str(exc))
+            return
+        QMessageBox.information(
+            self, "Unirea bazelor de date",
+            "Datele au fost unite în CineCalendarData. Baza Alpha originală a rămas "
+            "neatinsă, iar copia de siguranță este în CineCalendarData/backups. "
+            "Redeschide aplicația pentru actualizarea recomandărilor.",
+        )
+        self.show_page("v5_lab")
 
     def _trial_audit_text(self, rec) -> str:
         factors = dict(getattr(rec.score, "score_factors", {}) or {})
@@ -468,7 +491,10 @@ class DecisionWindow(CineCalendarWindow):
             "Comparare motor",
             "Test offline pe istoricul tău: Stabil vs Descoperire vs Adaptiv. "
             "Folosește aceeași bază de date; motorul activ se schimbă numai dacă alegi tu.",
-            [("Rulează comparația", self.run_v5_lab_evaluation, True)],
+            [
+                ("Rulează comparația", self.run_v5_lab_evaluation, True),
+                ("Unește baza din vechiul Alpha…", self.import_alpha_database, False),
+            ],
         )
 
         knowledge = V5KnowledgeBase(self.db).status()
@@ -711,6 +737,23 @@ class DecisionWindow(CineCalendarWindow):
         content.addWidget(verdict)
 
         engine_status = self.s.engine_mode_status()
+        alpha_merge = getattr(self.s, "alpha_merge_status", {}) or {}
+        if alpha_merge.get("state") == "merged":
+            merged = QLabel(
+                "Datele din Alpha au fost unite în CineCalendarData: "
+                f"{int(alpha_merge.get('ratings') or 0)} ratinguri noi/actualizate, "
+                f"{int(alpha_merge.get('feedback') or 0)} reacții și "
+                f"{int(alpha_merge.get('history') or 0)} înregistrări de istoric. "
+                "Baza Alpha originală și copia de siguranță au fost păstrate."
+            )
+            merged.setObjectName("Muted"); merged.setWordWrap(True); content.addWidget(merged)
+        elif alpha_merge.get("state") == "already_merged" and alpha_merge.get("known_sources"):
+            merged = QLabel(
+                "Datele din vechiul Alpha au fost deja unite în CineCalendarData. "
+                "Copiile de siguranță sunt în CineCalendarData/backups; poți folosi "
+                "toate modurile din acest program."
+            )
+            merged.setObjectName("Muted"); merged.setWordWrap(True); content.addWidget(merged)
         trial_box = self.card(); tbl = QVBoxLayout(trial_box)
         th = QLabel("Motor folosit pentru recomandări"); th.setObjectName("CardTitle"); tbl.addWidget(th)
         active_mode = str(engine_status.get("mode") or "stable")

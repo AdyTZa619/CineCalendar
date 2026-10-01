@@ -76,6 +76,7 @@ jobs:
             'MOVIELENS_MODEL_NOTICE.txt',
             'cinecalendar\autoseed.py',
             'cinecalendar\qt_ui_v2.py',
+            'cinecalendar\unified_data.py',
             'cinecalendar\premium_ui.py',
             'cinecalendar\premium_skins.py',
             'cinecalendar\open_metadata.py',
@@ -165,6 +166,8 @@ jobs:
           IMPORTANT: păstrează CineCalendar.exe împreună cu folderul _internal și restul fișierelor din acest director.
           Datele personale sunt păstrate separat în CineCalendarData și NU sunt șterse la update.
           Acesta este unicul lansator: Stabil, Descoperire și Adaptiv se aleg din Comparare motor și folosesc aceeași CineCalendarData. Modurile noi sunt blocate până trec evaluarea pe ratingurile curente.
+          La prima pornire, dacă găsește vechiul folder CineCalendarV5AlphaData lângă program, unește automat ratingurile, feedbackul, watchlistul și istoricul în CineCalendarData. Păstrează bazele vechi și creează backup înainte de fiecare import.
+          Dacă vechiul Alpha este în alt loc, intră în «Comparare motor» și apasă «Unește baza din vechiul Alpha…», apoi alege fișierul CineCalendarV5AlphaData\data\cinecalendar.db și redeschide programul.
           Motorul principal de recomandare este implicit ALS, antrenat pe MovieLens 32M. Modelul public (~20 MB) este descărcat o singură dată și verificat SHA-256; ratingurile IMDb rămân exclusiv local și sunt folosite pentru recalcularea profilului ALS.
           Filmele noi care nu există în MovieLens folosesc motorul personal de conținut ca fallback.
           Home folosește o poartă finală de încredere care cere mai multe semnale independente înainte de Top 3.
@@ -324,8 +327,7 @@ jobs:
           }
 
       - name: Publish single-executable preview
-        # Hold publication until the two existing databases can be safely reconciled.
-        if: false
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/v16-retrieval-upgrade'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -348,7 +350,7 @@ jobs:
           Versiune de test, fără integrare în main.
           Un singur CineCalendar.exe, cu Stabil / Descoperire / Adaptiv în aceeași aplicație și aceeași CineCalendarData.
           Descoperire și Adaptiv pot fi selectate numai după evaluarea actuală pe ratingurile personale.
-          Păstrează împreună CineCalendar.exe și folderul _internal. Fă o copie de siguranță a CineCalendarData înainte de test.
+          Păstrează împreună CineCalendar.exe și folderul _internal. La pornire, bazele Alpha din folderele vecine sunt unite automat cu CineCalendarData după o copie de siguranță; pentru alte locații folosește «Unește baza din vechiul Alpha…» din Comparare motor.
           '@
           $notes | Set-Content -Encoding utf8NoBOM preview-notes.txt
           if (-not (gh release view $tag --repo $repo 2>$null)) {

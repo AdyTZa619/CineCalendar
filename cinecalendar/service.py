@@ -16,6 +16,7 @@ from .v5_lab import V5LabRecommendationEngine, discovery_engine_class
 from .v5_visible_trial import AlphaTrialRecommender, V5VisibleTrialEngine20
 from .v5_shadow_ranker import adaptive_engine_class
 from .engine_modes import EngineModeRouter
+from .unified_data import merge_existing_alpha_data
 
 
 class CineCalendarService:
@@ -45,6 +46,12 @@ class CineCalendarService:
                 temp_cleanup["failed"],
             )
         self.db = Database(self.paths.data / "cinecalendar.db")
+        self.alpha_merge_status = (
+            {"state": "alpha_isolated"} if self.v5_alpha
+            else merge_existing_alpha_data(self.db, self.paths.root)
+        )
+        if self.alpha_merge_status.get("state") == "merged":
+            self.log.info("Alpha user data reconciled: %s", self.alpha_merge_status)
         self._defaults()
         self.initial_ratings_state = ensure_initial_ratings(self.db, self.paths.root.parent, self.log)
         self.calendar = ContextCalendarEngineV35()
