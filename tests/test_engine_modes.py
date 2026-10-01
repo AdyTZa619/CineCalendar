@@ -148,3 +148,18 @@ def test_router_rejects_report_from_different_stable_engine(tmp_path):
     assert router.status()["report_matches_stable"] is False
     assert router.discovery_eligible() is False
     assert router.adaptive_eligible() is False
+
+
+def test_router_accepts_automatically_selected_non_20_adaptive_variant(tmp_path):
+    db = Database(tmp_path / "cinecalendar.db")
+    stable = _Engine("stable")
+    report = _eligible_report(db, stable)
+    report["decision"]["selected_variant"] = "10%"
+    report["decision"]["recommended_mode"] = "adaptive"
+    db.set_setting("v5_evaluation_report", report)
+    router = EngineModeRouter(
+        db, stable, lambda: _Engine("discovery"), lambda: _Engine("adaptive")
+    )
+    assert router.adaptive_eligible() is True
+    assert router.selected_adaptive_variant() == "10%"
+    assert router.recommended_mode() == MODE_ADAPTIVE

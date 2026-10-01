@@ -135,3 +135,46 @@ def test_runtime_adaptive_supports_automatic_weight_candidates():
     assert ten.SHADOW_BLEND_OVERRIDE == pytest.approx(0.10)
     assert fifteen.SHADOW_BLEND_OVERRIDE == pytest.approx(0.15)
     assert twenty.SHADOW_BLEND_OVERRIDE == pytest.approx(0.20)
+
+
+def test_recent_taste_context_activates_from_recent_extreme_ratings(tmp_path):
+    from cinecalendar.db import Database
+    from cinecalendar.imdb_import import add_manual_rating
+    from cinecalendar.recent_taste_context import RecentTasteContext
+
+    db = Database(tmp_path / "cinecalendar.db")
+    for idx in range(8):
+        add_manual_rating(
+            db,
+            f"Liked {idx}",
+            2020 + idx,
+            9 if idx < 6 else 2,
+            imdb_id=f"tt9{idx:06d}",
+            genres=["Drama"] if idx < 6 else ["Horror"],
+        )
+    ctx = RecentTasteContext(db)
+    status = ctx.status()
+    assert status["active"] is True
+    assert status["signals"] >= 8
+
+    candidate = Movie(
+        id=999,
+        imdb_id="tt9999999",
+        title="Candidate",
+        original_title="Candidate",
+        year=2026,
+        title_type="movie",
+        genres=["Drama"],
+    )
+    payload = ctx.score(candidate)
+    assert payload["active"] is True
+    assert -0.035 <= float(payload["nudge"]) <= 0.035
+
+
+def test_comparison_ui_exposes_all_seven_improvement_outputs():
+    source = open("cinecalendar/qt_ui_v2.py", encoding="utf-8").read()
+    assert "Audit ratări 8–10" in source
+    assert "Audit după rating" in source
+    assert "Verdict automat" in source
+    assert "Folosește Descoperire" in source
+    assert "Folosește Adaptiv" in source

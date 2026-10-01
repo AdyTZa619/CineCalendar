@@ -182,3 +182,12 @@ def test_runtime_adaptive_factory_supports_learned_weight():
     learned = adaptive_engine_class(FastRecommendationEngineV16, "balanced", None)
     assert learned.SHADOW_BLEND_OVERRIDE is None
     assert "Learned" in learned.__name__
+
+
+def test_evaluator_records_miss_audit_and_automatic_mode_verdict():
+    source = open("cinecalendar/v5_evaluation.py", encoding="utf-8").read()
+    assert "build_miss_audit(" in source
+    assert '"miss_audit": miss_audit' in source
+    assert 'recommended_mode = "stable"' in source
+    assert 'recommended_mode = "discovery"' in source
+    assert 'recommended_mode = "adaptive"' in source
