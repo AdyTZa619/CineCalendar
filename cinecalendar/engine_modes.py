@@ -53,10 +53,16 @@ class EngineModeRouter:
             return ()
 
     def _report_current(self) -> bool:
-        token = self._rating_state_token()
+        report = self._report()
+        snapshot = report.get("rating_snapshot") if isinstance(report, dict) else {}
+        report_token = (
+            str(report.get("generated_at") or "") if isinstance(report, dict) else "",
+            str((snapshot or {}).get("sha256") or "") if isinstance(snapshot, dict) else "",
+        )
+        token = (self._rating_state_token(), report_token)
         if token != self._freshness_token:
             self._freshness_token = token
-            self._freshness_value = report_rating_freshness(self.db, self._report()) is True
+            self._freshness_value = report_rating_freshness(self.db, report) is True
         return bool(self._freshness_value)
 
     def discovery_eligible(self) -> bool:
