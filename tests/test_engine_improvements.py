@@ -178,3 +178,20 @@ def test_comparison_ui_exposes_all_seven_improvement_outputs():
     assert "Verdict automat" in source
     assert "Folosește Descoperire" in source
     assert "Folosește Adaptiv" in source
+
+
+def test_engine_telemetry_identity_distinguishes_modes():
+    from cinecalendar.recommender_v16 import recommendation_engine_identity
+    from cinecalendar.v5_lab import discovery_engine_class
+    from cinecalendar.v5_shadow_ranker import adaptive_engine_class
+
+    stable = recommendation_engine_identity(FastRecommendationEngineV16)
+    discovery_cls = discovery_engine_class(FastRecommendationEngineV16, "balanced")
+    adaptive_cls = adaptive_engine_class(FastRecommendationEngineV16, "balanced", 0.15)
+    discovery = recommendation_engine_identity(discovery_cls)
+    adaptive = recommendation_engine_identity(adaptive_cls)
+
+    assert discovery != stable
+    assert adaptive != stable
+    assert "discovery-balanced" in discovery
+    assert "adaptive-balanced-15" in adaptive
