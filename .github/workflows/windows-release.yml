@@ -295,7 +295,7 @@ jobs:
             version = $version
             url = $url
             sha256 = $sha
-            notes = 'Alpha 34: Calendar și Program calendar sunt unite într-un singur tab. Vederea lunară și reperele anuale rămân în aceeași pagină, iar zilele fără reper concret nu mai dublează Recomandările cu filme generale. Filmele din Calendar apar numai când există o legătură susținută de un reper.'
+            notes = 'Alpha 35: comparare clară Stabil / Descoperire / Adaptiv. Descoperire păstrează rankingul Stabil și extinde doar candidații prin consens multi-sursă; evaluatorul testează intern variante strictă, echilibrată și largă și promovează numai dacă trece replay temporal, zile reale și testul celor 3 opțiuni vizibile. Adaptiv rămâne separat și nu poate fi activat fără propriile garduri.'
             publishedAt = [DateTime]::UtcNow.ToString('o')
             channel = 'alpha'
           } | ConvertTo-Json -Depth 4
