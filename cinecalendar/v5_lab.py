@@ -9,7 +9,8 @@ from .v5_retrieval import V5_RETRIEVAL_VERSION
 from .v5_personal_ranker import V5_RANKER_VERSION
 
 
-V5_LAB_ENGINE_VERSION = "v5-lab-alpha1-retrieval-only"
+V5_LAB_ENGINE_VERSION = "v5-lab-alpha2-retrieval"
+DISCOVERY_ENGINE_VERSION = "discovery-v1-consensus"
 
 
 class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEngineV16):
@@ -51,4 +52,41 @@ class V5LabRecommendationEngine(AvailabilityGuardMixinV37, FastRecommendationEng
     def candidate_generation_status(self) -> dict:
         status = dict(super().candidate_generation_status())
         status["v5"] = self.v5.status()
+        return status
+
+
+class DiscoveryRecommendationEngine(V5LabRecommendationEngine):
+    """Production-shaped V16 scorer with conservative multi-source candidate discovery.
+
+    It preserves every baseline candidate and changes only retrieval. New candidates need
+    consensus from at least two lanes, except very highly ranked ALS/favourite-neighbour items.
+    Ranking/scoring remains the proven V16 surface.
+    """
+
+    DISCOVERY_EXTRA_SHARE = 0.12
+
+    def _state_token(self) -> tuple:
+        return super()._state_token() + (DISCOVERY_ENGINE_VERSION,)
+
+    def _persistent_key(self, when, mode: str) -> str:
+        return f"discovery_v1:{when.isoformat()}:{mode}"
+
+    def _balanced_candidate_ids(self, when: date, limit: int) -> list[int]:
+        baseline = list(AvailabilityGuardMixinV37._balanced_candidate_ids(self, when, limit))
+        return self.v5.retrieval.expand(
+            baseline,
+            when=when,
+            extra_share=self.DISCOVERY_EXTRA_SHARE,
+            policy="consensus",
+        )
+
+    def candidate_generation_status(self) -> dict:
+        status = dict(super().candidate_generation_status())
+        status["discovery"] = {
+            "version": DISCOVERY_ENGINE_VERSION,
+            "base": "V16",
+            "ranking_changed": False,
+            "extra_share": self.DISCOVERY_EXTRA_SHARE,
+            "policy": "consensus",
+        }
         return status

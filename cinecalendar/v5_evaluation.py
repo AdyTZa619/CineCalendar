@@ -12,7 +12,7 @@ from .rolling_backtest_v37 import (
 from .util import utcnow_iso
 from .v5_event_replay import aggregate_event_reports, event_replay_windows
 from .v5_knowledge import V5KnowledgeBase
-from .v5_lab import V5LabRecommendationEngine
+from .v5_lab import DiscoveryRecommendationEngine, V5LabRecommendationEngine
 from .v5_personal_ranker import PersonalUtilityRankerV5
 from .v5_rating_snapshot import rating_history_snapshot
 from .v5_decision_replay import run_visible_decision_replay
@@ -24,7 +24,7 @@ from .v5_shadow_ranker import (
 )
 
 
-V5_EVALUATION_VERSION = "v5-evaluation-alpha3"
+V5_EVALUATION_VERSION = "v5-evaluation-alpha4-discovery"
 
 
 def _metric(payload: dict, key: str):
@@ -133,7 +133,7 @@ def run_v5_evaluation(
     final_limit: int = 50,
     als_timeout: float = 150.0,
 ) -> dict:
-    """Compare V16, V5 retrieval, and a guarded offline sweep of V5 ranker weights.
+    """Compare Stable, conservative Discovery, and a guarded sweep of Adaptive weights.
 
     The source DB is never edited. Historical windows use one temporary SQLite snapshot at a time,
     which is deleted before the next window. The sweep may choose a stronger ranker weight for
@@ -168,10 +168,10 @@ def run_v5_evaluation(
         V5ShadowRankedEngine15,
         V5ShadowRankedEngine20,
     ]
-    classes = [FastRecommendationEngineV16, V5LabRecommendationEngine, *ranker_classes]
+    classes = [FastRecommendationEngineV16, DiscoveryRecommendationEngine, *ranker_classes]
 
     baseline_reports: list[dict] = []
-    retrieval_reports: list[dict] = []
+    discovery_reports: list[dict] = []
     variant_reports: dict[str, list[dict]] = {
         _variant_label(cls): [] for cls in ranker_classes
     }
@@ -190,16 +190,16 @@ def run_v5_evaluation(
             als_timeout=max(20.0, float(als_timeout)),
         )
         baseline_reports.append(reports[0])
-        retrieval_reports.append(reports[1])
+        discovery_reports.append(reports[1])
         for offset, cls in enumerate(ranker_classes, start=2):
             variant_reports[_variant_label(cls)].append(reports[offset])
 
-    retrieval_comparison = comparison_from_reports(
+    discovery_comparison = comparison_from_reports(
         windows,
         baseline_cls=FastRecommendationEngineV16,
-        challenger_cls=V5LabRecommendationEngine,
+        challenger_cls=DiscoveryRecommendationEngine,
         baseline_reports=baseline_reports,
-        challenger_reports=retrieval_reports,
+        challenger_reports=discovery_reports,
     )
 
     ranked_variants: dict[str, dict] = {}
@@ -230,7 +230,15 @@ def run_v5_evaluation(
         "selection": {"available_days": 0, "selected_days": [], "window_count": 0},
         "baseline": {},
         "retrieval": {},
+        "discovery": {},
         "ranked": {},
+        "discovery_guard": {
+            "passed": False,
+            "informative": False,
+            "checks": {},
+            "deltas": {},
+            "reason": "Replay-ul pe zile reale nu a rulat.",
+        },
         "ranked_guard": {
             "passed": False,
             "informative": False,
@@ -248,9 +256,9 @@ def run_v5_evaluation(
     )
     if selection.windows:
         e_baseline: list[dict] = []
-        e_retrieval: list[dict] = []
+        e_discovery: list[dict] = []
         e_ranked: list[dict] = []
-        event_classes = [FastRecommendationEngineV16, V5LabRecommendationEngine, selected_cls]
+        event_classes = [FastRecommendationEngineV16, DiscoveryRecommendationEngine, selected_cls]
         for index, window in enumerate(selection.windows, 1):
             progress(
                 f"V5 Lab: validare externă {index}/{len(selection.windows)} • "
@@ -265,17 +273,19 @@ def run_v5_evaluation(
                 als_timeout=max(20.0, float(als_timeout)),
             )
             e_baseline.append(reports[0])
-            e_retrieval.append(reports[1])
+            e_discovery.append(reports[1])
             e_ranked.append(reports[2])
 
         baseline_event = aggregate_event_reports(e_baseline)
-        retrieval_event = aggregate_event_reports(e_retrieval)
+        discovery_event = aggregate_event_reports(e_discovery)
         ranked_event = aggregate_event_reports(e_ranked)
         event_payload = {
             "selection": selection.as_dict(),
             "baseline": baseline_event,
-            "retrieval": retrieval_event,
+            "retrieval": discovery_event,
+            "discovery": discovery_event,
             "ranked": ranked_event,
+            "discovery_guard": _event_guard(baseline_event, discovery_event),
             "ranked_guard": _event_guard(baseline_event, ranked_event),
         }
 
@@ -284,11 +294,17 @@ def run_v5_evaluation(
         progress=progress,
     )
     decision_guard = dict(decision_replay.get("guard") or {})
-    rolling_retrieval = dict(retrieval_comparison.get("aggregate") or {})
+    rolling_discovery = dict(discovery_comparison.get("aggregate") or {})
     rolling_selected = dict(selected_comparison.get("aggregate") or {})
     ranker_validated = bool(ranker_status.get("validated"))
+    discovery_event_guard = dict(event_payload.get("discovery_guard") or {})
+    discovery_event_guard_passed = bool(discovery_event_guard.get("passed"))
     event_guard = dict(event_payload.get("ranked_guard") or {})
     event_guard_passed = bool(event_guard.get("passed"))
+    discovery_candidate_for_stable = bool(
+        rolling_discovery.get("approved")
+        and discovery_event_guard_passed
+    )
     eligible = bool(
         ranker_validated
         and rolling_selected.get("approved")
@@ -305,7 +321,8 @@ def run_v5_evaluation(
         "ranker_shadow": ranker_status,
         "rolling": {
             "fold_count": len(windows),
-            "retrieval_only": retrieval_comparison,
+            "retrieval_only": discovery_comparison,
+            "discovery": discovery_comparison,
             "ranked_variants": ranked_variants,
             "selected_variant": selected_name,
             "selected_ranked": selected_comparison,
@@ -314,7 +331,10 @@ def run_v5_evaluation(
         "visible_decision_replay": decision_replay,
         "decision": {
             "ranker_validated": ranker_validated,
-            "retrieval_rolling_approved": bool(rolling_retrieval.get("approved")),
+            "retrieval_rolling_approved": bool(rolling_discovery.get("approved")),
+            "discovery_rolling_approved": bool(rolling_discovery.get("approved")),
+            "discovery_event_guard_passed": discovery_event_guard_passed,
+            "discovery_candidate_for_stable": discovery_candidate_for_stable,
             "selected_variant": selected_name,
             "selected_variant_engine": selected_engine_name,
             "selected_rolling_approved": bool(rolling_selected.get("approved")),
@@ -324,9 +344,9 @@ def run_v5_evaluation(
             "eligible_for_visible_alpha_trial": eligible,
             "visible_ranking_changed": False,
             "reason": (
-                f"V5 ranker {selected_name} poate trece la un trial vizibil controlat în Alpha."
+                f"Adaptiv {selected_name} poate trece la un test vizibil controlat în Alpha."
                 if eligible else
-                f"V5 ranker {selected_name or '—'} rămâne shadow; gardurile de promovare nu sunt încă toate îndeplinite."
+                f"Adaptiv {selected_name or '—'} rămâne în test; gardurile de promovare nu sunt încă toate îndeplinite."
             ),
         },
     }

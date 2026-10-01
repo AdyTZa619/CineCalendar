@@ -20,9 +20,9 @@ from .v5_knowledge import V5KnowledgeBase
 from .v5_rating_snapshot import report_rating_freshness
 
 
-ENGINE_CURRENT_LABEL = "Standard"
-ENGINE_DISCOVERY_LABEL = "Extins"
-ENGINE_PERSONAL_LABEL = "Personal"
+ENGINE_CURRENT_LABEL = "Stabil"
+ENGINE_DISCOVERY_LABEL = "Descoperire"
+ENGINE_PERSONAL_LABEL = "Adaptiv"
 
 
 class DecisionWindow(CineCalendarWindow):
@@ -513,12 +513,13 @@ class DecisionWindow(CineCalendarWindow):
         content.addWidget(history)
 
         rolling = dict(report.get("rolling") or {})
-        retrieval_agg = dict(((rolling.get("retrieval_only") or {}).get("aggregate") or {}))
+        retrieval_agg = dict(((rolling.get("discovery") or rolling.get("retrieval_only") or {}).get("aggregate") or {}))
         ranked_payload = rolling.get("selected_ranked") or rolling.get("ranked") or {}
         ranked_agg = dict((ranked_payload.get("aggregate") or {}))
         variants = dict(rolling.get("ranked_variants") or {})
         event = dict(report.get("event_replay") or {})
         baseline_event = dict(event.get("baseline") or {})
+        discovery_event = dict(event.get("discovery") or event.get("retrieval") or {})
         ranked_event = dict(event.get("ranked") or {})
         event_guard = dict(event.get("ranked_guard") or {})
         decision = dict(report.get("decision") or {})
@@ -569,10 +570,10 @@ class DecisionWindow(CineCalendarWindow):
             f"({self._v5_metric(baseline_event.get('candidate_8_plus_recall'), percent=True)}) • "
             f"9+: {baseline_event.get('candidate_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(baseline_event.get('candidate_9_plus_recall'), percent=True)})\n"
-            f"{ENGINE_PERSONAL_LABEL} — candidați 8+: {ranked_event.get('candidate_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_DISCOVERY_LABEL} — candidați 8+: {discovery_event.get('candidate_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(ranked_event.get('candidate_8_plus_recall'), percent=True)}) • "
-            f"9+: {ranked_event.get('candidate_9_plus_hits', 0)}/{loved} "
-            f"({self._v5_metric(ranked_event.get('candidate_9_plus_recall'), percent=True)})\n"
+            f"9+: {discovery_event.get('candidate_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(discovery_event.get('candidate_9_plus_recall'), percent=True)})\n"
             f"{ENGINE_CURRENT_LABEL} Top25 — 8+: {baseline_event.get('top25_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(baseline_event.get('top25_8_plus_recall'), percent=True)}) • "
             f"9+: {baseline_event.get('top25_9_plus_hits', 0)}/{loved} "

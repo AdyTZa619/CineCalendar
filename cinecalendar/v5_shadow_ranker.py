@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from .util import clamp
-from .v5_lab import V5LabRecommendationEngine
+from .v5_lab import DiscoveryRecommendationEngine
 
 
 V5_SHADOW_RANKED_VERSION = "v5-shadow-ranked-alpha1"
 
 
-class V5ShadowRankedEngine(V5LabRecommendationEngine):
+class V5ShadowRankedEngine(DiscoveryRecommendationEngine):
     SHADOW_BLEND_OVERRIDE: float | None = None
     """Evaluation-only V5 engine that lets the validated personal utility ranker reorder finalists.
 
-    The normal V5 Alpha engine remains retrieval-only. This class is instantiated only by offline
-    replay/evaluation, so a promising shadow model cannot silently change what the user sees.
+    The adaptive model is layered on top of the conservative Discovery engine. This class is
+    instantiated for Alpha/replay only, so the personal reorder cannot silently change Stable.
     """
 
     @staticmethod
