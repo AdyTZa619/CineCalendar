@@ -42,6 +42,10 @@ ALPHA_MANIFEST_URL = (
     "https://github.com/AdyTZa619/CineCalendar/releases/download/"
     "cinecalendar-v5-alpha/update-v5-alpha.json"
 )
+PREVIEW_MANIFEST_URL = (
+    "https://github.com/AdyTZa619/CineCalendar/releases/download/"
+    "cinecalendar-unified-preview/update-unified-preview.json"
+)
 MANIFEST_URL = STABLE_MANIFEST_URL
 POST_UPDATE_MODE = "--cinecalendar-post-update"
 
@@ -113,9 +117,17 @@ def parse_manifest(payload: dict, *, expected_channel: str = "stable") -> Update
 def check_for_update(current_version: str, timeout: int = 12, *, channel: str | None = None) -> UpdateInfo | None:
     if channel is None:
         from .v5_alpha_runtime import is_v5_alpha
-        channel = "alpha" if is_v5_alpha() else "stable"
+        from . import UPDATE_CHANNEL
+        channel = "alpha" if is_v5_alpha() else UPDATE_CHANNEL
     channel = str(channel or "stable").strip().lower()
-    manifest_url = ALPHA_MANIFEST_URL if channel == "alpha" else STABLE_MANIFEST_URL
+    urls = {
+        "stable": STABLE_MANIFEST_URL,
+        "alpha": ALPHA_MANIFEST_URL,
+        "preview": PREVIEW_MANIFEST_URL,
+    }
+    if channel not in urls:
+        raise ValueError(f"Canal de actualizare necunoscut: {channel}.")
+    manifest_url = urls[channel]
     response = requests.get(
         manifest_url,
         **_request_kwargs(),
@@ -236,7 +248,11 @@ function Norm([string]$PathValue) {
 }
 
 function Is-ProtectedData([string]$Candidate) {
-  return (Norm $Candidate) -ieq (Norm $req.data_root)
+  if ((Norm $Candidate) -ieq (Norm $req.data_root)) { return $true }
+  foreach ($name in @('V5Alpha', 'CineCalendarV5AlphaData')) {
+    if ((Norm $Candidate) -ieq (Norm (Join-Path $req.app_root $name))) { return $true }
+  }
+  return $false
 }
 
 function Remove-AppPayload([string]$Root) {

@@ -6,10 +6,10 @@ from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QFrame, QSizePolicy, QMessageBox, QCheckBox
+    QFrame, QSizePolicy, QMessageBox, QCheckBox, QFileDialog
 )
 
-from . import __version__ as APP_VERSION
+from . import __version__ as APP_VERSION, UPDATE_CHANNEL
 from .feedback import apply_feedback
 from .qt_ui import CineCalendarWindow, ScoreDialog, WorkerThread
 from .recommendation import Recommendation, row_to_movie
@@ -18,6 +18,13 @@ from .v5_alpha_runtime import is_v5_alpha
 from .v5_evaluation import run_v5_evaluation
 from .v5_knowledge import V5KnowledgeBase
 from .v5_rating_snapshot import report_rating_freshness
+from .rating_outcome_audit import latest_rating_outcome_audit
+from .unified_data import AlphaMergeError, merge_existing_alpha_data
+
+
+ENGINE_CURRENT_LABEL = "Stabil"
+ENGINE_DISCOVERY_LABEL = "Descoperire"
+ENGINE_PERSONAL_LABEL = "Adaptiv"
 
 
 class DecisionWindow(CineCalendarWindow):
@@ -45,24 +52,91 @@ class DecisionWindow(CineCalendarWindow):
         self.update_worker: WorkerThread | None = None
         self.v5_eval_worker: WorkerThread | None = None
         self.NAV = list(type(self).NAV)
-        if is_v5_alpha() and not any(key == "v5_lab" for key, _label in self.NAV):
-            self.NAV.insert(-2, ("v5_lab", "V5 Lab"))
+        if not any(key == "v5_lab" for key, _label in self.NAV):
+            self.NAV.insert(-2, ("v5_lab", "Comparare motor"))
         super().__init__(service)
         alpha_mode = is_v5_alpha()
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Decision Engine")
         if bool(self.db.get_setting("auto_update_check", True)):
             QTimer.singleShot(2800, lambda: self.check_updates(False) if not self._ui_closing else None)
 
-    def set_v5_trial_mode(self, mode: str):
+    def set_engine_mode(self, mode: str):
         try:
-            status = self.s.set_alpha_trial_mode(mode)
+            status = self.s.set_engine_mode(mode)
         except Exception as exc:
-            QMessageBox.warning(self, "V5 Trial", str(exc))
+            QMessageBox.warning(self, "Schimbare motor", str(exc))
             return
-        label = "V5 20%" if status.get("mode") == "v5_20" else "V16"
-        self.set_status(f"Trial vizibil: {label}. Schimbarea se aplică imediat recomandărilor următoare.", False)
+        label = {
+            "stable": ENGINE_CURRENT_LABEL,
+            "discovery": ENGINE_DISCOVERY_LABEL,
+            "adaptive": ENGINE_PERSONAL_LABEL,
+        }.get(str(status.get("mode") or ""), ENGINE_CURRENT_LABEL)
+        self.set_status(f"Motor activ: {label}.", False)
         if self.current_page == "v5_lab":
             self.show_page("v5_lab")
+
+    def set_v5_trial_mode(self, mode: str):
+        mapped = {"v16": "stable", "v5_20": "adaptive"}.get(str(mode), str(mode))
+        self.set_engine_mode(mapped)
+
+    def import_alpha_database(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Alege baza de date din vechiul Alpha", "",
+            "Bază CineCalendar (cinecalendar.db);;SQLite (*.db)",
+        )
+        if not path:
+            return
+        if Path(path).resolve() == self.db.path.resolve():
+            QMessageBox.warning(
+                self, "Unirea bazelor de date",
+                "Ai ales baza principală. Selectează cinecalendar.db din vechiul folder V5Alpha.",
+            )
+            return
+        try:
+            self.s.alpha_merge_status = merge_existing_alpha_data(
+                self.db, self.s.paths.root, extra_source=path,
+            )
+        except AlphaMergeError as exc:
+            QMessageBox.warning(self, "Unirea bazelor de date", str(exc))
+            return
+        if self.s.alpha_merge_status.get("state") == "merged":
+            message = (
+                "Datele au fost unite în CineCalendarData. Baza Alpha originală a rămas "
+                "neatinsă, iar copia de siguranță este în CineCalendarData/backups. "
+                "Redeschide aplicația pentru actualizarea recomandărilor."
+            )
+        else:
+            message = "Baza aleasă fusese deja unită. Nu au fost importate date noi."
+        QMessageBox.information(self, "Unirea bazelor de date", message)
+        self.show_page("v5_lab")
+
+    def _add_alpha_merge_status(self, content):
+        status = getattr(self.s, "alpha_merge_status", {}) or {}
+        box = self.card(); layout = QVBoxLayout(box)
+        title = QLabel("Baza de date Alpha"); title.setObjectName("CardTitle")
+        layout.addWidget(title)
+        if status.get("state") == "merged":
+            details = (
+                "Datele din Alpha au fost unite în CineCalendarData: "
+                f"{int(status.get('ratings') or 0)} ratinguri noi/actualizate, "
+                f"{int(status.get('feedback') or 0)} reacții și "
+                f"{int(status.get('history') or 0)} înregistrări de istoric. "
+                "Baza Alpha originală a fost păstrată; copia bazei principale este "
+                "în CineCalendarData/backups."
+            )
+        elif status.get("state") == "already_merged" and status.get("known_sources"):
+            details = (
+                "Baza vechiului Alpha a fost deja unită în CineCalendarData. "
+                "Verifică un rating adăugat doar în Alpha înainte să ștergi folderul vechi."
+            )
+        else:
+            details = (
+                "Unirea cu Alpha nu este confirmată. Apasă „Unește baza din vechiul Alpha…” "
+                "și alege fișierul cinecalendar.db din V5Alpha/CineCalendarV5AlphaData/data. "
+                "Nu șterge folderul Alpha înainte de verificarea ratingurilor."
+            )
+        label = QLabel(details); label.setWordWrap(True); label.setObjectName("Muted")
+        layout.addWidget(label); content.addWidget(box)
 
     def _trial_audit_text(self, rec) -> str:
         factors = dict(getattr(rec.score, "score_factors", {}) or {})
@@ -71,16 +145,16 @@ class DecisionWindow(CineCalendarWindow):
         v16_rank = int(float(factors.get("v5_trial_v16_rank", -1) or -1))
         v5_rank = int(float(factors.get("v5_trial_v5_rank", -1) or -1))
         delta = factors.get("v5_trial_delta")
-        mode = "V5 20%" if float(factors.get("v5_trial_active", 0.0) or 0.0) >= 0.5 else "V16"
+        mode = ENGINE_PERSONAL_LABEL if float(factors.get("v5_trial_active", 0.0) or 0.0) >= 0.5 else ENGINE_CURRENT_LABEL
         r16 = f"#{v16_rank}" if v16_rank > 0 else "în afara listei"
         rv5 = f"#{v5_rank}" if v5_rank > 0 else "în afara listei"
         delta_text = ""
         if delta is not None:
             try:
-                delta_text = f" • Δ scor V5−V16 {float(delta):+.3f}"
+                delta_text = f" • Δ scor Adaptiv−Stabil {float(delta):+.3f}"
             except (TypeError, ValueError):
                 delta_text = ""
-        return f"Trial {mode} • V16 {r16} • V5 {rv5}{delta_text}"
+        return f"Activ: {mode} • Stabil {r16} • Adaptiv {rv5}{delta_text}"
 
     def _confidence_label(self, confidence: float) -> str:
         if confidence >= .82: return "încredere foarte mare"
@@ -402,16 +476,17 @@ class DecisionWindow(CineCalendarWindow):
         return box
 
     def run_v5_lab_evaluation(self):
-        if not is_v5_alpha():
-            QMessageBox.information(self, "V5 Lab", "Evaluatorul V5 este disponibil numai în Alpha.")
-            return
         if self.v5_eval_worker and self.v5_eval_worker.isRunning():
-            self.set_status("Evaluarea V5 rulează deja.", True)
+            self.set_status("Compararea motoarelor rulează deja.", True)
             return
 
-        self.set_status("V5 Lab: pregătesc replay-ul V16 vs V5…", True)
+        self.set_status("Comparare motor: pregătesc testul Motor actual vs variantele noi…", True)
         worker = WorkerThread(
-            lambda progress: run_v5_evaluation(self.db, progress=progress),
+            lambda progress: run_v5_evaluation(
+                self.db,
+                progress=progress,
+                stable_engine_cls=getattr(self.s, "stable_engine_class", None),
+            ),
             self,
         )
         self.v5_eval_worker = worker
@@ -421,16 +496,16 @@ class DecisionWindow(CineCalendarWindow):
             self.v5_eval_worker = None
             decision = dict((report or {}).get("decision") or {})
             if bool(decision.get("eligible_for_visible_alpha_trial")):
-                self.set_status("V5 Lab: evaluare terminată; V5 poate intra într-un trial vizibil controlat.", False)
+                self.set_status("Comparare motor: varianta personală a trecut pragurile pentru test controlat.", False)
             else:
-                self.set_status("V5 Lab: evaluare terminată; V5 rămâne shadow.", False)
+                self.set_status("Comparare motor: varianta experimentală nu este încă suficient de bună pentru activare.", False)
             if self.current_page == "v5_lab":
                 self.show_page("v5_lab")
 
         def failure(message):
             self.v5_eval_worker = None
-            self.set_status("V5 Lab: evaluarea a eșuat; recomandările live nu au fost schimbate.", False)
-            QMessageBox.warning(self, "V5 Lab", str(message))
+            self.set_status("Comparare motor: evaluarea a eșuat; recomandările live nu au fost schimbate.", False)
+            QMessageBox.warning(self, "Comparare motor", str(message))
             if self.current_page == "v5_lab":
                 self.show_page("v5_lab")
 
@@ -450,11 +525,15 @@ class DecisionWindow(CineCalendarWindow):
 
     def page_v5_lab(self):
         page, content = self.page_shell(
-            "V5 Lab",
-            "Comparație offline pe istoricul tău: V16 actual vs retrieval V5 vs V5 + ranker personal. "
-            "Replay-ul nu modifică Stable și nu schimbă recomandările vizibile.",
-            [("Rulează evaluarea V16 vs V5", self.run_v5_lab_evaluation, True)],
+            "Comparare motor",
+            "Test offline pe istoricul tău: Stabil vs Descoperire vs Adaptiv. "
+            "Folosește aceeași bază de date; motorul activ se schimbă numai dacă alegi tu.",
+            [
+                ("Rulează comparația", self.run_v5_lab_evaluation, True),
+                ("Unește baza din vechiul Alpha…", self.import_alpha_database, False),
+            ],
         )
+        self._add_alpha_merge_status(content)
 
         knowledge = V5KnowledgeBase(self.db).status()
         shadow = self.db.get_setting("v5_ranker_shadow_status", {}) or {}
@@ -469,7 +548,7 @@ class DecisionWindow(CineCalendarWindow):
                 "Datele factuale nu au ajuns încă la pragul necesar."
             )
             + (
-                f"  Shadow intern: AUC 8+ {shadow.get('like_auc', '—')} • "
+                f"  Model personal: AUC 8+ {shadow.get('like_auc', '—')} • "
                 f"AUC 1–4 {shadow.get('dislike_auc', '—')} • "
                 f"NDCG@25 {shadow.get('model_ndcg25', '—')} • "
                 f"lift Top20 {shadow.get('top20_lift', '—')}."
@@ -499,7 +578,7 @@ class DecisionWindow(CineCalendarWindow):
         history_text = (
             "Ratingurile sunt aceleași ca în evaluare."
             if freshness is True else
-            "Ratingurile s-au schimbat după evaluare; V5 revine la V16 până la o reevaluare."
+            "Ratingurile s-au schimbat după evaluare; Adaptiv revine la Stabil până la o reevaluare."
             if freshness is False else
             "Raportul vechi nu conține amprenta ratingurilor; actualitatea lui nu poate fi confirmată."
         )
@@ -508,12 +587,13 @@ class DecisionWindow(CineCalendarWindow):
         content.addWidget(history)
 
         rolling = dict(report.get("rolling") or {})
-        retrieval_agg = dict(((rolling.get("retrieval_only") or {}).get("aggregate") or {}))
+        retrieval_agg = dict(((rolling.get("discovery") or rolling.get("retrieval_only") or {}).get("aggregate") or {}))
         ranked_payload = rolling.get("selected_ranked") or rolling.get("ranked") or {}
         ranked_agg = dict((ranked_payload.get("aggregate") or {}))
         variants = dict(rolling.get("ranked_variants") or {})
         event = dict(report.get("event_replay") or {})
         baseline_event = dict(event.get("baseline") or {})
+        discovery_event = dict(event.get("discovery") or event.get("retrieval") or {})
         ranked_event = dict(event.get("ranked") or {})
         event_guard = dict(event.get("ranked_guard") or {})
         decision = dict(report.get("decision") or {})
@@ -524,7 +604,7 @@ class DecisionWindow(CineCalendarWindow):
         )
 
         summary = self.card(); sl = QVBoxLayout(summary)
-        sh = QLabel("Replay temporal — sweep de pondere ranker"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
+        sh = QLabel("Replay temporal — comparație Adaptiv"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
         variant_lines = []
         for label, payload in variants.items():
             agg = dict((((payload or {}).get("comparison") or {}).get("aggregate") or {}))
@@ -542,7 +622,7 @@ class DecisionWindow(CineCalendarWindow):
                 f"{'TRECUT' if ranked_agg.get('approved') else 'netrecut'}"
             )
         st = QLabel(
-            "V5 retrieval-only: "
+            f"{ENGINE_DISCOVERY_LABEL}: "
             f"Δ compozit mediu {self._v5_metric(retrieval_agg.get('mean_composite_delta'))} • "
             f"folduri pozitive {retrieval_agg.get('positive_folds', '—')}/{retrieval_agg.get('fold_count', '—')} • "
             f"gate {'TRECUT' if retrieval_agg.get('approved') else 'netrecut'}\n"
@@ -560,28 +640,33 @@ class DecisionWindow(CineCalendarWindow):
         evt = QLabel(
             f"Zile testate: {int((event.get('selection') or {}).get('window_count', 0) or 0)} • "
             f"ținte: {liked} filme 8+, {loved} filme 9+, {bad} filme 1–4\n"
-            f"V16 candidate pool — 8+: {baseline_event.get('candidate_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_CURRENT_LABEL} — candidați 8+: {baseline_event.get('candidate_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(baseline_event.get('candidate_8_plus_recall'), percent=True)}) • "
             f"9+: {baseline_event.get('candidate_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(baseline_event.get('candidate_9_plus_recall'), percent=True)})\n"
-            f"V5 candidate pool — 8+: {ranked_event.get('candidate_8_plus_hits', 0)}/{liked} "
-            f"({self._v5_metric(ranked_event.get('candidate_8_plus_recall'), percent=True)}) • "
-            f"9+: {ranked_event.get('candidate_9_plus_hits', 0)}/{loved} "
-            f"({self._v5_metric(ranked_event.get('candidate_9_plus_recall'), percent=True)})\n"
-            f"V16 Top25 — 8+: {baseline_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_DISCOVERY_LABEL} — candidați 8+: {discovery_event.get('candidate_8_plus_hits', 0)}/{liked} "
+            f"({self._v5_metric(discovery_event.get('candidate_8_plus_recall'), percent=True)}) • "
+            f"9+: {discovery_event.get('candidate_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(discovery_event.get('candidate_9_plus_recall'), percent=True)})\n"
+            f"{ENGINE_CURRENT_LABEL} Top25 — 8+: {baseline_event.get('top25_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(baseline_event.get('top25_8_plus_recall'), percent=True)}) • "
             f"9+: {baseline_event.get('top25_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(baseline_event.get('top25_9_plus_recall'), percent=True)}) • "
             f"1–4: {self._v5_metric(baseline_event.get('top25_dislike_rate'), percent=True)}\n"
-            f"V5 {selected_variant} Top25 — 8+: {ranked_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_DISCOVERY_LABEL} Top25 — 8+: {discovery_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"({self._v5_metric(discovery_event.get('top25_8_plus_recall'), percent=True)}) • "
+            f"9+: {discovery_event.get('top25_9_plus_hits', 0)}/{loved} "
+            f"({self._v5_metric(discovery_event.get('top25_9_plus_recall'), percent=True)}) • "
+            f"1–4: {self._v5_metric(discovery_event.get('top25_dislike_rate'), percent=True)}\n"
+            f"{ENGINE_PERSONAL_LABEL} Top25 — 8+: {ranked_event.get('top25_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(ranked_event.get('top25_8_plus_recall'), percent=True)}) • "
             f"9+: {ranked_event.get('top25_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(ranked_event.get('top25_9_plus_recall'), percent=True)}) • "
             f"1–4: {self._v5_metric(ranked_event.get('top25_dislike_rate'), percent=True)}\n"
-            f"Top50 8+: V16 {self._v5_metric(baseline_event.get('top50_8_plus_recall'), percent=True)} vs "
-            f"V5 {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
-            f"NDCG@25 mediu: V16 {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
-            f"V5 {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
+            f"Top50 8+: Stabil {self._v5_metric(baseline_event.get('top50_8_plus_recall'), percent=True)} vs "
+            f"Adaptiv {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
+            f"NDCG@25 mediu: Stabil {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
+            f"Adaptiv {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
             f"Gard extern: "
             f"{'TRECUT' if event_guard.get('passed') else ('NECONCLUDENT' if not event_guard.get('informative') else 'netrecut')} • "
             f"{event_guard.get('reason', '')}"
@@ -590,74 +675,149 @@ class DecisionWindow(CineCalendarWindow):
         content.addWidget(events)
 
         visible = dict(report.get("visible_decision_replay") or {})
-        visible_guard = dict(visible.get("guard") or {})
+        visible_guards = dict(visible.get("guards") or {})
+        discovery_visible = dict(visible_guards.get("discovery") or {})
+        adaptive_visible = dict(visible_guards.get("adaptive") or visible.get("guard") or {})
+        stable_visible = dict(
+            (discovery_visible.get("v16") or adaptive_visible.get("v16") or {})
+        )
+        discovery_visible_counts = dict(discovery_visible.get("discovery") or {})
+        adaptive_visible_counts = dict(adaptive_visible.get("v5_20") or {})
         visible_box = self.card(); vbl = QVBoxLayout(visible_box)
         vbh = QLabel("Ce văd acum? — test pe cele trei opțiuni"); vbh.setObjectName("CardTitle"); vbl.addWidget(vbh)
         visible_text = QLabel(
-            f"Ferestre istorice: {visible_guard.get('fold_count', 0)} • "
-            f"V16: {(visible_guard.get('v16') or {}).get('liked_8_plus', 0)} filme 8+, "
-            f"{(visible_guard.get('v16') or {}).get('disliked_4_minus', 0)} filme 1–4 • "
-            f"V5: {(visible_guard.get('v5_20') or {}).get('liked_8_plus', 0)} filme 8+, "
-            f"{(visible_guard.get('v5_20') or {}).get('disliked_4_minus', 0)} filme 1–4.\n"
-            + (str(visible_guard.get("reason")) if visible_guard else
-               "Raportul anterior nu a testat traseul «Ce văd acum?». Reevaluează pentru un verdict actual.")
+            f"Ferestre istorice: {max(int(discovery_visible.get('fold_count', 0) or 0), int(adaptive_visible.get('fold_count', 0) or 0))}\n"
+            f"{ENGINE_CURRENT_LABEL}: {stable_visible.get('liked_8_plus', 0)} filme 8+, "
+            f"{stable_visible.get('disliked_4_minus', 0)} filme 1–4\n"
+            f"{ENGINE_DISCOVERY_LABEL}: {discovery_visible_counts.get('liked_8_plus', 0)} filme 8+, "
+            f"{discovery_visible_counts.get('disliked_4_minus', 0)} filme 1–4 • "
+            f"{'TRECUT' if discovery_visible.get('passed') else ('neconcludent' if not discovery_visible.get('informative') else 'netrecut')}\n"
+            f"{ENGINE_PERSONAL_LABEL}: {adaptive_visible_counts.get('liked_8_plus', 0)} filme 8+, "
+            f"{adaptive_visible_counts.get('disliked_4_minus', 0)} filme 1–4 • "
+            f"{'TRECUT' if adaptive_visible.get('passed') else ('neconcludent' if not adaptive_visible.get('informative') else 'netrecut')}."
         )
         visible_text.setWordWrap(True); visible_text.setObjectName("Muted"); vbl.addWidget(visible_text)
         content.addWidget(visible_box)
 
+        miss = dict(report.get("miss_audit") or {})
+        miss_counts = dict(miss.get("counts") or {})
+        miss_box = self.card(); mbl = QVBoxLayout(miss_box)
+        mbh = QLabel("Audit ratări 8–10"); mbh.setObjectName("CardTitle"); mbl.addWidget(mbh)
+        miss_text = QLabel(
+            f"Ținte 8+: {miss_counts.get('positive_targets', 0)} • "
+            f"deja Top 3 în Stabil: {miss_counts.get('stable_visible_hits', 0)}\n"
+            f"Recuperate de Descoperire la căutare: {miss_counts.get('recovered_by_discovery_retrieval', 0)} • "
+            f"la ranking: {miss_counts.get('recovered_by_discovery_ranking', 0)} • "
+            f"în Top 3: {miss_counts.get('recovered_by_discovery_visible', 0)}\n"
+            f"Recuperate de Adaptiv în Top 3: {miss_counts.get('recovered_by_adaptive_visible', 0)} • "
+            f"ratări rămase — căutare {miss_counts.get('retrieval_miss', 0)}, "
+            f"ranking {miss_counts.get('ranking_miss', 0)}, Top 3 {miss_counts.get('visible_miss', 0)}."
+        )
+        miss_text.setWordWrap(True); miss_text.setObjectName("Muted"); mbl.addWidget(miss_text)
+        content.addWidget(miss_box)
+
+        rating_audit = latest_rating_outcome_audit(self.db, limit=6)
+        outcome_box = self.card(); obl = QVBoxLayout(outcome_box)
+        obh = QLabel("Audit după rating"); obh.setObjectName("CardTitle"); obl.addWidget(obh)
+        audit_lines = []
+        for item in list(rating_audit.get("items") or [])[:6]:
+            predicted = item.get("predicted_rating")
+            predicted_text = "—" if predicted is None else f"{float(predicted):.1f}"
+            audit_lines.append(
+                f"{item.get('title', '')}: estimat {predicted_text} → ai dat {item.get('actual_rating', '—')} "
+                f"• eroare {item.get('absolute_error', '—')} • {item.get('engine_version', '')}"
+            )
+        audit_text = QLabel(
+            (
+                f"MAE: {rating_audit.get('mae', '—')} • bias: {rating_audit.get('bias', '—')}\n"
+                + ("\n".join(audit_lines) if audit_lines else "Nu există încă recomandări evaluate ulterior prin rating.")
+            )
+        )
+        audit_text.setWordWrap(True); audit_text.setObjectName("Muted"); obl.addWidget(audit_text)
+        content.addWidget(outcome_box)
+
         verdict = self.card(); vl = QVBoxLayout(verdict)
-        vh = QLabel("Decizie de siguranță pentru Alpha"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
+        vh = QLabel("Verdict"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
+        discovery_ready = bool(
+            decision.get("discovery_candidate_for_stable")
+            and freshness is True
+        )
         eligible = bool(
             decision.get("eligible_for_visible_alpha_trial")
             and decision.get("visible_decision_guard_passed")
             and freshness is True
         )
+        recommended_mode = str(decision.get("recommended_mode") or "stable")
+        recommended_label = {
+            "stable": ENGINE_CURRENT_LABEL,
+            "discovery": ENGINE_DISCOVERY_LABEL,
+            "adaptive": ENGINE_PERSONAL_LABEL,
+        }.get(recommended_mode, ENGINE_CURRENT_LABEL)
         vt = QLabel(
-            (
-                "Eligibil pentru următorul pas: trial vizibil controlat în V5 Alpha."
+            f"Verdict automat: {recommended_label}.\n"
+            + (
+                "Descoperire: PROMOVEAZĂ — a demonstrat câștig suficient peste Stabil."
+                if discovery_ready else
+                "Descoperire: NU PROMOVA — nu a demonstrat încă un câștig suficient peste Stabil."
+            )
+            + "\n"
+            + (
+                f"Adaptiv: ELIGIBIL • pondere selectată automat {selected_variant}."
                 if eligible else
-                "Rămâne în shadow mode. Nu activăm rankerul în recomandările vizibile."
+                "Adaptiv: NU ESTE ELIGIBIL pentru activare."
             )
             + "\n"
             + ("Raportul trebuie refăcut pentru ratingurile actuale." if freshness is not True
                else str(decision.get("reason") or ""))
-            + "\nStable 4.14.1 rămâne neatins."
+            + "\nStabil rămâne etalonul până când o variantă trece toate gardurile."
         )
         vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
         content.addWidget(verdict)
 
-        trial_status = self.s.alpha_trial_status()
+        engine_status = self.s.engine_mode_status()
         trial_box = self.card(); tbl = QVBoxLayout(trial_box)
-        th = QLabel("Trial vizibil V16 / V5"); th.setObjectName("CardTitle"); tbl.addWidget(th)
-        active_mode = str(trial_status.get("mode") or "v16")
-        eligible_trial = bool(trial_status.get("eligible"))
-        try:
-            with self.db.connect() as con:
-                audit_rows = int(con.execute("SELECT COUNT(*) FROM v5_trial_audit").fetchone()[0])
-        except Exception:
-            audit_rows = 0
+        th = QLabel("Motor folosit pentru recomandări"); th.setObjectName("CardTitle"); tbl.addWidget(th)
+        active_mode = str(engine_status.get("mode") or "stable")
+        discovery_ok = bool(engine_status.get("discovery_eligible"))
+        adaptive_ok = bool(engine_status.get("adaptive_eligible"))
+        active_label = {
+            "stable": ENGINE_CURRENT_LABEL,
+            "discovery": ENGINE_DISCOVERY_LABEL,
+            "adaptive": ENGINE_PERSONAL_LABEL,
+        }.get(active_mode, ENGINE_CURRENT_LABEL)
         tt = QLabel(
-            (
-                "Activ acum: V5 ranker 20%."
-                if active_mode == "v5_20"
-                else "Activ acum: V16."
+            f"Activ acum: {active_label}. "
+            + f"Verdict automat curent: "
+            + {
+                "stable": ENGINE_CURRENT_LABEL,
+                "discovery": ENGINE_DISCOVERY_LABEL,
+                "adaptive": ENGINE_PERSONAL_LABEL,
+            }.get(str(engine_status.get("recommended_mode") or "stable"), ENGINE_CURRENT_LABEL)
+            + ". "
+            + (
+                "Descoperire și Adaptiv folosesc aceeași CineCalendarData; nu există bază separată."
             )
-            + f"  Audit comparativ salvat: {audit_rows} recomandări."
-            + ("  Poți comuta instant; Stable rămâne neatins." if eligible_trial
-               else "  V5 necesită o reevaluare pe ratingurile actuale." if freshness is False
-               else "  V5 rămâne blocat până la un raport eligibil.")
+            + (
+                " Raportul trebuie refăcut după schimbarea ratingurilor."
+                if engine_status.get("report_current") is False else ""
+            )
         )
         tt.setWordWrap(True); tt.setObjectName("Muted"); tbl.addWidget(tt)
         tr = QHBoxLayout()
-        use_v16 = QPushButton("Folosește V16")
-        use_v16.setProperty("accent", active_mode == "v16")
-        use_v16.clicked.connect(lambda: self.set_v5_trial_mode("v16"))
-        tr.addWidget(use_v16)
-        use_v5 = QPushButton("Folosește V5 20%")
-        use_v5.setProperty("accent", active_mode == "v5_20")
-        use_v5.setEnabled(eligible_trial)
-        use_v5.clicked.connect(lambda: self.set_v5_trial_mode("v5_20"))
-        tr.addWidget(use_v5)
+        use_stable = QPushButton("Folosește Stabil")
+        use_stable.setProperty("accent", active_mode == "stable")
+        use_stable.clicked.connect(lambda: self.set_engine_mode("stable"))
+        tr.addWidget(use_stable)
+        use_discovery = QPushButton("Folosește Descoperire")
+        use_discovery.setProperty("accent", active_mode == "discovery")
+        use_discovery.setEnabled(discovery_ok)
+        use_discovery.clicked.connect(lambda: self.set_engine_mode("discovery"))
+        tr.addWidget(use_discovery)
+        use_adaptive = QPushButton("Folosește Adaptiv")
+        use_adaptive.setProperty("accent", active_mode == "adaptive")
+        use_adaptive.setEnabled(adaptive_ok)
+        use_adaptive.clicked.connect(lambda: self.set_engine_mode("adaptive"))
+        tr.addWidget(use_adaptive)
         tr.addStretch(1)
         tbl.addLayout(tr)
         content.addWidget(trial_box)
@@ -670,22 +830,23 @@ class DecisionWindow(CineCalendarWindow):
         page, content = self.page_shell(
             "Actualizări",
             (
-                "V5 Alpha este separat de canalul Stable."
+                "Alpha este separat de canalul Stabil."
                 if alpha_mode else
-                "Updater Stable cu SHA-256, backup, health-check și rollback automat."
+                "Updater Stabil cu SHA-256, backup, health-check și rollback automat."
             ),
         )
         box = self.card(); l = QVBoxLayout(box); l.setContentsMargins(18,18,18,18); l.setSpacing(10)
         title = QLabel(f"CineCalendar {APP_VERSION}"); title.setObjectName("CardTitle"); l.addWidget(title)
         if alpha_mode:
             state = QLabel(
-                "Canal: V5 Alpha separat • " +
-                ("updater automat disponibil; Stable rămâne neatins."
+                "Canal: Alpha separat • " +
+                ("updater automat disponibil; Stabil rămâne neatins."
                  if update_supported() else
                  "rulezi sursa Python; update automat disponibil doar în EXE.")
             )
         else:
-            state = QLabel("Canal: Stable • " + ("updater automat disponibil" if update_supported() else "rulezi sursa Python; update automat doar în EXE"))
+            channel_name = "Test (separat de Stable)" if UPDATE_CHANNEL == "preview" else "Stable"
+            state = QLabel(f"Canal: {channel_name} • " + ("updater automat disponibil" if update_supported() else "rulezi sursa Python; update automat doar în EXE"))
         state.setObjectName("Muted"); state.setWordWrap(True); l.addWidget(state)
         auto = QCheckBox("Verifică automat actualizările la pornire")
         auto.setChecked(bool(self.db.get_setting("auto_update_check", True)))

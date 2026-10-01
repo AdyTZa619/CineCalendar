@@ -11,7 +11,7 @@ from .personal_candidates import PersonalCandidateGenerator
 from .v5_online_discovery import V5OnlineDiscovery
 
 
-V5_RETRIEVAL_VERSION = "v5-unified-retrieval-alpha1"
+V5_RETRIEVAL_VERSION = "v5-unified-retrieval-alpha2-consensus"
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,9 @@ class UnifiedCandidateRetrieverV5:
         lanes: dict[str, list[int]],
         *,
         extra_limit: int,
+        minimum_support: int = 1,
+        trusted_single_sources: tuple[str, ...] = (),
+        trusted_single_rank_limit: int = 0,
     ) -> tuple[list[int], list[CandidateEvidenceV5]]:
         baseline: list[int] = []
         baseline_seen: set[int] = set()
@@ -153,7 +156,20 @@ class UnifiedCandidateRetrieverV5:
             ),
             reverse=True,
         )
-        selected = ranked[: max(0, int(extra_limit))]
+        trusted = set(str(value) for value in trusted_single_sources)
+        eligible: list[CandidateEvidenceV5] = []
+        for item in ranked:
+            if item.support_count >= max(1, int(minimum_support)):
+                eligible.append(item)
+                continue
+            if (
+                item.support_count == 1
+                and trusted_single_rank_limit > 0
+                and item.best_rank <= int(trusted_single_rank_limit)
+                and bool(set(item.sources) & trusted)
+            ):
+                eligible.append(item)
+        selected = eligible[: max(0, int(extra_limit))]
         return baseline + [item.movie_id for item in selected], selected
 
     def _available_ids(self, ids: list[int], when) -> list[int]:
@@ -185,7 +201,17 @@ class UnifiedCandidateRetrieverV5:
             out.append(mid)
         return out
 
-    def expand(self, baseline_ids: list[int], *, when=None, extra_share: float | None = None) -> list[int]:
+    def expand(
+        self,
+        baseline_ids: list[int],
+        *,
+        when=None,
+        extra_share: float | None = None,
+        policy: str = "broad",
+        minimum_support: int | None = None,
+        trusted_single_sources: tuple[str, ...] | None = None,
+        trusted_single_rank_limit: int | None = None,
+    ) -> list[int]:
         baseline = [int(value) for value in baseline_ids if int(value) > 0]
         if not baseline:
             return []
@@ -232,7 +258,30 @@ class UnifiedCandidateRetrieverV5:
             "catalog_content": content_ids,
             "online_discovery": online_ids,
         }
-        merged, selected = self.fuse(baseline, lanes, extra_limit=extra_limit)
+        consensus = str(policy or "broad").strip().lower() == "consensus"
+        min_support = (
+            max(1, int(minimum_support))
+            if minimum_support is not None
+            else (2 if consensus else 1)
+        )
+        trusted_sources = (
+            tuple(str(value) for value in trusted_single_sources)
+            if trusted_single_sources is not None
+            else (("als", "favorites") if consensus else ())
+        )
+        trusted_rank = (
+            max(0, int(trusted_single_rank_limit))
+            if trusted_single_rank_limit is not None
+            else (80 if consensus else 0)
+        )
+        merged, selected = self.fuse(
+            baseline,
+            lanes,
+            extra_limit=extra_limit,
+            minimum_support=min_support,
+            trusted_single_sources=trusted_sources,
+            trusted_single_rank_limit=trusted_rank,
+        )
         support_histogram: dict[str, int] = defaultdict(int)
         source_hits: dict[str, int] = defaultdict(int)
         for item in selected:
@@ -245,6 +294,10 @@ class UnifiedCandidateRetrieverV5:
                 "state": "ready",
                 "baseline": len(baseline),
                 "extra_budget": extra_limit,
+                "policy": "consensus" if consensus else "broad",
+                "minimum_support": min_support,
+                "trusted_single_sources": list(trusted_sources),
+                "trusted_single_rank_limit": trusted_rank,
                 "extra": len(selected),
                 "total": len(merged),
                 "support_histogram": dict(support_histogram),

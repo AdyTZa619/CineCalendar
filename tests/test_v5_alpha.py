@@ -81,3 +81,54 @@ def test_v5_ranker_state_token_changes_after_rated_metadata_enrichment(tmp_path)
     after=ranker.state_token()
     assert after != before
     assert after[-1] == "2099-01-01T00:00:00+00:00"
+
+
+def test_discovery_consensus_keeps_strong_consensus_and_personal_singles_only():
+    baseline = [1, 2]
+    lanes = {
+        "als": [10, 11, 12],
+        "favorites": [10, 20],
+        "local_content": [10, 30],
+        "catalog_content": [40],
+        "online_discovery": [50],
+    }
+    merged, evidence = UnifiedCandidateRetrieverV5.fuse(
+        baseline,
+        lanes,
+        extra_limit=10,
+        minimum_support=2,
+        trusted_single_sources=("als", "favorites"),
+        trusted_single_rank_limit=2,
+    )
+    added = merged[len(baseline):]
+    assert 10 in added
+    assert 11 in added  # top personal ALS signal
+    assert 20 in added  # top personal favourite-neighbour signal
+    assert 30 not in added
+    assert 40 not in added
+    assert 50 not in added
+    assert all(item.support_count >= 2 or set(item.sources) & {"als", "favorites"} for item in evidence)
+
+
+def test_discovery_variants_are_ordered_by_frontier_width():
+    from cinecalendar.v5_lab import (
+        DiscoveryRecommendationEngine,
+        DiscoveryStrictRecommendationEngine,
+        DiscoveryWideRecommendationEngine,
+    )
+    assert DiscoveryStrictRecommendationEngine.DISCOVERY_EXTRA_SHARE < DiscoveryRecommendationEngine.DISCOVERY_EXTRA_SHARE
+    assert DiscoveryRecommendationEngine.DISCOVERY_EXTRA_SHARE < DiscoveryWideRecommendationEngine.DISCOVERY_EXTRA_SHARE
+    assert DiscoveryStrictRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT == 0
+    assert DiscoveryWideRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT > DiscoveryRecommendationEngine.DISCOVERY_TRUSTED_SINGLE_RANK_LIMIT
+
+
+def test_runtime_discovery_can_wrap_exact_stable_engine_class():
+    from cinecalendar.hybrid_calibration_v46 import calibrated_hybrid_engine_class
+    from cinecalendar.recommender_v16 import FastRecommendationEngineV16
+    from cinecalendar.v5_lab import discovery_engine_class
+
+    stable = calibrated_hybrid_engine_class(FastRecommendationEngineV16, 0.60)
+    wrapped = discovery_engine_class(stable, "strict")
+    assert issubclass(wrapped, stable)
+    assert wrapped.DISCOVERY_VARIANT == "strict"
+    assert wrapped.ALS_WEIGHT == stable.ALS_WEIGHT

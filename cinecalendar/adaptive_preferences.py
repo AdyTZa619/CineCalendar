@@ -44,7 +44,9 @@ class AdaptivePreferenceLearner:
         ("genre", "country"),
         ("genre", "decade"),
         ("director", "decade"),
+        ("director", "country"),
         ("theme", "decade"),
+        ("theme", "country"),
     }
 
     _FEEDBACK_TARGETS = {

@@ -300,15 +300,15 @@ def test_four_skins_keep_navigation_and_real_decision_actions(tmp_path, monkeypa
         app.processEvents()
 
 
-def test_stable_runtime_keeps_v16_and_full_skin_navigation(tmp_path, monkeypatch):
-    """Promoting the shared UI must not silently promote the Alpha V5 engine."""
+def test_stable_runtime_defaults_to_stabil_and_exposes_engine_comparison(tmp_path, monkeypatch):
+    """One executable exposes engine comparison without silently activating a challenger."""
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.delenv("CINECALENDAR_V5_ALPHA", raising=False)
     monkeypatch.delenv("CINECALENDAR_V5_ALPHA_ALLOW_EMPTY", raising=False)
 
     from cinecalendar.collaborative_als import CollaborativeALSProvider
     from cinecalendar.quality_manager_v47 import RecommendationQualityManagerV47
-    from cinecalendar.v5_visible_trial import AlphaTrialRecommender
+    from cinecalendar.engine_modes import EngineModeRouter, MODE_STABLE
     from cinecalendar.premium_skins import SKINS
 
     monkeypatch.setattr(CollaborativeALSProvider, "start_background", lambda self: None)
@@ -325,7 +325,11 @@ def test_stable_runtime_keeps_v16_and_full_skin_navigation(tmp_path, monkeypatch
 
     service = CineCalendarService(paths)
     assert service.v5_alpha is False
-    assert not isinstance(service.recommender, AlphaTrialRecommender)
+    assert isinstance(service.recommender, EngineModeRouter)
+    assert service.recommender.mode == MODE_STABLE
+    assert service.recommender.status()["loaded"] == {
+        "stable": True, "discovery": False, "adaptive": False
+    }
     assert not hasattr(service, "alpha_v5_recommender")
     assert not hasattr(service, "alpha_v16_recommender")
 
@@ -333,7 +337,7 @@ def test_stable_runtime_keeps_v16_and_full_skin_navigation(tmp_path, monkeypatch
     window = CalendarPremiumWindow(service)
     try:
         stable_menus = {key for key, _label in window.NAV}
-        assert "v5_lab" not in stable_menus
+        assert "v5_lab" in stable_menus
         assert "calendar" in stable_menus
         assert "month" not in stable_menus
 

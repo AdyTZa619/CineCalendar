@@ -7,7 +7,8 @@ from .adaptive_preferences_v2 import AdaptivePreferenceLearnerV2, HASH_DIM
 from .util import clamp
 
 
-V5_RANKER_VERSION = "v5-personal-utility-alpha1"
+V5_RANKER_VERSION = "v5-personal-utility-alpha2-negative-context"
+DISLIKE_PENALTY = 0.85
 MIN_RATINGS = 180
 MIN_HOLDOUT = 60
 EPOCHS = 7
@@ -51,11 +52,20 @@ class PersonalUtilityRankerV5:
                           COALESCE(MAX(m.updated_at),'') AS rated_metadata_updated
                    FROM ratings r JOIN movies m ON m.id=r.movie_id"""
             ).fetchone()
+            feedback = con.execute(
+                """SELECT COUNT(*) AS feedback_count,
+                          COALESCE(MAX(created_at),'') AS feedback_updated
+                   FROM feedback
+                   WHERE kind IN ('more_like_this','less_like_this','never_similar')"""
+            ).fetchone()
         return (
             V5_RANKER_VERSION,
             int(row["rating_count"] or 0),
             str(row["rating_updated"] or ""),
             str(row["rating_date"] or ""),
+            int(feedback["feedback_count"] or 0),
+            str(feedback["feedback_updated"] or ""),
+            # Keep rated metadata timestamp last: older diagnostics/tests rely on this position.
             str(row["rated_metadata_updated"] or ""),
         )
 
@@ -142,9 +152,28 @@ class PersonalUtilityRankerV5:
         if len(train) < MIN_RATINGS or len(holdout) < MIN_HOLDOUT:
             return None
 
-        train_vectors = [self.encoder._vector(sample.movie)[0] for sample in train]
-        train_ratings = [int(round(self.encoder._target_to_rating(sample.target))) for sample in train]
-        train_weights = [max(0.25, float(sample.weight)) for sample in train]
+        holdout_start = str(holdout[0].date_key or "")[:10] if holdout else ""
+        feedback_samples = [
+            sample for sample in self.encoder._feedback_samples()
+            if not holdout_start or str(sample.date_key or "")[:10] < holdout_start
+        ]
+        training_samples = list(train) + feedback_samples
+
+        train_vectors = [self.encoder._vector(sample.movie)[0] for sample in training_samples]
+        train_ratings = [
+            int(round(self.encoder._target_to_rating(sample.target)))
+            for sample in training_samples
+        ]
+        train_weights = []
+        for sample, rating in zip(training_samples, train_ratings):
+            weight = max(0.25, float(sample.weight))
+            if rating <= 2:
+                weight *= 1.50
+            elif rating <= 4:
+                weight *= 1.35
+            elif rating >= 9:
+                weight *= 1.10
+            train_weights.append(weight)
         like_targets = [1 if rating >= 8 else 0 for rating in train_ratings]
         dislike_targets = [1 if rating <= 4 else 0 for rating in train_ratings]
         like_weights, like_bias = self._fit_binary(train_vectors, like_targets, train_weights)
@@ -156,7 +185,7 @@ class PersonalUtilityRankerV5:
         dislike_actual = [1 if rating <= 4 else 0 for rating in hold_ratings]
         like_pred = [self._predict(v, like_weights, like_bias) for v in hold_vectors]
         dislike_pred = [self._predict(v, dislike_weights, dislike_bias) for v in hold_vectors]
-        utility = [clamp(lp - 0.70 * dp) for lp, dp in zip(like_pred, dislike_pred)]
+        utility = [clamp(lp - DISLIKE_PENALTY * dp) for lp, dp in zip(like_pred, dislike_pred)]
         public = [float(sample.movie.imdb_rating or 0.0) for sample in holdout]
 
         like_auc = self._auc(like_actual, like_pred)
@@ -182,7 +211,9 @@ class PersonalUtilityRankerV5:
             "status": {
                 "version": V5_RANKER_VERSION,
                 "state": "ready",
-                "training_count": len(train),
+                "training_count": len(training_samples),
+                "training_rating_count": len(train),
+                "training_feedback_count": len(feedback_samples),
                 "holdout_count": len(holdout),
                 "holdout_like_count": sum(like_actual),
                 "holdout_dislike_count": sum(dislike_actual),
@@ -194,6 +225,7 @@ class PersonalUtilityRankerV5:
                 "holdout_like_rate": round(base_rate, 6),
                 "top20_lift": round(lift, 6),
                 "validated": validated,
+                "dislike_penalty": DISLIKE_PENALTY,
                 "blend_weight": round(blend, 6),
             },
         }
@@ -224,28 +256,36 @@ class PersonalUtilityRankerV5:
             self._dislike_bias = trained["dislike_bias"]
             self._status = trained["status"]
 
-    def score(self, movie) -> dict:
+    def score_many(self, movies) -> list[dict]:
         self._ensure()
         with self._lock:
             status = dict(self._status)
             if not bool(status.get("validated")):
-                return {"active": False, **status}
-            like_weights = self._like_weights
-            dislike_weights = self._dislike_weights
-            like_bias = self._like_bias
-            dislike_bias = self._dislike_bias
-        vector = self.encoder._vector(movie)[0]
-        like = self._predict(vector, like_weights, like_bias)
-        dislike = self._predict(vector, dislike_weights, dislike_bias)
-        raw = like - 0.70 * dislike
-        normalized = clamp((raw + 0.70) / 1.70)
-        return {
-            "active": True,
-            "like_score": like,
-            "dislike_risk": dislike,
-            "utility": normalized,
-            "blend_weight": float(status.get("blend_weight", 0.0) or 0.0),
-        }
+                return [{"active": False, **status} for _movie in movies]
+            like_weights = list(self._like_weights)
+            dislike_weights = list(self._dislike_weights)
+            like_bias = float(self._like_bias)
+            dislike_bias = float(self._dislike_bias)
+
+        out = []
+        for movie in movies:
+            vector = self.encoder._vector(movie)[0]
+            like = self._predict(vector, like_weights, like_bias)
+            dislike = self._predict(vector, dislike_weights, dislike_bias)
+            raw = like - DISLIKE_PENALTY * dislike
+            normalized = clamp((raw + DISLIKE_PENALTY) / (1.0 + DISLIKE_PENALTY))
+            out.append({
+                "active": True,
+                "like_score": like,
+                "dislike_risk": dislike,
+                "dislike_penalty": DISLIKE_PENALTY,
+                "utility": normalized,
+                "blend_weight": float(status.get("blend_weight", 0.0) or 0.0),
+            })
+        return out
+
+    def score(self, movie) -> dict:
+        return self.score_many([movie])[0]
 
     def status(self) -> dict:
         self._ensure()

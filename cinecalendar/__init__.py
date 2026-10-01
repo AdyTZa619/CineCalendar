@@ -9,4 +9,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
-__version__ = "4.15.0"
+__version__ = "4.16.1"
+# This branch's portable build follows its own prerelease updater manifest.
+UPDATE_CHANNEL = "preview"
