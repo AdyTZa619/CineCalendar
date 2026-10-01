@@ -20,6 +20,11 @@ from .v5_knowledge import V5KnowledgeBase
 from .v5_rating_snapshot import report_rating_freshness
 
 
+ENGINE_CURRENT_LABEL = "Motor actual"
+ENGINE_DISCOVERY_LABEL = "Motor actual + căutare extinsă"
+ENGINE_PERSONAL_LABEL = "Motor personal experimental"
+
+
 class DecisionWindow(CineCalendarWindow):
     """Decision-first UI with a safe, DDG-style self updater."""
 
@@ -46,7 +51,7 @@ class DecisionWindow(CineCalendarWindow):
         self.v5_eval_worker: WorkerThread | None = None
         self.NAV = list(type(self).NAV)
         if is_v5_alpha() and not any(key == "v5_lab" for key, _label in self.NAV):
-            self.NAV.insert(-2, ("v5_lab", "V5 Lab"))
+            self.NAV.insert(-2, ("v5_lab", "Comparare motor"))
         super().__init__(service)
         alpha_mode = is_v5_alpha()
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Decision Engine")
@@ -57,10 +62,10 @@ class DecisionWindow(CineCalendarWindow):
         try:
             status = self.s.set_alpha_trial_mode(mode)
         except Exception as exc:
-            QMessageBox.warning(self, "V5 Trial", str(exc))
+            QMessageBox.warning(self, "Motor experimental", str(exc))
             return
-        label = "V5 20%" if status.get("mode") == "v5_20" else "V16"
-        self.set_status(f"Trial vizibil: {label}. Schimbarea se aplică imediat recomandărilor următoare.", False)
+        label = ENGINE_PERSONAL_LABEL if status.get("mode") == "v5_20" else ENGINE_CURRENT_LABEL
+        self.set_status(f"Motor activ: {label}. Schimbarea se aplică recomandărilor următoare.", False)
         if self.current_page == "v5_lab":
             self.show_page("v5_lab")
 
@@ -71,16 +76,16 @@ class DecisionWindow(CineCalendarWindow):
         v16_rank = int(float(factors.get("v5_trial_v16_rank", -1) or -1))
         v5_rank = int(float(factors.get("v5_trial_v5_rank", -1) or -1))
         delta = factors.get("v5_trial_delta")
-        mode = "V5 20%" if float(factors.get("v5_trial_active", 0.0) or 0.0) >= 0.5 else "V16"
+        mode = ENGINE_PERSONAL_LABEL if float(factors.get("v5_trial_active", 0.0) or 0.0) >= 0.5 else ENGINE_CURRENT_LABEL
         r16 = f"#{v16_rank}" if v16_rank > 0 else "în afara listei"
         rv5 = f"#{v5_rank}" if v5_rank > 0 else "în afara listei"
         delta_text = ""
         if delta is not None:
             try:
-                delta_text = f" • Δ scor V5−V16 {float(delta):+.3f}"
+                delta_text = f" • Δ scor experimental−actual {float(delta):+.3f}"
             except (TypeError, ValueError):
                 delta_text = ""
-        return f"Trial {mode} • V16 {r16} • V5 {rv5}{delta_text}"
+        return f"{mode} • actual {r16} • experimental {rv5}{delta_text}"
 
     def _confidence_label(self, confidence: float) -> str:
         if confidence >= .82: return "încredere foarte mare"
@@ -403,13 +408,13 @@ class DecisionWindow(CineCalendarWindow):
 
     def run_v5_lab_evaluation(self):
         if not is_v5_alpha():
-            QMessageBox.information(self, "V5 Lab", "Evaluatorul V5 este disponibil numai în Alpha.")
+            QMessageBox.information(self, "Comparare motor", "Evaluatorul motoarelor este disponibil numai în Alpha.")
             return
         if self.v5_eval_worker and self.v5_eval_worker.isRunning():
-            self.set_status("Evaluarea V5 rulează deja.", True)
+            self.set_status("Compararea motoarelor rulează deja.", True)
             return
 
-        self.set_status("V5 Lab: pregătesc replay-ul V16 vs V5…", True)
+        self.set_status("Comparare motor: pregătesc testul Motor actual vs variantele noi…", True)
         worker = WorkerThread(
             lambda progress: run_v5_evaluation(self.db, progress=progress),
             self,
@@ -421,16 +426,16 @@ class DecisionWindow(CineCalendarWindow):
             self.v5_eval_worker = None
             decision = dict((report or {}).get("decision") or {})
             if bool(decision.get("eligible_for_visible_alpha_trial")):
-                self.set_status("V5 Lab: evaluare terminată; V5 poate intra într-un trial vizibil controlat.", False)
+                self.set_status("Comparare motor: varianta personală a trecut pragurile pentru test controlat.", False)
             else:
-                self.set_status("V5 Lab: evaluare terminată; V5 rămâne shadow.", False)
+                self.set_status("Comparare motor: varianta experimentală nu este încă suficient de bună pentru activare.", False)
             if self.current_page == "v5_lab":
                 self.show_page("v5_lab")
 
         def failure(message):
             self.v5_eval_worker = None
-            self.set_status("V5 Lab: evaluarea a eșuat; recomandările live nu au fost schimbate.", False)
-            QMessageBox.warning(self, "V5 Lab", str(message))
+            self.set_status("Comparare motor: evaluarea a eșuat; recomandările live nu au fost schimbate.", False)
+            QMessageBox.warning(self, "Comparare motor", str(message))
             if self.current_page == "v5_lab":
                 self.show_page("v5_lab")
 
@@ -450,10 +455,10 @@ class DecisionWindow(CineCalendarWindow):
 
     def page_v5_lab(self):
         page, content = self.page_shell(
-            "V5 Lab",
-            "Comparație offline pe istoricul tău: V16 actual vs retrieval V5 vs V5 + ranker personal. "
-            "Replay-ul nu modifică Stable și nu schimbă recomandările vizibile.",
-            [("Rulează evaluarea V16 vs V5", self.run_v5_lab_evaluation, True)],
+            "Comparare motor",
+            "Test offline pe istoricul tău: Motor actual vs Motor actual + căutare extinsă vs Motor personal experimental. "
+            "Testul nu modifică Stable și nu schimbă recomandările vizibile.",
+            [("Rulează comparația", self.run_v5_lab_evaluation, True)],
         )
 
         knowledge = V5KnowledgeBase(self.db).status()
@@ -542,7 +547,7 @@ class DecisionWindow(CineCalendarWindow):
                 f"{'TRECUT' if ranked_agg.get('approved') else 'netrecut'}"
             )
         st = QLabel(
-            "V5 retrieval-only: "
+            f"{ENGINE_DISCOVERY_LABEL}: "
             f"Δ compozit mediu {self._v5_metric(retrieval_agg.get('mean_composite_delta'))} • "
             f"folduri pozitive {retrieval_agg.get('positive_folds', '—')}/{retrieval_agg.get('fold_count', '—')} • "
             f"gate {'TRECUT' if retrieval_agg.get('approved') else 'netrecut'}\n"
@@ -560,28 +565,28 @@ class DecisionWindow(CineCalendarWindow):
         evt = QLabel(
             f"Zile testate: {int((event.get('selection') or {}).get('window_count', 0) or 0)} • "
             f"ținte: {liked} filme 8+, {loved} filme 9+, {bad} filme 1–4\n"
-            f"V16 candidate pool — 8+: {baseline_event.get('candidate_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_CURRENT_LABEL} — candidați 8+: {baseline_event.get('candidate_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(baseline_event.get('candidate_8_plus_recall'), percent=True)}) • "
             f"9+: {baseline_event.get('candidate_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(baseline_event.get('candidate_9_plus_recall'), percent=True)})\n"
-            f"V5 candidate pool — 8+: {ranked_event.get('candidate_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_PERSONAL_LABEL} — candidați 8+: {ranked_event.get('candidate_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(ranked_event.get('candidate_8_plus_recall'), percent=True)}) • "
             f"9+: {ranked_event.get('candidate_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(ranked_event.get('candidate_9_plus_recall'), percent=True)})\n"
-            f"V16 Top25 — 8+: {baseline_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_CURRENT_LABEL} Top25 — 8+: {baseline_event.get('top25_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(baseline_event.get('top25_8_plus_recall'), percent=True)}) • "
             f"9+: {baseline_event.get('top25_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(baseline_event.get('top25_9_plus_recall'), percent=True)}) • "
             f"1–4: {self._v5_metric(baseline_event.get('top25_dislike_rate'), percent=True)}\n"
-            f"V5 {selected_variant} Top25 — 8+: {ranked_event.get('top25_8_plus_hits', 0)}/{liked} "
+            f"{ENGINE_PERSONAL_LABEL} Top25 — 8+: {ranked_event.get('top25_8_plus_hits', 0)}/{liked} "
             f"({self._v5_metric(ranked_event.get('top25_8_plus_recall'), percent=True)}) • "
             f"9+: {ranked_event.get('top25_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(ranked_event.get('top25_9_plus_recall'), percent=True)}) • "
             f"1–4: {self._v5_metric(ranked_event.get('top25_dislike_rate'), percent=True)}\n"
-            f"Top50 8+: V16 {self._v5_metric(baseline_event.get('top50_8_plus_recall'), percent=True)} vs "
-            f"V5 {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
-            f"NDCG@25 mediu: V16 {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
-            f"V5 {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
+            f"Top50 8+: actual {self._v5_metric(baseline_event.get('top50_8_plus_recall'), percent=True)} vs "
+            f"experimental {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
+            f"NDCG@25 mediu: actual {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
+            f"experimental {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
             f"Gard extern: "
             f"{'TRECUT' if event_guard.get('passed') else ('NECONCLUDENT' if not event_guard.get('informative') else 'netrecut')} • "
             f"{event_guard.get('reason', '')}"
@@ -628,7 +633,7 @@ class DecisionWindow(CineCalendarWindow):
 
         trial_status = self.s.alpha_trial_status()
         trial_box = self.card(); tbl = QVBoxLayout(trial_box)
-        th = QLabel("Trial vizibil V16 / V5"); th.setObjectName("CardTitle"); tbl.addWidget(th)
+        th = QLabel("Motor folosit pentru recomandări"); th.setObjectName("CardTitle"); tbl.addWidget(th)
         active_mode = str(trial_status.get("mode") or "v16")
         eligible_trial = bool(trial_status.get("eligible"))
         try:
@@ -638,22 +643,22 @@ class DecisionWindow(CineCalendarWindow):
             audit_rows = 0
         tt = QLabel(
             (
-                "Activ acum: V5 ranker 20%."
+                f"Activ acum: {ENGINE_PERSONAL_LABEL}."
                 if active_mode == "v5_20"
-                else "Activ acum: V16."
+                else f"Activ acum: {ENGINE_CURRENT_LABEL}."
             )
             + f"  Audit comparativ salvat: {audit_rows} recomandări."
             + ("  Poți comuta instant; Stable rămâne neatins." if eligible_trial
-               else "  V5 necesită o reevaluare pe ratingurile actuale." if freshness is False
-               else "  V5 rămâne blocat până la un raport eligibil.")
+               else "  Motorul personal experimental necesită o reevaluare pe ratingurile actuale." if freshness is False
+               else "  Motorul personal experimental rămâne blocat până la un raport eligibil.")
         )
         tt.setWordWrap(True); tt.setObjectName("Muted"); tbl.addWidget(tt)
         tr = QHBoxLayout()
-        use_v16 = QPushButton("Folosește V16")
+        use_v16 = QPushButton("Folosește Motor actual")
         use_v16.setProperty("accent", active_mode == "v16")
         use_v16.clicked.connect(lambda: self.set_v5_trial_mode("v16"))
         tr.addWidget(use_v16)
-        use_v5 = QPushButton("Folosește V5 20%")
+        use_v5 = QPushButton("Folosește Motor personal experimental")
         use_v5.setProperty("accent", active_mode == "v5_20")
         use_v5.setEnabled(eligible_trial)
         use_v5.clicked.connect(lambda: self.set_v5_trial_mode("v5_20"))
