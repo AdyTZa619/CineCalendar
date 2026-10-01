@@ -18,6 +18,7 @@ from .v5_alpha_runtime import is_v5_alpha
 from .v5_evaluation import run_v5_evaluation
 from .v5_knowledge import V5KnowledgeBase
 from .v5_rating_snapshot import report_rating_freshness
+from .rating_outcome_audit import latest_rating_outcome_audit
 
 
 ENGINE_CURRENT_LABEL = "Stabil"
@@ -634,6 +635,43 @@ class DecisionWindow(CineCalendarWindow):
         visible_text.setWordWrap(True); visible_text.setObjectName("Muted"); vbl.addWidget(visible_text)
         content.addWidget(visible_box)
 
+        miss = dict(report.get("miss_audit") or {})
+        miss_counts = dict(miss.get("counts") or {})
+        miss_box = self.card(); mbl = QVBoxLayout(miss_box)
+        mbh = QLabel("Audit ratări 8–10"); mbh.setObjectName("CardTitle"); mbl.addWidget(mbh)
+        miss_text = QLabel(
+            f"Ținte 8+: {miss_counts.get('positive_targets', 0)} • "
+            f"deja Top 3 în Stabil: {miss_counts.get('stable_visible_hits', 0)}\n"
+            f"Recuperate de Descoperire la căutare: {miss_counts.get('recovered_by_discovery_retrieval', 0)} • "
+            f"la ranking: {miss_counts.get('recovered_by_discovery_ranking', 0)} • "
+            f"în Top 3: {miss_counts.get('recovered_by_discovery_visible', 0)}\n"
+            f"Recuperate de Adaptiv în Top 3: {miss_counts.get('recovered_by_adaptive_visible', 0)} • "
+            f"ratări rămase — căutare {miss_counts.get('retrieval_miss', 0)}, "
+            f"ranking {miss_counts.get('ranking_miss', 0)}, Top 3 {miss_counts.get('visible_miss', 0)}."
+        )
+        miss_text.setWordWrap(True); miss_text.setObjectName("Muted"); mbl.addWidget(miss_text)
+        content.addWidget(miss_box)
+
+        rating_audit = latest_rating_outcome_audit(self.db, limit=6)
+        outcome_box = self.card(); obl = QVBoxLayout(outcome_box)
+        obh = QLabel("Audit după rating"); obh.setObjectName("CardTitle"); obl.addWidget(obh)
+        audit_lines = []
+        for item in list(rating_audit.get("items") or [])[:6]:
+            predicted = item.get("predicted_rating")
+            predicted_text = "—" if predicted is None else f"{float(predicted):.1f}"
+            audit_lines.append(
+                f"{item.get('title', '')}: estimat {predicted_text} → ai dat {item.get('actual_rating', '—')} "
+                f"• eroare {item.get('absolute_error', '—')} • {item.get('engine_version', '')}"
+            )
+        audit_text = QLabel(
+            (
+                f"MAE: {rating_audit.get('mae', '—')} • bias: {rating_audit.get('bias', '—')}\n"
+                + ("\n".join(audit_lines) if audit_lines else "Nu există încă recomandări evaluate ulterior prin rating.")
+            )
+        )
+        audit_text.setWordWrap(True); audit_text.setObjectName("Muted"); obl.addWidget(audit_text)
+        content.addWidget(outcome_box)
+
         verdict = self.card(); vl = QVBoxLayout(verdict)
         vh = QLabel("Verdict"); vh.setObjectName("CardTitle"); vl.addWidget(vh)
         discovery_ready = bool(
@@ -645,22 +683,29 @@ class DecisionWindow(CineCalendarWindow):
             and decision.get("visible_decision_guard_passed")
             and freshness is True
         )
+        recommended_mode = str(decision.get("recommended_mode") or "stable")
+        recommended_label = {
+            "stable": ENGINE_CURRENT_LABEL,
+            "discovery": ENGINE_DISCOVERY_LABEL,
+            "adaptive": ENGINE_PERSONAL_LABEL,
+        }.get(recommended_mode, ENGINE_CURRENT_LABEL)
         vt = QLabel(
-            (
+            f"Verdict automat: {recommended_label}.\n"
+            + (
                 "Descoperire: PROMOVEAZĂ — a demonstrat câștig suficient peste Stabil."
                 if discovery_ready else
                 "Descoperire: NU PROMOVA — nu a demonstrat încă un câștig suficient peste Stabil."
             )
             + "\n"
             + (
-                "Adaptiv: ELIGIBIL pentru test controlat."
+                f"Adaptiv: ELIGIBIL • pondere selectată automat {selected_variant}."
                 if eligible else
                 "Adaptiv: NU ESTE ELIGIBIL pentru activare."
             )
             + "\n"
             + ("Raportul trebuie refăcut pentru ratingurile actuale." if freshness is not True
                else str(decision.get("reason") or ""))
-            + "\nStabil 4.15.0 rămâne neatins până la un verdict pozitiv."
+            + "\nStabil rămâne etalonul până când o variantă trece toate gardurile."
         )
         vt.setWordWrap(True); vt.setObjectName("Muted"); vl.addWidget(vt)
         content.addWidget(verdict)
@@ -678,6 +723,13 @@ class DecisionWindow(CineCalendarWindow):
         }.get(active_mode, ENGINE_CURRENT_LABEL)
         tt = QLabel(
             f"Activ acum: {active_label}. "
+            + f"Verdict automat curent: "
+            + {
+                "stable": ENGINE_CURRENT_LABEL,
+                "discovery": ENGINE_DISCOVERY_LABEL,
+                "adaptive": ENGINE_PERSONAL_LABEL,
+            }.get(str(engine_status.get("recommended_mode") or "stable"), ENGINE_CURRENT_LABEL)
+            + ". "
             + (
                 "Descoperire și Adaptiv folosesc aceeași CineCalendarData; nu există bază separată."
             )
