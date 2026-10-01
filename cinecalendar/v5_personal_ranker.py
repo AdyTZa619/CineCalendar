@@ -63,9 +63,10 @@ class PersonalUtilityRankerV5:
             int(row["rating_count"] or 0),
             str(row["rating_updated"] or ""),
             str(row["rating_date"] or ""),
-            str(row["rated_metadata_updated"] or ""),
             int(feedback["feedback_count"] or 0),
             str(feedback["feedback_updated"] or ""),
+            # Keep rated metadata timestamp last: older diagnostics/tests rely on this position.
+            str(row["rated_metadata_updated"] or ""),
         )
 
     @staticmethod
