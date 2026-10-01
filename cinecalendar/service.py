@@ -73,7 +73,18 @@ class CineCalendarService:
             report = self.db.get_setting("v5_evaluation_report", {}) or {}
             decision = report.get("decision") if isinstance(report, dict) else {}
             variant = str((decision or {}).get("selected_discovery_variant") or "balanced")
-            cls = adaptive_engine_class(engine_cls, variant, 0.20)
+            selected = str((decision or {}).get("selected_variant") or "learned")
+            blend_map = {
+                "learned": None,
+                "10%": 0.10,
+                "15%": 0.15,
+                "20%": 0.20,
+            }
+            cls = adaptive_engine_class(
+                engine_cls,
+                variant,
+                blend_map.get(selected, None),
+            )
             return build_production_recommender(self.db, cls, self.calendar)
 
         self.recommender = EngineModeRouter(

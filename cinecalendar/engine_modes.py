@@ -33,6 +33,7 @@ class EngineModeRouter:
         self._adaptive = None
         self._freshness_token = None
         self._freshness_value = None
+        self._loaded_report_token = None
 
         saved_raw = self.db.get_setting("recommendation_engine_mode", None)
         saved = str(saved_raw or MODE_STABLE)
@@ -101,14 +102,48 @@ class EngineModeRouter:
             and self._report_matches_stable()
             and decision.get("eligible_for_visible_alpha_trial")
             and decision.get("visible_decision_guard_passed")
-            and str(decision.get("selected_variant") or "") == "20%"
+            and str(decision.get("selected_variant") or "") in {"learned", "10%", "15%", "20%"}
         )
 
     def selected_discovery_variant(self) -> str:
         value = str(self._decision().get("selected_discovery_variant") or "balanced").lower()
         return value if value in {"strict", "balanced", "wide"} else "balanced"
 
+    def selected_adaptive_variant(self) -> str:
+        value = str(self._decision().get("selected_variant") or "learned")
+        return value if value in {"learned", "10%", "15%", "20%"} else "learned"
+
+    def recommended_mode(self) -> str:
+        if not self._report_current() or not self._report_matches_stable():
+            return MODE_STABLE
+        wanted = str(self._decision().get("recommended_mode") or MODE_STABLE)
+        if wanted == MODE_ADAPTIVE and self.adaptive_eligible():
+            return MODE_ADAPTIVE
+        if wanted == MODE_DISCOVERY and self.discovery_eligible():
+            return MODE_DISCOVERY
+        return MODE_STABLE
+
+    def _report_configuration_token(self) -> tuple:
+        report = self._report()
+        decision = self._decision()
+        return (
+            str(report.get("generated_at") or ""),
+            self.selected_discovery_variant(),
+            self.selected_adaptive_variant(),
+        )
+
+    def _refresh_lazy_engines_if_report_changed(self) -> None:
+        token = self._report_configuration_token()
+        if self._loaded_report_token is None:
+            self._loaded_report_token = token
+            return
+        if token != self._loaded_report_token:
+            self._discovery = None
+            self._adaptive = None
+            self._loaded_report_token = token
+
     def _enforce_guard(self) -> None:
+        self._refresh_lazy_engines_if_report_changed()
         original = self._mode
         if self._mode == MODE_DISCOVERY and not self.discovery_eligible():
             self._mode = MODE_STABLE
@@ -183,7 +218,8 @@ class EngineModeRouter:
             "discovery_eligible": self.discovery_eligible(),
             "adaptive_eligible": self.adaptive_eligible(),
             "selected_discovery_variant": self.selected_discovery_variant(),
-            "selected_adaptive_variant": str(decision.get("selected_variant") or ""),
+            "selected_adaptive_variant": self.selected_adaptive_variant(),
+            "recommended_mode": self.recommended_mode(),
             "loaded": {
                 MODE_STABLE: True,
                 MODE_DISCOVERY: self._discovery is not None,
