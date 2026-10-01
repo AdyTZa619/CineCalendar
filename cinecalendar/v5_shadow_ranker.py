@@ -3,9 +3,12 @@ from __future__ import annotations
 from .util import clamp
 import threading
 from .v5_lab import DiscoveryRecommendationEngine, discovery_engine_class
+from .recent_taste_context import RecentTasteContext
+from .top3_strategy import select_controlled_top3
 
 
-V5_SHADOW_RANKED_VERSION = "v5-shadow-ranked-alpha1"
+V5_SHADOW_RANKED_VERSION = "v5-shadow-ranked-alpha2"
+ADAPTIVE_RUNTIME_VERSION = "adaptive-runtime-v2-recent-diverse"
 
 
 class V5ShadowRankedEngine(DiscoveryRecommendationEngine):
@@ -149,6 +152,17 @@ def adaptive_engine_class(
             SHADOW_BLEND_OVERRIDE = override
             ADAPTIVE_RUNTIME = True
 
+            def __init__(self, db, calendar=None):
+                super().__init__(db, calendar)
+                self.recent_taste = RecentTasteContext(db)
+                self._adaptive_roles = []
+
+            def _state_token(self) -> tuple:
+                return super()._state_token() + (
+                    ADAPTIVE_RUNTIME_VERSION,
+                    self.SHADOW_BLEND_OVERRIDE,
+                )
+
             @staticmethod
             def _blend(base_final: float, utility: float, blend: float) -> float:
                 w = max(0.0, min(0.20, float(blend)))
@@ -181,8 +195,9 @@ def adaptive_engine_class(
                 reranked = []
                 for rec in mature:
                     payload = self.v5.personal_ranker.score(rec.movie)
+                    base = float(rec.score.final)
+                    combined = base
                     if bool(payload.get("active")):
-                        base = float(rec.score.final)
                         utility = float(payload.get("utility", 0.0) or 0.0)
                         combined = self._blend(base, utility, effective_blend)
                         rec.score.score_factors["adaptive_base_final"] = base
@@ -194,7 +209,6 @@ def adaptive_engine_class(
                             payload.get("dislike_risk", 0.0) or 0.0
                         )
                         rec.score.score_factors["adaptive_blend_weight"] = effective_blend
-                        rec.score.final = combined
                         rec.score.contributions.insert(
                             0,
                             (
@@ -203,7 +217,32 @@ def adaptive_engine_class(
                                 "Model personal: probabilitate 8+ minus riscul 1–4.",
                             ),
                         )
+
+                    recent = self.recent_taste.score(rec.movie)
+                    if bool(recent.get("active")):
+                        nudge = float(recent.get("nudge", 0.0) or 0.0)
+                        before_recent = combined
+                        combined = clamp(combined + nudge)
+                        rec.score.score_factors["recent_taste_score"] = float(
+                            recent.get("score", 0.5) or 0.5
+                        )
+                        rec.score.score_factors["recent_taste_nudge"] = nudge
+                        rec.score.score_factors["recent_taste_confidence"] = float(
+                            recent.get("confidence", 0.0) or 0.0
+                        )
+                        if abs(nudge) >= 0.001:
+                            rec.score.contributions.insert(
+                                0,
+                                (
+                                    "Gust recent",
+                                    (combined - before_recent) * 100.0,
+                                    "Semnal scurt: ce ți-a plăcut sau displăcut în perioada recentă, fără a șterge gustul de bază.",
+                                ),
+                            )
+
+                    rec.score.final = combined
                     reranked.append(rec)
+
                 reranked.sort(
                     key=lambda rec: (
                         float(rec.score.final),
@@ -213,7 +252,24 @@ def adaptive_engine_class(
                     reverse=True,
                 )
                 if requested <= int(self.QUALITY_GATE_MAX_VISIBLE):
+                    if requested <= 3:
+                        gate_count = min(
+                            len(reranked),
+                            max(int(self.QUALITY_GATE_POOL_MIN), requested * 8),
+                        )
+                        gated = self._quality_gate(reranked, gate_count)
+                        selected, roles = select_controlled_top3(list(gated), requested)
+                        self._adaptive_roles = list(roles)
+                        self._quality_gate_stats = {
+                            **dict(self._quality_gate_stats),
+                            "role_strategy": True,
+                            "roles": list(roles),
+                            "returned": len(selected),
+                        }
+                        return selected
+                    self._adaptive_roles = []
                     return self._quality_gate(reranked, requested)
+                self._adaptive_roles = []
                 return reranked[:requested]
 
             def candidate_generation_status(self) -> dict:
@@ -225,11 +281,14 @@ def adaptive_engine_class(
                     else float(self.SHADOW_BLEND_OVERRIDE)
                 )
                 status["adaptive"] = {
+                    "version": ADAPTIVE_RUNTIME_VERSION,
                     "blend_weight": effective_blend,
                     "blend_mode": "learned" if self.SHADOW_BLEND_OVERRIDE is None else "fixed",
                     "visible_ranking_changed": True,
                     "base": base_cls.__name__,
                     "discovery_variant": str(discovery_variant),
+                    "recent_taste": self.recent_taste.status(),
+                    "top3_roles": list(getattr(self, "_adaptive_roles", [])),
                 }
                 return status
 
