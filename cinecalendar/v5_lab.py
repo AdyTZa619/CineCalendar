@@ -163,6 +163,7 @@ def discovery_engine_class(base_cls: type, variant: str = "balanced") -> type:
 
         class RuntimeDiscovery(base_cls):
             DISCOVERY_VARIANT = name
+            ENGINE_MODE_IDENTITY = f"discovery-{name}"
             DISCOVERY_EXTRA_SHARE = float(cfg["extra_share"])
             DISCOVERY_MIN_SUPPORT = int(cfg["minimum_support"])
             DISCOVERY_TRUSTED_SINGLE_SOURCES = tuple(cfg["trusted_sources"])

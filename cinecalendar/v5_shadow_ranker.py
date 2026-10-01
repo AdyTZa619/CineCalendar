@@ -151,6 +151,11 @@ def adaptive_engine_class(
         class RuntimeAdaptive(discovery_cls):
             SHADOW_BLEND_OVERRIDE = override
             ADAPTIVE_RUNTIME = True
+            ENGINE_MODE_IDENTITY = (
+                f"adaptive-{discovery_variant}-learned"
+                if override is None
+                else f"adaptive-{discovery_variant}-{int(override * 100):02d}"
+            )
 
             def __init__(self, db, calendar=None):
                 super().__init__(db, calendar)
