@@ -169,9 +169,9 @@ def run_v5_evaluation(
     rating_snapshot = rating_history_snapshot(db)
 
     knowledge = V5KnowledgeBase(db).status()
-    if not bool(knowledge.get("ready_for_rich_ranker")):
-        raise RuntimeError("Profilul personal nu are încă suficiente date factuale pentru evaluarea Adaptiv.")
 
+    # Descoperire changes retrieval only and must remain evaluable even when the richer
+    # personal model lacks enough factual metadata. Adaptiv simply stays inactive/blocked.
     progress("Comparare motor: verific modelul Adaptiv pe istoricul complet…")
     ranker_status = PersonalUtilityRankerV5(db).status()
 
