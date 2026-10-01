@@ -82,10 +82,10 @@ class DecisionWindow(CineCalendarWindow):
         delta_text = ""
         if delta is not None:
             try:
-                delta_text = f" • Δ scor experimental−actual {float(delta):+.3f}"
+                delta_text = f" • Δ scor Adaptiv−Stabil {float(delta):+.3f}"
             except (TypeError, ValueError):
                 delta_text = ""
-        return f"{mode} • actual {r16} • experimental {rv5}{delta_text}"
+        return f"Activ: {mode} • Stabil {r16} • Adaptiv {rv5}{delta_text}"
 
     def _confidence_label(self, confidence: float) -> str:
         if confidence >= .82: return "încredere foarte mare"
@@ -474,7 +474,7 @@ class DecisionWindow(CineCalendarWindow):
                 "Datele factuale nu au ajuns încă la pragul necesar."
             )
             + (
-                f"  Shadow intern: AUC 8+ {shadow.get('like_auc', '—')} • "
+                f"  Model personal: AUC 8+ {shadow.get('like_auc', '—')} • "
                 f"AUC 1–4 {shadow.get('dislike_auc', '—')} • "
                 f"NDCG@25 {shadow.get('model_ndcg25', '—')} • "
                 f"lift Top20 {shadow.get('top20_lift', '—')}."
@@ -530,7 +530,7 @@ class DecisionWindow(CineCalendarWindow):
         )
 
         summary = self.card(); sl = QVBoxLayout(summary)
-        sh = QLabel("Replay temporal — sweep de pondere ranker"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
+        sh = QLabel("Replay temporal — comparație Adaptiv"); sh.setObjectName("CardTitle"); sl.addWidget(sh)
         variant_lines = []
         for label, payload in variants.items():
             agg = dict((((payload or {}).get("comparison") or {}).get("aggregate") or {}))
@@ -589,10 +589,10 @@ class DecisionWindow(CineCalendarWindow):
             f"9+: {ranked_event.get('top25_9_plus_hits', 0)}/{loved} "
             f"({self._v5_metric(ranked_event.get('top25_9_plus_recall'), percent=True)}) • "
             f"1–4: {self._v5_metric(ranked_event.get('top25_dislike_rate'), percent=True)}\n"
-            f"Top50 8+: actual {self._v5_metric(baseline_event.get('top50_8_plus_recall'), percent=True)} vs "
-            f"experimental {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
-            f"NDCG@25 mediu: actual {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
-            f"experimental {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
+            f"Top50 8+: Stabil {self._v5_metric(baseline_event.get('top50_8_plus_recall'), percent=True)} vs "
+            f"Adaptiv {self._v5_metric(ranked_event.get('top50_8_plus_recall'), percent=True)} • "
+            f"NDCG@25 mediu: Stabil {self._v5_metric(baseline_event.get('mean_ndcg25'), percent=True)} vs "
+            f"Adaptiv {self._v5_metric(ranked_event.get('mean_ndcg25'), percent=True)}\n"
             f"Gard extern: "
             f"{'TRECUT' if event_guard.get('passed') else ('NECONCLUDENT' if not event_guard.get('informative') else 'netrecut')} • "
             f"{event_guard.get('reason', '')}"
@@ -663,7 +663,7 @@ class DecisionWindow(CineCalendarWindow):
                 else f"Activ acum: {ENGINE_CURRENT_LABEL}."
             )
             + f"  Audit comparativ salvat: {audit_rows} recomandări."
-            + ("  Poți comuta instant; Stable rămâne neatins." if eligible_trial
+            + ("  Poți comuta instant; Stabil rămâne neatins." if eligible_trial
                else "  Adaptiv necesită o reevaluare pe ratingurile actuale." if freshness is False
                else "  Adaptiv rămâne blocat până la un raport eligibil.")
         )
@@ -690,17 +690,17 @@ class DecisionWindow(CineCalendarWindow):
         page, content = self.page_shell(
             "Actualizări",
             (
-                "V5 Alpha este separat de canalul Stable."
+                "Alpha este separat de canalul Stabil."
                 if alpha_mode else
-                "Updater Stable cu SHA-256, backup, health-check și rollback automat."
+                "Updater Stabil cu SHA-256, backup, health-check și rollback automat."
             ),
         )
         box = self.card(); l = QVBoxLayout(box); l.setContentsMargins(18,18,18,18); l.setSpacing(10)
         title = QLabel(f"CineCalendar {APP_VERSION}"); title.setObjectName("CardTitle"); l.addWidget(title)
         if alpha_mode:
             state = QLabel(
-                "Canal: V5 Alpha separat • " +
-                ("updater automat disponibil; Stable rămâne neatins."
+                "Canal: Alpha separat • " +
+                ("updater automat disponibil; Stabil rămâne neatins."
                  if update_supported() else
                  "rulezi sursa Python; update automat disponibil doar în EXE.")
             )
