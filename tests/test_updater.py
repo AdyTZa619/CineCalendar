@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import shutil
+import subprocess
 import zipfile
 
 import pytest
 
 from cinecalendar.updater import (
     POST_UPDATE_MODE,
+    PREVIEW_MANIFEST_URL,
+    _powershell_helper,
     _safe_extract_zip,
     _repair_frozen_ca_bundle,
+    check_for_update,
     health_matches,
     is_newer_version,
     parse_manifest,
@@ -58,6 +65,65 @@ def test_alpha_manifest_is_accepted_only_on_alpha_channel():
                 channel="alpha",
             )
         )
+
+
+def test_preview_updater_uses_separate_manifest(monkeypatch):
+    import cinecalendar.updater as updater
+    requested = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return valid_manifest(version="4.16.2", channel="preview")
+
+    def get(url, **_kwargs):
+        requested.append(url)
+        return Response()
+
+    monkeypatch.setattr(updater.requests, "get", get)
+    info = check_for_update("4.16.1")
+    assert info is not None and info.version == "4.16.2"
+    assert info.channel == "preview"
+    assert requested == [PREVIEW_MANIFEST_URL]
+    assert check_for_update("4.16.2") is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PowerShell update integration requires Windows")
+def test_updater_rollback_preserves_nested_alpha_database(tmp_path):
+    executable = shutil.which("where.exe")
+    if not executable:
+        pytest.skip("Windows where.exe unavailable")
+    app = tmp_path / "CineCalendar"
+    data = app / "CineCalendarData"
+    updates = data / "updates"
+    alpha = app / "V5Alpha" / "CineCalendarV5AlphaData" / "data" / "cinecalendar.db"
+    alpha.parent.mkdir(parents=True)
+    alpha.write_bytes(b"original Alpha database marker")
+    current = app / "CineCalendar.exe"
+    shutil.copy2(executable, current)
+    staged = updates / "staged"
+    staged.mkdir(parents=True)
+    (staged / "CineCalendar.exe").write_bytes(b"MZinvalid test executable")
+    updates.mkdir(parents=True, exist_ok=True)
+    helper_path = updates / "apply_update.ps1"
+    helper_path.write_text(_powershell_helper(), encoding="utf-8-sig")
+    request_path = updates / "request.json"
+    request_path.write_text(json.dumps({
+        "parent_pid": 2147483000, "app_root": str(app), "data_root": str(data),
+        "staged_dir": str(staged), "backup_dir": str(updates / "backup" / "previous"),
+        "pending_zip": str(updates / "pending.zip"), "health": str(updates / "health.ok"),
+        "log": str(updates / "updater.log"), "expected_version": "4.16.2",
+        "exe_name": "CineCalendar.exe",
+    }), encoding="utf-8")
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(helper_path), str(request_path)],
+        capture_output=True, text=True, timeout=25,
+    )
+    assert result.returncode == 4, (result.stdout, result.stderr, (updates / "updater.log").read_text())
+    assert alpha.read_bytes() == b"original Alpha database marker"
 
 
 def test_manifest_requires_https_hash_and_stable_channel():

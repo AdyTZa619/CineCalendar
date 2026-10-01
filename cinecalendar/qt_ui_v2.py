@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QFrame, QSizePolicy, QMessageBox, QCheckBox, QFileDialog
 )
 
-from . import __version__ as APP_VERSION
+from . import __version__ as APP_VERSION, UPDATE_CHANNEL
 from .feedback import apply_feedback
 from .qt_ui import CineCalendarWindow, ScoreDialog, WorkerThread
 from .recommendation import Recommendation, row_to_movie
@@ -845,7 +845,8 @@ class DecisionWindow(CineCalendarWindow):
                  "rulezi sursa Python; update automat disponibil doar în EXE.")
             )
         else:
-            state = QLabel("Canal: Stable • " + ("updater automat disponibil" if update_supported() else "rulezi sursa Python; update automat doar în EXE"))
+            channel_name = "Test (separat de Stable)" if UPDATE_CHANNEL == "preview" else "Stable"
+            state = QLabel(f"Canal: {channel_name} • " + ("updater automat disponibil" if update_supported() else "rulezi sursa Python; update automat doar în EXE"))
         state.setObjectName("Muted"); state.setWordWrap(True); l.addWidget(state)
         auto = QCheckBox("Verifică automat actualizările la pornire")
         auto.setChecked(bool(self.db.get_setting("auto_update_check", True)))

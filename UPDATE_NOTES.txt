@@ -1,8 +1,10 @@
-CineCalendar 4.16.0 – un singur program, o singură bază de date
+CineCalendar 4.16.1 – un singur program, o singură bază de date
 
 - CineCalendar.exe include modurile Stabil, Descoperire și Adaptiv în pagina Comparare motor.
 - Toate modurile folosesc CineCalendarData; ratingurile și feedbackul rămân în aceeași bază.
 - La prima pornire, bazele Alpha găsite lângă instalarea principală sunt unite automat cu CineCalendarData. Ratingurile și watchlistul mai noi câștigă; feedbackul și istoricul se adaugă fără duplicate. Baza Alpha rămâne intactă, iar înaintea importului se face o copie SQLite a bazei principale.
+- Starea unirii Alpha este vizibilă chiar fără un raport de evaluare. Baza aleasă manual din alt folder este memorată la pornirile următoare.
+- Actualizările versiunii de test folosesc canalul Preview din aplicație, separat de Stable și Alpha. Updaterul păstrează și folderul vechi V5Alpha.
 - Stabil rămâne disponibil permanent. Descoperire și Adaptiv se deblochează separat numai după o evaluare actuală și favorabilă pe istoricul personal.
 - Descoperire păstrează motorul de gust Stabil și caută suplimentar candidați susținuți de mai multe surse.
 - Adaptiv folosește câștigătorul evaluării proprii; schimbarea ratingurilor poate bloca temporar modurile experimentale până la o nouă evaluare.

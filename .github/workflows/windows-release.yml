@@ -165,6 +165,7 @@ jobs:
           Nu este necesar Python și nu se instalează nimic.
           IMPORTANT: păstrează CineCalendar.exe împreună cu folderul _internal și restul fișierelor din acest director.
           Datele personale sunt păstrate separat în CineCalendarData și NU sunt șterse la update.
+          Acest pachet folosește canalul de actualizare Preview din aplicație, separat de Stable și Alpha; folderul V5Alpha este păstrat la update.
           Acesta este unicul lansator: Stabil, Descoperire și Adaptiv se aleg din Comparare motor și folosesc aceeași CineCalendarData. Modurile noi sunt blocate până trec evaluarea pe ratingurile curente.
           La prima pornire, dacă găsește vechiul folder CineCalendarV5AlphaData lângă program, unește automat ratingurile, feedbackul, watchlistul și istoricul în CineCalendarData. Păstrează bazele vechi și creează backup înainte de fiecare import.
           Dacă vechiul Alpha este în alt loc, intră în «Comparare motor» și apasă «Unește baza din vechiul Alpha…», apoi alege fișierul CineCalendarV5AlphaData\data\cinecalendar.db și redeschide programul.
@@ -345,11 +346,12 @@ jobs:
           $sha = '${{ steps.package.outputs.zip_sha }}'
           $version = '${{ steps.package.outputs.version }}'
           $repo = '${{ github.repository }}'
-          if ($version -ne '4.16.0') { throw "Unexpected preview version $version" }
+          if ($version -ne '4.16.1') { throw "Unexpected preview version $version" }
           $notes = @'
           Versiune de test, fără integrare în main.
           Un singur CineCalendar.exe, cu Stabil / Descoperire / Adaptiv în aceeași aplicație și aceeași CineCalendarData.
           Descoperire și Adaptiv pot fi selectate numai după evaluarea actuală pe ratingurile personale.
+          Actualizările următoare ale acestei versiuni de test folosesc canalul Preview din aplicație, separat de Stable și Alpha.
           Păstrează împreună CineCalendar.exe și folderul _internal. La pornire, bazele Alpha din folderele vecine sunt unite automat cu CineCalendarData după o copie de siguranță; pentru alte locații folosește «Unește baza din vechiul Alpha…» din Comparare motor.
           '@
           $notes | Set-Content -Encoding utf8NoBOM preview-notes.txt
@@ -357,8 +359,19 @@ jobs:
             gh release create $tag --target $current --title "CineCalendar $version — un singur executabil (test)" --notes-file preview-notes.txt --prerelease --repo $repo
             if ($LASTEXITCODE -ne 0) { throw 'Cannot create unified preview release.' }
           }
-          gh release upload $tag $zipName --clobber --repo $repo
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot upload unified preview package.' }
+          $manifestName = 'update-unified-preview.json'
+          $manifest = [ordered]@{
+            version = $version
+            url = "https://github.com/$repo/releases/download/$tag/$zipName"
+            sha256 = $sha
+            notes = 'CineCalendar Preview: starea unirii bazelor Alpha este vizibilă fără evaluare; sursele alese manual rămân memorate; actualizările folosesc canalul Preview.'
+            publishedAt = [DateTime]::UtcNow.ToString('o')
+            channel = 'preview'
+            package = 'onedir-zip'
+          } | ConvertTo-Json -Depth 4
+          $manifest | Set-Content -Encoding utf8NoBOM $manifestName
+          gh release upload $tag $zipName $manifestName --clobber --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot upload unified preview package and updater manifest.' }
 
           $verifyDir = Join-Path $env:RUNNER_TEMP 'unified-preview-verify'
           New-Item -ItemType Directory -Force -Path $verifyDir | Out-Null
@@ -367,6 +380,12 @@ jobs:
           $downloaded = Join-Path $verifyDir $zipName
           $actual = (Get-FileHash $downloaded -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $sha) { throw "Unified preview SHA mismatch: expected $sha, got $actual" }
+          gh release download $tag --pattern $manifestName --dir $verifyDir --clobber --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download preview updater manifest.' }
+          $publishedManifest = Get-Content (Join-Path $verifyDir $manifestName) -Raw | ConvertFrom-Json
+          if ($publishedManifest.sha256 -ne $sha -or $publishedManifest.version -ne $version -or $publishedManifest.channel -ne 'preview') {
+            throw 'Preview updater manifest does not match the published ZIP.'
+          }
 
       - name: Publish Stable bundle and updater manifest
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
