@@ -1,31 +1,11 @@
-CineCalendar 4.15.0 – interfață completă și Calendar unificat
+CineCalendar 4.16.0 – un singur program, o singură bază de date
 
-Interfață:
-- cinci skinuri funcționale pe aceeași bază de funcții: Simple, Cinema Immersive, Cinematheque Editorial, Poster Wall și Decision Studio;
-- toate skinurile păstrează aceleași meniuri și acțiuni esențiale;
-- skinul Simple primește iconițe vectoriale în meniul lateral;
-- Calendarul din Simple respectă atât tema Dark, cât și tema Light;
-- schimbarea skinului rămâne persistentă și nu schimbă motorul de recomandare.
+- CineCalendar.exe include modurile Stabil, Descoperire și Adaptiv în pagina Comparare motor.
+- Toate modurile folosesc CineCalendarData; ratingurile și feedbackul rămân în aceeași bază.
+- Stabil rămâne disponibil permanent. Descoperire și Adaptiv se deblochează separat numai după o evaluare actuală și favorabilă pe istoricul personal.
+- Descoperire păstrează motorul de gust Stabil și caută suplimentar candidați susținuți de mai multe surse.
+- Adaptiv folosește câștigătorul evaluării proprii; schimbarea ratingurilor poate bloca temporar modurile experimentale până la o nouă evaluare.
+- Diagnosticul arată ce filme apreciate sau respinse nu au fost găsite ori au fost clasate prea jos, cu verdict automat și identitatea motorului activ.
+- Cele cinci skinuri și Calendarul unificat din 4.15.0 rămân disponibile.
 
-Calendar:
-- „Calendar” și vechiul „Program calendar” sunt unite într-un singur tab;
-- vedere lunară imersivă și vedere separată „Repere anuale” în aceeași destinație;
-- zilele, reperul selectat, „Azi” și evenimentele sunt evidențiate vizual;
-- perioadele de mai multe zile rămân vizibile în fiecare lună pe care o traversează, nu doar în ziua de început;
-- filmele din Calendar sunt afișate numai când există o legătură calendaristică susținută;
-- cardurile Calendar păstrează explicația într-un singur bloc integrat, fără coloana redundantă „De ce acum”;
-- zilele fără reper concret nu mai dublează pagina Recomandări cu filme generale;
-- reguli factuale stricte pentru reperele concrete și repere românești/ortodoxe extinse.
-
-Recomandări și navigare:
-- listele deja calculate sunt reutilizate la simpla navigare;
-- verificarea metadatelor candidaților principali se face înainte de afișarea clasării finale;
-- selecția zilei și galeriile suplimentare rămân separate, astfel încât încărcarea vizuală nu schimbă alegerea deja validată.
-
-Siguranță Stable:
-- Stable rămâne pe motorul de producție V16 și pe gardurile lui validate;
-- V5 Lab și trialul V5 rămân disponibile numai în canalul Alpha;
-- updaterul Stable rămâne separat de canalul Alpha, cu SHA-256, backup, health-check și rollback;
-- buildul Windows verifică pornirea aplicației înainte de publicare.
-
-Versiune aplicație: 4.15.0.
+Pachetul de test se publică separat. Integrarea în Stable se face numai după verificarea pe datele reale.
