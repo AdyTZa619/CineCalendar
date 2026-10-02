@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QGraphicsOpacityEffect,
 )
 
+from .romanian_films import display_title, romanian_films
+
 
 SKINS = {
     "simple": ("Interfața simplă", "Aspectul clasic: meniu lateral, alegerea zilei și două alternative clare."),
@@ -497,6 +499,9 @@ def _search_visible_recommendations(window, search):
     if not query:
         window.show_page("recommendations")
         return
+
+    # Search the loaded recommendation pool first so existing fast navigation
+    # keeps its behavior. Then fall back to the complete curated Romanian catalog.
     today = getattr(window, "today_result", None)
     current = ([today[0], *today[1]] if today and today[0] else [])
     seen = set()
@@ -504,12 +509,44 @@ def _search_visible_recommendations(window, search):
         if rec.movie.id in seen:
             continue
         seen.add(rec.movie.id)
-        haystack = " ".join((rec.movie.title, str(rec.movie.year or ""),
-                             " ".join(rec.movie.genres or []), rec.movie.overview or "")).casefold()
+        haystack = " ".join(
+            (
+                rec.movie.title,
+                str(rec.movie.year or ""),
+                " ".join(rec.movie.genres or []),
+                rec.movie.overview or "",
+            )
+        ).casefold()
         if query in haystack:
             window.open_details(rec)
             return
-    window.set_status("Niciun film din recomandările încărcate nu corespunde căutării.", False)
+
+    romanian = romanian_films(window.db)
+    matches = [
+        item for item in romanian
+        if query in " ".join(
+            (
+                display_title(item.film),
+                item.period or "",
+                item.season or "",
+                item.context or "",
+            )
+        ).casefold()
+    ]
+    if matches:
+        window.db.set_setting("romanian_list_filter", "all")
+        window.db.set_setting("romanian_list_search", query)
+        window.show_page("romanian_list")
+        window.set_status(
+            f"Căutarea a găsit {len(matches)} film(e) în catalogul românesc complet.",
+            False,
+        )
+        return
+
+    window.set_status(
+        "Nu am găsit titlul în recomandările încărcate sau în catalogul românesc.",
+        False,
+    )
 
 
 def build_skin_shell(window):
