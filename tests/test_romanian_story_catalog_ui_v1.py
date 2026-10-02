@@ -30,3 +30,5 @@ def test_story_shelf_has_drag_scroll_and_edge_arrows():
     assert 'QPushButton("‹", self)' in source
     assert 'QPushButton("›", self)' in source
     assert "bar.maximum()" in source
+    assert "horizontalScrollBar().setValue(self._drag_origin - delta)" in source
+    assert "story_season = QLabel" in source
