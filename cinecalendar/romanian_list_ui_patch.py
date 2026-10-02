@@ -17,6 +17,276 @@ from .romanian_films import (
 )
 
 
+
+class _StoryDragScrollArea(QScrollArea):
+    """Horizontal shelf with mouse-drag scrolling and no visible scrollbar."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setWidgetResizable(False)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setMouseTracking(True)
+        try:
+            QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
+        except Exception:
+            pass
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        bar = self.horizontalScrollBar()
+        if delta and bar.maximum():
+            bar.setValue(bar.value() - int(delta))
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+
+class _StoryPosterCard(QFrame):
+    """Poster card with chronology metadata on hover."""
+
+    def __init__(self, window, item, short, detail_callback, poster_failed_callback, parent=None):
+        super().__init__(parent)
+        self.window = window
+        self.item = item
+        self.short = short
+        self.detail_callback = detail_callback
+        self.poster_failed_callback = poster_failed_callback
+        self._poster_started = False
+
+        self.setObjectName("PremiumCard")
+        self.setFixedWidth(198)
+        self.setFixedHeight(462)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 12)
+        layout.setSpacing(7)
+
+        state = QLabel(
+            f"VĂZUT  {item.user_rating}/10"
+            if item.watched and item.user_rating
+            else ("VĂZUT" if item.watched else "DE VĂZUT")
+        )
+        state.setObjectName("Kicker" if not item.watched else "Score")
+        layout.addWidget(state)
+
+        if hasattr(window, "poster_label"):
+            poster = window.poster_label(176, 258)
+        else:
+            poster = QLabel()
+            poster.setFixedSize(176, 258)
+            poster.setAlignment(Qt.AlignCenter)
+            poster.setObjectName("Muted")
+        self.poster = poster
+        poster.setObjectName("StoryPoster")
+        poster.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        layout.addWidget(poster, alignment=Qt.AlignHCenter)
+
+        title = QLabel(display_title(item.film))
+        title.setObjectName("CardTitle")
+        title.setWordWrap(True)
+        title.setFixedHeight(42)
+        layout.addWidget(title)
+
+        period_text = item.period or "Neconfirmată"
+        season_text = item.season or "Neconfirmat"
+        period = QLabel("Acțiunea: " + short(period_text, 48))
+        period.setObjectName("Muted")
+        period.setWordWrap(True)
+        period.setFixedHeight(32)
+        period.setToolTip(period_text)
+        layout.addWidget(period)
+
+        season = QLabel("Luna / anotimpul: " + short(season_text, 40))
+        season.setObjectName("Muted")
+        season.setWordWrap(True)
+        season.setFixedHeight(32)
+        season.setToolTip(season_text)
+        layout.addWidget(season)
+
+        meta_bits = []
+        if item.release_year:
+            meta_bits.append(f"Lansare {item.release_year}")
+        if item.imdb_rating is not None:
+            meta_bits.append(f"IMDb {item.imdb_rating:.1f}")
+        meta = QLabel(" • ".join(meta_bits) if meta_bits else "IMDb neidentificat")
+        meta.setObjectName("Muted")
+        meta.setWordWrap(True)
+        meta.setFixedHeight(28)
+        layout.addWidget(meta)
+
+        row = QHBoxLayout()
+        details = QPushButton("Detalii")
+        details.clicked.connect(lambda _checked=False, x=item: detail_callback(x))
+        row.addWidget(details)
+        if item.imdb_id:
+            imdb = QPushButton("IMDb")
+            imdb.clicked.connect(
+                lambda _checked=False, iid=item.imdb_id:
+                QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))
+            )
+            row.addWidget(imdb)
+        layout.addLayout(row)
+
+        self._overlay = QFrame(self)
+        self._overlay.setObjectName("StoryHover")
+        self._overlay.setStyleSheet(
+            "QFrame#StoryHover{"
+            "background:rgba(18,20,24,245);"
+            "border:1px solid rgba(255,255,255,45);"
+            "border-radius:12px;}"
+        )
+        overlay = QVBoxLayout(self._overlay)
+        overlay.setContentsMargins(15, 14, 15, 15)
+        overlay.setSpacing(8)
+
+        hover_title = QLabel(display_title(item.film))
+        hover_title.setObjectName("SectionTitle")
+        hover_title.setWordWrap(True)
+        overlay.addWidget(hover_title)
+
+        hover_period = QLabel("Perioada acțiunii\n" + (item.period or "Neconfirmată"))
+        hover_period.setObjectName("BodyStrong")
+        hover_period.setWordWrap(True)
+        overlay.addWidget(hover_period)
+
+        hover_season = QLabel("Luna / anotimpul\n" + (item.season or "Neconfirmat"))
+        hover_season.setObjectName("Muted")
+        hover_season.setWordWrap(True)
+        overlay.addWidget(hover_season)
+
+        hover_context = QLabel("Descriere\n" + (item.context or "Neconfirmată"))
+        hover_context.setObjectName("Muted")
+        hover_context.setWordWrap(True)
+        hover_context.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        overlay.addWidget(hover_context, 1)
+
+        hover_source = QLabel("Certitudine / sursă: " + (item.certainty_source or "Neconfirmată"))
+        hover_source.setObjectName("Muted")
+        hover_source.setWordWrap(True)
+        overlay.addWidget(hover_source)
+
+        actions = QHBoxLayout()
+        detail = QPushButton("Vezi detalii")
+        detail.setProperty("accent", True)
+        detail.clicked.connect(lambda _checked=False, x=item: detail_callback(x))
+        actions.addWidget(detail)
+        if item.imdb_id:
+            imdb = QPushButton("IMDb")
+            imdb.clicked.connect(
+                lambda _checked=False, iid=item.imdb_id:
+                QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))
+            )
+            actions.addWidget(imdb)
+        actions.addStretch(1)
+        overlay.addLayout(actions)
+        self._overlay.hide()
+
+    def _start_poster(self):
+        if self._poster_started:
+            return
+        self._poster_started = True
+        item = self.item
+        if item.poster_url and hasattr(self.window, "load_poster_async"):
+            self.window.load_poster_async(
+                self.poster,
+                item.poster_url,
+                item.imdb_id or str(item.local_movie_id or item.film),
+                lambda _message, x=item: self.poster_failed_callback(x),
+            )
+        else:
+            self.poster.setText("CINECALENDAR\n\n" + self.short(display_title(item.film), 42))
+            self.poster.setWordWrap(True)
+            self.poster.setAlignment(Qt.AlignCenter)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._start_poster)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._overlay.setGeometry(self.rect().adjusted(1, 1, -1, -1))
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._overlay.setGeometry(self.rect().adjusted(1, 1, -1, -1))
+        self._overlay.raise_()
+        self._overlay.show()
+
+    def leaveEvent(self, event):
+        self._overlay.hide()
+        super().leaveEvent(event)
+
+
+class _StoryShelf(QWidget):
+    """Chronology shelf with edge arrows and horizontal mouse-drag navigation."""
+
+    def __init__(self, items, card_factory, parent=None):
+        super().__init__(parent)
+        self.items = list(items)
+        self.card_factory = card_factory
+
+        outer = QGridLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setHorizontalSpacing(0)
+        outer.setVerticalSpacing(0)
+
+        self.scroll = _StoryDragScrollArea(self)
+        self.scroll.setFixedHeight(478)
+        outer.addWidget(self.scroll, 0, 0)
+
+        self.strip = QWidget()
+        row = QHBoxLayout(self.strip)
+        row.setContentsMargins(5, 3, 5, 8)
+        row.setSpacing(12)
+
+        self.visible_count = min(8, len(self.items))
+        for item in self.items[:self.visible_count]:
+            row.addWidget(self.card_factory(item), 0, Qt.AlignTop)
+
+        row.addStretch(1)
+        self.strip.setMinimumHeight(466)
+        self.strip.setMinimumWidth(max(220, self.visible_count * 210 + 32))
+        self.scroll.setWidget(self.strip)
+
+        self.left = QPushButton("‹", self)
+        self.right = QPushButton("›", self)
+        for button in (self.left, self.right):
+            button.setObjectName("StoryArrow")
+            button.setFixedSize(42, 72)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(
+                "QPushButton#StoryArrow{"
+                "background:rgba(18,20,24,215);color:white;"
+                "border:1px solid rgba(255,255,255,45);"
+                "border-radius:12px;font-size:28px;font-weight:600;}"
+                "QPushButton#StoryArrow:hover{background:rgba(42,46,54,245);}"
+            )
+        self.left.clicked.connect(lambda: self._page(-1))
+        self.right.clicked.connect(lambda: self._page(1))
+        outer.addWidget(self.left, 0, 0, Qt.AlignVCenter | Qt.AlignLeft)
+        outer.addWidget(self.right, 0, 0, Qt.AlignVCenter | Qt.AlignRight)
+
+        bar = self.scroll.horizontalScrollBar()
+        bar.valueChanged.connect(self._sync_arrows)
+        bar.rangeChanged.connect(lambda *_args: self._sync_arrows())
+        self._sync_arrows()
+
+    def _page(self, direction):
+        bar = self.scroll.horizontalScrollBar()
+        step = max(240, int(self.scroll.viewport().width() * 0.82))
+        bar.setValue(bar.value() + direction * step)
+
+    def _sync_arrows(self):
+        bar = self.scroll.horizontalScrollBar()
+        maximum = bar.maximum()
+        value = bar.value()
+        self.left.setVisible(value > 0)
+        self.right.setVisible(value < maximum)
+
+
+
 def install_romanian_list_ui_patch(window_cls) -> None:
     """Replace the legacy Word-table rendering with a streaming-library style browser."""
     if getattr(window_cls, "_romanian_list_ui_patch_installed", False):
