@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QUrl, QTimer
+from PySide6.QtWidgets import QScroller
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
@@ -235,87 +236,79 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         root.addLayout(actions)
         dialog.exec()
 
-    def _poster_card(self, item):
-        card = QFrame()
-        card.setObjectName("PremiumCard")
-        card.setFixedWidth(198)
-        card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(10, 10, 10, 12)
-        layout.setSpacing(8)
-
-        state = QLabel(
-            f"VĂZUT  {item.user_rating}/10"
-            if item.watched and item.user_rating
-            else ("VĂZUT" if item.watched else "DE VĂZUT")
+    def _poster_card(self, item, parent=None):
+        return _StoryPosterCard(
+            self,
+            item,
+            _short,
+            lambda x: _detail_dialog(self, x),
+            lambda x: _poster_failed(self, x),
+            parent,
         )
-        state.setObjectName("Kicker" if not item.watched else "Score")
-        state.setAlignment(Qt.AlignLeft)
-        layout.addWidget(state)
 
-        if hasattr(self, "poster_label"):
-            poster = self.poster_label(176, 258)
-        else:
-            poster = QLabel()
-            poster.setFixedSize(176, 258)
-            poster.setAlignment(Qt.AlignCenter)
-            poster.setObjectName("Muted")
-        if item.poster_url and hasattr(self, "load_poster_async"):
-            self.load_poster_async(
-                poster,
-                item.poster_url,
-                item.imdb_id or str(item.local_movie_id or item.film),
-                lambda _message, x=item: _poster_failed(self, x),
-            )
-        else:
-            placeholder = display_title(item.film)
-            if len(placeholder) > 42:
-                placeholder = _short(placeholder, 42)
-            poster.setText("CINECALENDAR\n\n" + placeholder)
-            poster.setWordWrap(True)
-            poster.setAlignment(Qt.AlignCenter)
-        layout.addWidget(poster, alignment=Qt.AlignHCenter)
+    def _open_chapter_catalog(self, title, items):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Catalog complet • " + title)
+        dialog.resize(1180, 820)
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(22, 20, 22, 20)
+        root.setSpacing(12)
 
-        title = QLabel(display_title(item.film))
-        title.setObjectName("CardTitle")
-        title.setWordWrap(True)
-        title.setFixedHeight(46)
-        layout.addWidget(title)
+        head = QHBoxLayout()
+        heading = QLabel(title)
+        heading.setObjectName("HeroTitle")
+        heading.setWordWrap(True)
+        head.addWidget(heading, 1)
+        total = QLabel(f"{len(items)} titluri")
+        total.setObjectName("Muted")
+        head.addWidget(total)
+        root.addLayout(head)
 
-        period = QLabel(_short(item.period or "Perioadă neconfirmată", 48))
-        period.setObjectName("Muted")
-        period.setWordWrap(True)
-        period.setFixedHeight(38)
-        period.setToolTip(item.period or "")
-        layout.addWidget(period)
+        hint = QLabel(
+            "Catalogul folosește perioada acțiunii și luna/anotimpul din lista cronologică. "
+            "Unde informația nu este confirmată, este afișat explicit acest lucru."
+        )
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
 
-        meta_bits = []
-        if item.release_year:
-            meta_bits.append(str(item.release_year))
-        if item.imdb_rating is not None:
-            meta_bits.append(f"IMDb {item.imdb_rating:.1f}")
-        if item.season and "neconfirm" not in item.season.lower():
-            meta_bits.append(_short(item.season, 22))
-        if meta_bits:
-            meta = QLabel(" • ".join(meta_bits))
-            meta.setObjectName("Muted")
-            meta.setWordWrap(True)
-            layout.addWidget(meta)
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        grid = QGridLayout(inner)
+        grid.setContentsMargins(4, 4, 4, 4)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(14)
+        area.setWidget(inner)
+        root.addWidget(area, 1)
 
-        row = QHBoxLayout()
-        details = QPushButton("Detalii")
-        details.clicked.connect(lambda _checked=False, x=item: _detail_dialog(self, x))
-        row.addWidget(details)
-        if item.imdb_id:
-            imdb = QPushButton("IMDb")
-            imdb.clicked.connect(
-                lambda _checked=False, iid=item.imdb_id:
-                QDesktopServices.openUrl(QUrl(f"https://www.imdb.com/title/{iid}/"))
-            )
-            row.addWidget(imdb)
-        layout.addLayout(row)
-        return card
+        loaded = 0
+        columns = 4
+        chunk = 20
 
+        def append_chunk():
+            nonlocal loaded
+            end = min(len(items), loaded + chunk)
+            for index in range(loaded, end):
+                grid.addWidget(
+                    _poster_card(self, items[index], inner),
+                    index // columns,
+                    index % columns,
+                )
+            loaded = end
+            more.setText(f"Încarcă încă ({len(items) - loaded})")
+            more.setVisible(loaded < len(items))
+
+        more = QPushButton()
+        more.setProperty("accent", True)
+        more.clicked.connect(append_chunk)
+        root.addWidget(more)
+        append_chunk()
+        dialog.exec()
+
+    def _open_complete_catalog(self):
+        self._open_chapter_catalog("Toate filmele românești", romanian_films(self.db))
     def _next_up_hero(self, item):
         box = QFrame()
         box.setObjectName("DetailHero")
@@ -402,58 +395,32 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         block = QWidget()
         outer = QVBoxLayout(block)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(8)
+        outer.setSpacing(7)
 
         head = QHBoxLayout()
         title = QLabel(chapter["title"])
         title.setObjectName("SectionTitle")
         title.setWordWrap(True)
         head.addWidget(title, 1)
+
         count = QLabel(f"{len(items)} titluri")
         count.setObjectName("Muted")
         head.addWidget(count)
+
+        see_all = QPushButton("Vezi tot")
+        see_all.clicked.connect(
+            lambda _checked=False, t=chapter["title"], xs=list(items):
+            _open_chapter_catalog(self, t, xs)
+        )
+        head.addWidget(see_all)
         outer.addLayout(head)
 
-        rail = QScrollArea()
-        rail.setFrameShape(QFrame.NoFrame)
-        rail.setWidgetResizable(False)
-        rail.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        rail.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        rail.setFixedHeight(500)
-
-        strip = QWidget()
-        row = QHBoxLayout(strip)
-        row.setContentsMargins(0, 0, 6, 8)
-        row.setSpacing(12)
-        # Build only the first shelf. Hundreds of offscreen poster widgets and
-        # downloads used to delay navigation even when the user never scrolled.
-        shown = min(8, len(items))
-        for item in items[:shown]:
-            row.addWidget(_poster_card(self, item), 0, Qt.AlignTop)
-        more = QPushButton()
-        more.setFixedSize(198, 180)
-        more.setProperty("accent", True)
-
-        def add_next():
-            nonlocal shown
-            end = min(len(items), shown + 12)
-            for item in items[shown:end]:
-                row.insertWidget(row.indexOf(more), _poster_card(self, item), 0, Qt.AlignTop)
-            shown = end
-            remaining = len(items) - shown
-            more.setText(f"Arată încă {min(12, remaining)}\n{remaining} rămase")
-            more.setVisible(remaining > 0)
-            strip.setMinimumWidth(shown * 210 + (210 if remaining else 0) + 24)
-
-        if shown < len(items):
-            more.setText(f"Arată încă {min(12, len(items) - shown)}\n{len(items) - shown} rămase")
-            more.clicked.connect(add_next)
-            row.addWidget(more, 0, Qt.AlignVCenter)
-        row.addStretch(1)
-        strip.setMinimumWidth((shown + int(shown < len(items))) * 210 + 24)
-        strip.setMinimumHeight(470)
-        rail.setWidget(strip)
-        outer.addWidget(rail)
+        shelf = _StoryShelf(
+            items,
+            lambda item: _poster_card(self, item),
+            block,
+        )
+        outer.addWidget(shelf)
         return block
 
     def page_romanian_list(self):
@@ -481,8 +448,8 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         hero = QFrame()
         hero.setObjectName("HeroCard")
         hl = QVBoxLayout(hero)
-        hl.setContentsMargins(24, 22, 24, 22)
-        hl.setSpacing(12)
+        hl.setContentsMargins(20, 16, 20, 16)
+        hl.setSpacing(8)
 
         kicker = QLabel("FILME ROMÂNEȘTI • CRONOLOGIA ACȚIUNII")
         kicker.setObjectName("Kicker")
@@ -499,21 +466,36 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         intro.setWordWrap(True)
         hl.addWidget(intro)
 
-        stats = QGridLayout()
-        stats.setHorizontalSpacing(8)
-        stats.setVerticalSpacing(8)
+        stats = QHBoxLayout()
+        stats.setSpacing(7)
         linked_count = sum(1 for item in all_entries if item.imdb_id)
         poster_count = sum(1 for item in all_entries if item.poster_url)
-        for index, (value, caption) in enumerate((
-            (len(all_entries), "în colecție"), (len(unwatched), "de văzut"),
-            (len(watched), "văzute"), (linked_count, "IMDb identificate"),
+
+        def compact_metric(value, caption):
+            badge = QFrame()
+            badge.setObjectName("MetricCompact")
+            badge.setFixedHeight(46)
+            badge_layout = QVBoxLayout(badge)
+            badge_layout.setContentsMargins(10, 5, 10, 5)
+            badge_layout.setSpacing(0)
+            number = QLabel(str(value))
+            number.setObjectName("BodyStrong")
+            caption_label = QLabel(caption)
+            caption_label.setObjectName("Muted")
+            badge_layout.addWidget(number)
+            badge_layout.addWidget(caption_label)
+            return badge
+
+        for value, caption in (
+            (len(all_entries), "în colecție"),
+            (len(unwatched), "de văzut"),
+            (len(watched), "văzute"),
+            (linked_count, "IMDb"),
             (poster_count, "postere"),
-        )):
-            badge = self.metric_badge(str(value), caption) if hasattr(self, "metric_badge") else QLabel(str(value))
-            stats.addWidget(badge, index // 3, index % 3)
-        for column in range(3):
-            stats.setColumnStretch(column, 1)
+        ):
+            stats.addWidget(compact_metric(value, caption), 1)
         hl.addLayout(stats)
+
 
         progress = QProgressBar()
         progress.setRange(0, max(1, len(all_entries)))
@@ -527,6 +509,10 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         filters.addWidget(_filter_button(self, "Văzute", "watched", mode, len(watched)))
         filters.addWidget(_filter_button(self, "Toate", "all", mode, len(all_entries)))
         filters.addStretch(1)
+        catalog_button = QPushButton(f"Catalog complet  •  {len(all_entries)}")
+        catalog_button.setProperty("accent", True)
+        catalog_button.clicked.connect(lambda _checked=False: _open_complete_catalog(self))
+        filters.addWidget(catalog_button)
         hl.addLayout(filters)
 
         search_row = QHBoxLayout()
