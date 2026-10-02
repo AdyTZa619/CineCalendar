@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl, QTimer
+from PySide6.QtCore import Qt, QUrl, QTimer, QPoint
 from PySide6.QtWidgets import QScroller
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
@@ -182,6 +182,38 @@ class _StoryPosterCard(QFrame):
         actions.addStretch(1)
         overlay.addLayout(actions)
         self._overlay.hide()
+        self._drag_start = None
+        self._drag_origin = 0
+
+    def _story_scroll_area(self):
+        widget = self.parentWidget()
+        while widget is not None:
+            if isinstance(widget, _StoryDragScrollArea):
+                return widget
+            widget = widget.parentWidget()
+        return None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start = event.position().toPoint()
+            scroll = self._story_scroll_area()
+            self._drag_origin = scroll.horizontalScrollBar().value() if scroll else 0
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start is not None and event.buttons() & Qt.LeftButton:
+            delta = event.position().toPoint().x() - self._drag_start.x()
+            if abs(delta) >= 8:
+                scroll = self._story_scroll_area()
+                if scroll is not None:
+                    scroll.horizontalScrollBar().setValue(self._drag_origin - delta)
+                    event.accept()
+                    return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start = None
+        super().mouseReleaseEvent(event)
 
     def _start_poster(self):
         if self._poster_started:
@@ -652,6 +684,11 @@ def install_romanian_list_ui_patch(window_cls) -> None:
         period.setObjectName("BodyStrong")
         period.setWordWrap(True)
         right.addWidget(period)
+
+        story_season = QLabel("Luna / anotimpul: " + (item.season or "Neconfirmat"))
+        story_season.setObjectName("Muted")
+        story_season.setWordWrap(True)
+        right.addWidget(story_season)
 
         if item.context:
             context = QLabel(_short(item.context, 240))
