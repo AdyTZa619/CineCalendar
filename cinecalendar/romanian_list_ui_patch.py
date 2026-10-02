@@ -220,12 +220,17 @@ class _StoryPosterCard(QFrame):
 
 
 class _StoryShelf(QWidget):
-    """Chronology shelf with edge arrows and horizontal mouse-drag navigation."""
+    """Chronology shelf with edge arrows, drag scrolling and lazy card loading."""
+
+    CARD_STEP = 210
+    BATCH_SIZE = 8
 
     def __init__(self, items, card_factory, parent=None):
         super().__init__(parent)
         self.items = list(items)
         self.card_factory = card_factory
+        self._loaded = 0
+        self._syncing = False
 
         outer = QGridLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -237,18 +242,12 @@ class _StoryShelf(QWidget):
         outer.addWidget(self.scroll, 0, 0)
 
         self.strip = QWidget()
-        row = QHBoxLayout(self.strip)
-        row.setContentsMargins(5, 3, 5, 8)
-        row.setSpacing(12)
-
-        self.visible_count = min(8, len(self.items))
-        for item in self.items[:self.visible_count]:
-            row.addWidget(self.card_factory(item), 0, Qt.AlignTop)
-
-        row.addStretch(1)
-        self.strip.setMinimumHeight(466)
-        self.strip.setMinimumWidth(max(220, self.visible_count * 210 + 32))
+        self.row = QHBoxLayout(self.strip)
+        self.row.setContentsMargins(5, 3, 5, 8)
+        self.row.setSpacing(12)
+        self.row.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.scroll.setWidget(self.strip)
+        self._append_batch()
 
         self.left = QPushButton("‹", self)
         self.right = QPushButton("›", self)
@@ -273,18 +272,51 @@ class _StoryShelf(QWidget):
         bar.rangeChanged.connect(lambda *_args: self._sync_arrows())
         self._sync_arrows()
 
+    def _append_batch(self, count=None):
+        remaining = len(self.items) - self._loaded
+        if remaining <= 0:
+            self._refresh_strip_width()
+            return False
+        amount = min(int(count or self.BATCH_SIZE), remaining)
+        end = self._loaded + amount
+        for item in self.items[self._loaded:end]:
+            self.row.addWidget(self.card_factory(item), 0, Qt.AlignTop)
+        self._loaded = end
+        self._refresh_strip_width()
+        return True
+
+    def _refresh_strip_width(self):
+        width = max(220, self._loaded * self.CARD_STEP + 24)
+        self.strip.setMinimumWidth(width)
+        self.strip.setMinimumHeight(466)
+
     def _page(self, direction):
         bar = self.scroll.horizontalScrollBar()
+        if direction > 0 and self._loaded < len(self.items):
+            # A right-arrow click is allowed to fetch the next shelf segment
+            # even when the currently loaded cards do not overflow the viewport.
+            old_max = bar.maximum()
+            if old_max == 0 or bar.value() >= old_max - 90:
+                self._append_batch()
         step = max(240, int(self.scroll.viewport().width() * 0.82))
         bar.setValue(bar.value() + direction * step)
 
     def _sync_arrows(self):
-        bar = self.scroll.horizontalScrollBar()
-        maximum = bar.maximum()
-        value = bar.value()
-        self.left.setVisible(value > 0)
-        self.right.setVisible(value < maximum)
-
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            bar = self.scroll.horizontalScrollBar()
+            maximum = bar.maximum()
+            value = bar.value()
+            if self._loaded < len(self.items) and maximum and value >= maximum - 90:
+                self._append_batch()
+                maximum = bar.maximum()
+                value = bar.value()
+            self.left.setVisible(value > 0)
+            self.right.setVisible(self._loaded < len(self.items) or value < maximum)
+        finally:
+            self._syncing = False
 
 
 def install_romanian_list_ui_patch(window_cls) -> None:
