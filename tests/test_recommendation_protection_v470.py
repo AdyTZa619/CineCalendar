@@ -185,4 +185,8 @@ def test_recommendations_page_exposes_formula_guard_and_recalibration_state():
     assert "PROTECȚIA RECOMANDĂRILOR" in ui
     assert "Revenire automată activă" in ui
     assert "feedbackul temporar nu îl repornește" in ui
+    assert "Rezultate post-recomandare cu notă" in ui
+    assert "ratinguri totale" in ui
+    assert "Protecția live folosește separat" in ui
+    assert "Acoperire ALS" in ui
     assert "Accuracy 4.7" in accuracy
