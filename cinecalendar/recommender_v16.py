@@ -23,7 +23,9 @@ def recommendation_engine_identity(engine_or_cls) -> str:
     )
     als = round(float(getattr(engine_or_cls, "ALS_WEIGHT", .70)), 2)
     content = round(float(getattr(engine_or_cls, "CONTENT_WEIGHT", 1.0 - als)), 2)
-    return f"{learning}|{hybrid}|als{int(als*100):02d}-content{int(content*100):02d}"
+    base = f"{learning}|{hybrid}|als{int(als*100):02d}-content{int(content*100):02d}"
+    mode = str(getattr(engine_or_cls, "ENGINE_MODE_IDENTITY", "") or "").strip()
+    return f"{base}|{mode}" if mode else base
 
 
 class FastRecommendationEngineV16(FastRecommendationEngineV15):

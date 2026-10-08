@@ -10,6 +10,7 @@ from .single_instance import SingleInstanceGuard
 from .updater import parse_special_startup, write_health_marker
 from .updater_v3 import cleanup_update_residue
 from .v5_alpha_runtime import V5_ALPHA_MUTEX, V5_ALPHA_VERSION, is_v5_alpha, show_alpha_startup_error
+from .unified_data import AlphaMergeError
 
 
 PERSONAL_ACCEPTANCE_FLAG = "--personal-acceptance"
@@ -87,6 +88,16 @@ def main():
     try:
         try:
             service = CineCalendarService()
+        except AlphaMergeError as exc:
+            # A failed reconciliation must never silently open an incomplete profile.
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    None, str(exc), "CineCalendar — unirea bazelor de date", 0x00000010
+                )
+            except Exception:
+                print(str(exc), file=sys.stderr)
+            return 3
         except FileNotFoundError as exc:
             if alpha_mode:
                 show_alpha_startup_error(str(exc))

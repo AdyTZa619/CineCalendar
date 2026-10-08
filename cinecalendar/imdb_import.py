@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterable
 from .db import Database
 from .util import identity_key, json_dumps, normalize_text, sha256_file, split_csvish, to_float, to_int, utcnow_iso
+from .recommendation_outcomes_v42 import reconcile_recommendation_outcomes
 
 ALIASES = {
     "const": ["Const", "IMDb ID", "imdb_id", "tconst"],
@@ -189,6 +190,8 @@ def import_imdb_csv(db: Database, path: str | Path) -> ImportResult:
             raise ValueError("Import oprit; CSV invalid la unele linii: " + "; ".join(result.errors[:5]))
         con.execute("INSERT INTO import_files(path_name,size_bytes,mtime_ns,sha256,row_count,imported_at) VALUES(?,?,?,?,?,?)",
                     (path.name, stat.st_size, stat.st_mtime_ns, digest, expected_count, now))
+    if result.new_ratings or result.changed_ratings:
+        reconcile_recommendation_outcomes(db)
     return result
 
 
@@ -230,4 +233,6 @@ def add_manual_rating(db: Database, title: str, year: int | None, rating: int, i
         con.execute("""INSERT INTO ratings(movie_id,rating,date_rated,source,imported_at,updated_at) VALUES(?,?,date('now'),'manual',?,?)
                      ON CONFLICT(movie_id) DO UPDATE SET rating=excluded.rating,date_rated=excluded.date_rated,source='manual',updated_at=excluded.updated_at""",
                     (movie_id, int(rating), now, now))
-        return int(movie_id)
+        result_movie_id = int(movie_id)
+    reconcile_recommendation_outcomes(db)
+    return result_movie_id

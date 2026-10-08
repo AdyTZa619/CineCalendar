@@ -148,6 +148,27 @@ def _remove_future(db: Database, window: TemporalWindowV37) -> None:
     build_profile(db)
 
 
+def _hidden_rating_trace(ranked_imdb_ids: list[str], holdout: list[HoldoutRating]) -> list[dict]:
+    positions = {
+        str(iid): rank
+        for rank, iid in enumerate([str(x) for x in ranked_imdb_ids if str(x)], start=1)
+    }
+    out = []
+    for row in holdout:
+        rating = int(row.rating)
+        if rating < 8 and rating > 4:
+            continue
+        iid = str(row.imdb_id or "")
+        if not iid:
+            continue
+        out.append({
+            "imdb_id": iid,
+            "rating": rating,
+            "rank": positions.get(iid),
+        })
+    return out
+
+
 def _candidate_imdb_ids(engine, eval_date: date, test_db: Database, candidate_limit: int) -> list[str]:
     rowids = engine._balanced_candidate_ids(eval_date, max(100, int(candidate_limit)))
     out: list[str] = []
@@ -262,6 +283,11 @@ def _evaluate_window_db(
             ),
             "top3_quality": ranking_quality_metrics(top3_imdb, holdout, cutoffs=(3,)),
             "top3_outcomes": visible_outcome_metrics(top3_imdb, holdout, k=3),
+            "hidden_trace": {
+                "candidate": _hidden_rating_trace(candidate_imdb, holdout),
+                "final": _hidden_rating_trace(final_imdb, holdout),
+                "top3": _hidden_rating_trace(top3_imdb, holdout),
+            },
             "top3_gate": engine.quality_gate_status(),
             "candidate_generation": engine.candidate_generation_status(),
             "adaptive": engine.adaptive.status(),
