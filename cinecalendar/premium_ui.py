@@ -1017,23 +1017,91 @@ class PremiumDecisionWindow(DecisionWindow):
         note=QLabel(detail); note.setObjectName("Muted"); note.setWordWrap(True); layout.addWidget(note)
 
         ready = reliability.measurement_ready
+
+        try:
+            collaborative = dict(self.s.recommender.collaborative.status() or {})
+        except Exception:
+            collaborative = {}
+        total_profile_ratings = int(collaborative.get("total_ratings", 0) or 0)
+        mapped_als_ratings = int(collaborative.get("mapped_ratings", 0) or 0)
+        mapping_coverage = float(collaborative.get("mapping_coverage", 0.0) or 0.0)
+
+        live_active = live.get("active") or {}
+        live_comparison = live.get("comparison") or {}
+        live_rated = int(live_active.get("rated", 0) or 0)
+        live_chosen = int(live_active.get("chosen", 0) or 0)
+        live_rated_min = int(live_comparison.get("minimum_rated_each", 20) or 20)
+        live_chosen_min = int(live_comparison.get("minimum_chosen_each", 25) or 25)
+
+        evidence = QFrame()
+        evidence.setObjectName("EvidenceBreakdown")
+        evidence_layout = QVBoxLayout(evidence)
+        evidence_layout.setContentsMargins(12, 10, 12, 10)
+        evidence_layout.setSpacing(4)
+
+        evidence_title = QLabel("Ce înseamnă rezultatele de mai jos")
+        evidence_title.setObjectName("BodyStrong")
+        evidence_layout.addWidget(evidence_title)
+
+        if total_profile_ratings:
+            if live_state in {"collecting", "protected"}:
+                evidence_text = (
+                    f"Profilul tău are {total_profile_ratings:,} ratinguri totale. "
+                    f"Validarea preciziei folosește doar rezultate post-recomandare: "
+                    f"{reliability.rated_outcomes}/{MIN_MEASURED_OUTCOMES}. "
+                    f"Protecția live folosește separat {live_rated}/{live_rated_min} ratinguri "
+                    f"și {live_chosen}/{live_chosen_min} alegeri."
+                )
+            else:
+                evidence_text = (
+                    f"Profilul tău are {total_profile_ratings:,} ratinguri totale. "
+                    f"Validarea preciziei folosește doar rezultate post-recomandare: "
+                    f"{reliability.rated_outcomes}/{MIN_MEASURED_OUTCOMES}."
+                )
+        else:
+            evidence_text = (
+                "Rezultatele post-recomandare sunt separate de numărul total de ratinguri din profil."
+            )
+
+        evidence_detail = QLabel(evidence_text)
+        evidence_detail.setObjectName("Muted")
+        evidence_detail.setWordWrap(True)
+        evidence_layout.addWidget(evidence_detail)
+
+        if mapping_coverage and total_profile_ratings:
+            als_detail = QLabel(
+                f"ALS: {mapped_als_ratings:,}/{total_profile_ratings:,} ratinguri sunt mapate la "
+                f"MovieLens ({mapping_coverage*100:.0f}%). Ratingurile nemapate rămân disponibile "
+                "pentru partea de conținut și profilul local."
+            )
+            als_detail.setObjectName("Muted")
+            als_detail.setWordWrap(True)
+            evidence_layout.addWidget(als_detail)
+
+        layout.addWidget(evidence)
+
         reliability_title = QLabel(
-            "Precizia estimărilor este validată" if ready else "Precizia estimărilor este încă în măsurare"
+            "Precizia estimărilor este validată"
+            if ready else
+            "Precizia estimărilor este încă în măsurare"
         )
         reliability_title.setObjectName("BodyStrong")
         layout.addWidget(reliability_title)
+
         measured_progress=QProgressBar()
-        measured_progress.setRange(0,MIN_MEASURED_OUTCOMES)
-        measured_progress.setValue(min(reliability.rated_outcomes,MIN_MEASURED_OUTCOMES))
+        measured_progress.setRange(0, MIN_MEASURED_OUTCOMES)
+        measured_progress.setValue(min(reliability.rated_outcomes, MIN_MEASURED_OUTCOMES))
         measured_progress.setFormat(
-            f"Rezultate reale cu notă: {reliability.rated_outcomes}/{MIN_MEASURED_OUTCOMES} minim"
+            f"Rezultate post-recomandare cu notă: {reliability.rated_outcomes}/{MIN_MEASURED_OUTCOMES}"
         )
         measured_progress.setTextVisible(True); measured_progress.setFixedHeight(18)
         layout.addWidget(measured_progress)
+
         mae = f"{reliability.mae:.2f}" if reliability.mae is not None else "—"
         within = f"{reliability.within_one*100:.0f}%" if reliability.within_one is not None else "—"
         reliability_detail=QLabel(
-            f"Eroare medie: {mae} puncte (țintă ≤1.00) • în ±1 punct: {within} (țintă ≥65%)."
+            f"Pragul de precizie este {MIN_MEASURED_OUTCOMES} rezultate; "
+            f"eroare medie: {mae} puncte (țintă ≤1.00) • în ±1 punct: {within} (țintă ≥65%)."
         )
         reliability_detail.setObjectName("Muted"); reliability_detail.setWordWrap(True)
         layout.addWidget(reliability_detail)
