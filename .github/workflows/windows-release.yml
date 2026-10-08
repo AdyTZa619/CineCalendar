@@ -346,7 +346,7 @@ jobs:
           $sha = '${{ steps.package.outputs.zip_sha }}'
           $version = '${{ steps.package.outputs.version }}'
           $repo = '${{ github.repository }}'
-          if ($version -ne '4.16.1') { throw "Unexpected preview version $version" }
+          if ($version -ne '4.16.2') { throw "Unexpected preview version $version" }
           $notes = @'
           Versiune de test, fără integrare în main.
           Un singur CineCalendar.exe, cu Stabil / Descoperire / Adaptiv în aceeași aplicație și aceeași CineCalendarData.
