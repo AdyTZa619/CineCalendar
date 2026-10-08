@@ -299,6 +299,11 @@ class _StoryShelf(QWidget):
         outer.addWidget(self.left, 0, 0, Qt.AlignVCenter | Qt.AlignLeft)
         outer.addWidget(self.right, 0, 0, Qt.AlignVCenter | Qt.AlignRight)
 
+        self.more = QPushButton("Arată încă")
+        self.more.setCursor(Qt.PointingHandCursor)
+        self.more.clicked.connect(self._show_more)
+        outer.addWidget(self.more, 0, 0, Qt.AlignBottom | Qt.AlignHCenter)
+
         bar = self.scroll.horizontalScrollBar()
         bar.valueChanged.connect(self._sync_arrows)
         bar.rangeChanged.connect(lambda *_args: self._sync_arrows())
@@ -322,6 +327,10 @@ class _StoryShelf(QWidget):
         self.strip.setMinimumWidth(width)
         self.strip.setMinimumHeight(466)
 
+    def _show_more(self):
+        if self._append_batch():
+            self._sync_arrows()
+
     def _page(self, direction):
         bar = self.scroll.horizontalScrollBar()
         if direction > 0 and self._loaded < len(self.items):
@@ -341,6 +350,7 @@ class _StoryShelf(QWidget):
             bar = self.scroll.horizontalScrollBar()
             maximum = bar.maximum()
             value = bar.value()
+            self.more.setVisible(self._loaded < len(self.items))
             if self._loaded < len(self.items) and maximum and value >= maximum - 90:
                 self._append_batch()
                 maximum = bar.maximum()
@@ -829,7 +839,7 @@ def install_romanian_list_ui_patch(window_cls) -> None:
             (len(all_entries), "în colecție"),
             (len(unwatched), "de văzut"),
             (len(watched), "văzute"),
-            (linked_count, "IMDb"),
+            (linked_count, "IMDb identificate"),
             (poster_count, "postere"),
         ):
             stats.addWidget(compact_metric(value, caption), 1)
