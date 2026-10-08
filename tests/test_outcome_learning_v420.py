@@ -150,6 +150,28 @@ def test_reconcile_closes_chosen_started_watched_rating_loop(tmp_path):
     assert perf.top1_liked_rate == 1.0
 
 
+def test_reconcile_closes_rating_after_exposure_without_explicit_action(tmp_path):
+    db = Database(tmp_path / "rated-without-action.db")
+    mid = _movie(db, 5, "Rated after recommendation")
+    eid = _exposure(db, mid, day="2026-09-18", predicted=7.6, rank=3)
+    _rating(db, mid, 8, "2026-09-20")
+
+    assert reconcile_recommendation_outcomes(db) == 1
+    with db.connect() as con:
+        row = con.execute(
+            "SELECT actual_rating,predicted_rating,absolute_error,chosen_at,watched_at "
+            "FROM recommendation_outcomes WHERE exposure_history_id=?",
+            (eid,),
+        ).fetchone()
+    assert row is not None
+    assert row["actual_rating"] == 8
+    assert float(row["predicted_rating"]) == 7.6
+    assert abs(float(row["absolute_error"]) - .4) < 1e-9
+    assert row["chosen_at"] is None
+    assert row["watched_at"] is None
+    assert recommendation_performance(db).rated_outcomes == 1
+
+
 def test_one_real_rating_is_owned_by_latest_explicit_exposure(tmp_path):
     db = Database(tmp_path / "dedupe-outcome.db")
     mid = _movie(db, 2, "Repeated choice")
