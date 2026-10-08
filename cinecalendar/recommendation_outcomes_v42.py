@@ -30,11 +30,14 @@ class RecommendationPerformance:
 
 
 def reconcile_recommendation_outcomes(db) -> int:
-    """Link recommendation exposures to later choice/watch events and the eventual IMDb rating.
+    """Link recommendation exposures to later user outcomes and IMDb ratings.
 
-    Only exposures with an explicit choice, confirmed playback, or watched event become outcomes.
-    A later rating is attached only when its date/update is not older than the recommendation day,
-    avoiding accidental linkage to legacy ratings.
+    A recommendation exposure can become a measured outcome either through an explicit
+    choice/watch event or through a later rating of that exact exposed title. A later rating is
+    attached only when its rating date is not older than the recommendation day, avoiding
+    accidental linkage to legacy ratings. Multiple exposures of the same film are deduplicated
+    to the most recent exposure that predates the rating. Explicit skip-today exposures remain
+    excluded unless a later exposure is available.
     """
     now = utcnow_iso()
     with db.connect() as con:
@@ -68,9 +71,6 @@ def reconcile_recommendation_outcomes(db) -> int:
                  ON audit.history_id=root.id
                WHERE root.action IS NULL
                GROUP BY root.id
-               HAVING chosen_at IS NOT NULL
-                   OR playback_at IS NOT NULL
-                   OR watched_at IS NOT NULL
                ORDER BY root.id ASC"""
         ).fetchall()
 
