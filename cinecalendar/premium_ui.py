@@ -268,8 +268,9 @@ class PremiumDecisionWindow(DecisionWindow):
         self.browse_cache_signature = None
         self.recommendation_metadata_report: dict = {"state": "idle"}
         super().__init__(service)
-        engine_identity = str((getattr(self.s, "production_stack", {}) or {}).get("recommendation_engine_identity") or "")
-        self.reliability_gate = RecommendationReliabilityGate(self.db, engine_identity)
+        # Precision measurement covers all attributable recommendation outcomes across
+        # app versions/engines. The stricter live guard remains engine-specific.
+        self.reliability_gate = RecommendationReliabilityGate(self.db)
         self.setWindowTitle(f"CineCalendar {APP_VERSION} — Premium")
 
     # ---------- premium visual language ----------
