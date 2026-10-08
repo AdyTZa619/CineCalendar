@@ -32,3 +32,10 @@ def test_story_shelf_has_drag_scroll_and_edge_arrows():
     assert "bar.maximum()" in source
     assert "horizontalScrollBar().setValue(self._drag_origin - delta)" in source
     assert "story_season = QLabel" in source
+def test_preview_updater_channel_is_explicitly_preview():
+    init = (ROOT / "cinecalendar" / "__init__.py").read_text(encoding="utf-8")
+    updater = (ROOT / "cinecalendar" / "updater.py").read_text(encoding="utf-8")
+    assert '__version__ = "4.16.2"' in init
+    assert 'UPDATE_CHANNEL = "preview"' in init
+    assert "PREVIEW_MANIFEST_URL" in updater
+    assert '"preview": PREVIEW_MANIFEST_URL' in updater
