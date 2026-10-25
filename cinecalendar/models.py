@@ -23,6 +23,19 @@ class Movie:
     source: str = "local"
     semantic: dict[str, float] = field(default_factory=dict)
 
+    def is_minimally_valid(self) -> bool:
+        """Reject empty or obviously nonsensical movie entries before using them in recommendations."""
+        title = (self.title or "").strip()
+        if not title or title.lower() in {"unknown", "untitled", "n/a", "nan", "null"}:
+            return False
+
+        year = self.year
+        if year is not None:
+            if year < 1888 or year > date.today().year + 5:
+                return False
+
+        return True
+
 @dataclass
 class CalendarEvent:
     key: str
